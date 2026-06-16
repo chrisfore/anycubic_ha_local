@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from homeassistant.components.binary_sensor import BinarySensorEntityDescription
 from homeassistant.components.number import NumberDeviceClass, NumberEntityDescription
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntityDescription, SensorStateClass
-from homeassistant.const import PERCENTAGE, UnitOfTemperature, UnitOfTime
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTemperature, UnitOfTime
 
 from .anycubic_local.models import AceBox, PrinterState, Slot
 
@@ -49,6 +49,8 @@ PRINTER_SENSORS: tuple[AnycubicSensorEntityDescription, ...] = (
         value_fn=lambda p: p.remain_time),
     AnycubicSensorEntityDescription(key="filename", translation_key="filename", icon="mdi:file",
         value_fn=lambda p: p.filename),
+    AnycubicSensorEntityDescription(key="firmware", translation_key="firmware", icon="mdi:chip",
+        entity_category=EntityCategory.DIAGNOSTIC, value_fn=lambda p: p.firmware),
 )
 
 PRINTER_BINARY_SENSORS: tuple[AnycubicBinaryEntityDescription, ...] = (
@@ -106,7 +108,8 @@ ACE_SENSORS: tuple[AceSensorEntityDescription, ...] = (
         device_class=_T, native_unit_of_measurement=_C, suggested_unit_of_measurement=_C,
         state_class=SensorStateClass.MEASUREMENT, value_fn=lambda b: b.temp),
     AceSensorEntityDescription(key="loaded_slot", translation_key="ace_loaded_slot",
-        value_fn=lambda b: "None" if b.loaded_slot in (None, -1) else b.loaded_slot),
+        # Printer slots are 0-indexed; show 1-4 to match the "Slot N" labels. -1/None = nothing loaded.
+        value_fn=lambda b: "None" if b.loaded_slot in (None, -1) else b.loaded_slot + 1),
 )
 
 # Drying is exposed as a controllable switch (see switch.py), not a read-only binary sensor.

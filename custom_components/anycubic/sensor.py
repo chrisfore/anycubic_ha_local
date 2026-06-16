@@ -56,14 +56,16 @@ class AnycubicAceBoxSensor(AnycubicAceEntity, SensorEntity):
 class AnycubicAceSlotSensor(AnycubicAceEntity, SensorEntity):
     _attr_translation_key = "ace_slot"
 
-    def __init__(self, coordinator, slot_index: int):
-        super().__init__(coordinator, f"slot_{slot_index}")
-        self._slot_index = slot_index
-        self._attr_translation_placeholders = {"n": str(slot_index)}
+    def __init__(self, coordinator, slot_number: int):
+        # Display "Slot 1..4" with entity-ids slot_1..slot_4, but the printer reports slots
+        # 0-indexed (0..3) — so look up slot_number - 1.
+        super().__init__(coordinator, f"slot_{slot_number}")
+        self._box_index = slot_number - 1
+        self._attr_translation_placeholders = {"n": str(slot_number)}
 
     @property
     def _slot(self):
-        return None if self._box is None else self._box.slots.get(self._slot_index)
+        return None if self._box is None else self._box.slots.get(self._box_index)
 
     @property
     def native_value(self):

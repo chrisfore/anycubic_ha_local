@@ -1,7 +1,7 @@
 """Build the exact LAN write-commands captured from the printer (see PROTOCOL-VALIDATED.md).
 
-Note: `stop` action is inferred (state machine stopping->stoped, parallel to pause/resume) —
-confirm on first real use before exposing the stop button by default.
+All commands are validated against real hardware, including `stop`: the app sends
+{type:print, action:stop, data:{taskid:-1}} and the printer transitions stopping->stoped.
 """
 import uuid
 

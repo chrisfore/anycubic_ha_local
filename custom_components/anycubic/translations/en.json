@@ -27,6 +27,7 @@
       "total_layers": { "name": "Total layers" },
       "time_remaining": { "name": "Time remaining" },
       "filename": { "name": "File name" },
+      "firmware": { "name": "Firmware" },
       "ace_humidity": { "name": "Humidity" },
       "ace_box_temperature": { "name": "Box temperature" },
       "ace_loaded_slot": { "name": "Loaded slot" },

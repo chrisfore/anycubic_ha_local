@@ -25,7 +25,7 @@ BUTTONS: tuple[AnycubicButtonEntityDescription, ...] = (
         icon="mdi:pause", available_fn=lambda p: p.printing),
     AnycubicButtonEntityDescription(key="resume", translation_key="resume", command="resume",
         icon="mdi:play", available_fn=lambda p: p.paused),
-    # Stop cancels the running print and the command is inferred — gated on an active job.
+    # Stop cancels the running print (validated on hardware) — gated on an active job.
     AnycubicButtonEntityDescription(key="stop", translation_key="stop", command="stop",
         icon="mdi:stop", available_fn=lambda p: p.printing or p.paused),
 )

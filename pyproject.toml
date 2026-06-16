@@ -1,6 +1,6 @@
 [project]
 name = "anycubic-local"
-version = "1.1.0"
+version = "1.1.1"
 description = "AnyCubic Kobra S1 LAN-Mode client"
 requires-python = ">=3.12"
 dependencies = ["cryptography>=42", "paho-mqtt>=1.6"]

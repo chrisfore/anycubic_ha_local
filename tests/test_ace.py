@@ -24,21 +24,27 @@ async def test_ace_sensors(hass):
         assert await hass.config_entries.async_setup(entry.entry_id)
         await hass.async_block_till_done()
         coord = entry.runtime_data
+        # Printer reports slots 0-indexed (0..3); loaded_slot 3 = physical slot 4.
         coord._apply("multiColorBox", {"multi_color_box": [{
-            "id": 0, "humidity": 24, "temp": 35, "loaded_slot": 1,
+            "id": 0, "humidity": 24, "temp": 35, "loaded_slot": 3,
             "drying_status": {"status": 0},
-            "slots": [{"index": 1, "type": "PETG", "color": [67, 82, 59],
-                       "status": 5, "consumables_percent": 95}]}]})
+            "slots": [{"index": 0, "type": "PETG", "color": [67, 82, 59],
+                       "status": 5, "consumables_percent": 95},
+                      {"index": 3, "type": "TPU", "color": [10, 20, 30],
+                       "status": 5, "consumables_percent": 50}]}]})
         await hass.async_block_till_done()
 
     assert hass.states.get("sensor.ace_2_humidity").state == "24"
     assert hass.states.get("sensor.ace_2_box_temperature").state == "35"
-    assert hass.states.get("sensor.ace_2_loaded_slot").state == "1"
+    # loaded_slot 3 -> displayed as slot 4
+    assert hass.states.get("sensor.ace_2_loaded_slot").state == "4"
     assert hass.states.get("switch.ace_2_drying").state == "off"
-    slot = hass.states.get("sensor.ace_2_slot_1")
-    assert slot.state == "PETG"
-    assert slot.attributes["remaining"] == 95
-    assert slot.attributes["color"] == "#43523B"
+    # Slot 1 maps to printer index 0; Slot 4 maps to printer index 3 (the off-by-one fix).
+    slot1 = hass.states.get("sensor.ace_2_slot_1")
+    assert slot1.state == "PETG"
+    assert slot1.attributes["remaining"] == 95
+    assert slot1.attributes["color"] == "#43523B"
+    assert hass.states.get("sensor.ace_2_slot_4").state == "TPU"
     # ACE is its own device, linked to the printer
     from homeassistant.helpers import device_registry as dr
     dev = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, "SER-1_ace0")})
