@@ -1,0 +1,19 @@
+{
+  "printerName": "Anycubic Kobra S1 Max",
+  "model": "Anycubic Kobra S1 Max",
+  "version": "2.6.9.6",
+  "ip": "192.168.1.50",
+  "state": "busy",
+  "temp": {
+    "curr_hotbed_temp": 39, "curr_nozzle_temp": 45, "curr_chamber_temp": 43,
+    "target_hotbed_temp": 0, "target_nozzle_temp": 0, "target_chamber_temp": 0
+  },
+  "fan_speed_pct": 0, "aux_fan_speed_pct": 0, "box_fan_level": 0, "print_speed_mode": 2,
+  "project": {
+    "progress": 42, "curr_layer": 120, "total_layers": 900, "remain_time": 1800,
+    "print_time": 600, "supplies_usage": 39832, "state": "printing", "print_status": 2,
+    "filename": "demo_PETG.gcode.3mf", "pause": 0
+  },
+  "urls": {"rtspUrl": "http://192.168.1.50:18088/flv"},
+  "features": {"drying_first_support": true, "camera_timelapse_support": true}
+}

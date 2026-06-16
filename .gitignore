@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# Third-party reference clones — re-clone as needed; not part of this project
+reference/
+
+# One-time diagnostic artifacts (Mac filesystem listings)
+research/probe/fs_baseline.txt
+research/probe/fs_current.txt
+
+# SMB stale-dirent artifact
+brand-options/contact-sheet-v2.png
+
+# macOS
+.DS_Store
+
+# Raw printer captures (device IDs, tokens, job names) — LOCAL ONLY, never synced
+research/probe/
+
+# Editable-install build artifacts
+*.egg-info/

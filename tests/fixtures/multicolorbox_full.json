@@ -1,0 +1,10 @@
+{"multi_color_box": [{
+  "id": 0, "status": 1, "model_id": 40002, "auto_feed": 0, "loaded_slot": -1,
+  "feed_status": {"code": 200, "type": -1, "current_status": -1, "slot_index": -1},
+  "temp": 35, "humidity": 24,
+  "drying_status": {"status": 0, "target_temp": 0, "duration": 0, "remain_time": 0},
+  "slots": [
+    {"index": 0, "sku": "", "type": "PETG", "color": [33,39,33], "status": 5, "consumables_percent": 0},
+    {"index": 1, "sku": "AHPEFG-102", "type": "PETG", "color": [67,82,59], "status": 5, "consumables_percent": 100}
+  ]
+}]}
