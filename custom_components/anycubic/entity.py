@@ -4,7 +4,7 @@ from __future__ import annotations
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import ACE_SUFFIX, DOMAIN, MANUFACTURER, MODEL_NAMES
+from .const import ACE_MODEL_NAMES, ACE_SUFFIX, DOMAIN, MANUFACTURER, MODEL_NAMES
 from .coordinator import AnycubicCoordinator
 
 
@@ -46,8 +46,12 @@ class AnycubicAceEntity(CoordinatorEntity[AnycubicCoordinator]):
 
     @property
     def device_info(self) -> DeviceInfo:
+        # Stable name so entity IDs (ace_2_*) are fixed at registration before the box reports.
+        # The box's actual model (ACE Pro vs ACE 2) shows as the device model once it reports.
+        box = self._box
+        model = ACE_MODEL_NAMES.get(str(box.model_id)) if box and box.model_id is not None else None
         return DeviceInfo(
             identifiers={(DOMAIN, f"{self.coordinator.hs.serial}_{ACE_SUFFIX}")},
-            manufacturer=MANUFACTURER, name="ACE 2", model="ACE 2",
+            manufacturer=MANUFACTURER, name="ACE 2", model=model or "ACE 2",
             via_device=(DOMAIN, self.coordinator.hs.serial),
         )

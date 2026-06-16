@@ -7,12 +7,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN, MANUFACTURER, MODEL_NAMES
+from .const import CAMERA_MODELS, DOMAIN, MANUFACTURER, MODEL_NAMES
 from .coordinator import AnycubicCoordinator
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
-    add([AnycubicCamera(entry.runtime_data)])
+    # Only models with a local FLV camera (built-in on enclosed, add-on on the Kobra 3 family).
+    # Kobra 2 has no camera; Kobra X streams WebRTC with no local FLV.
+    coord: AnycubicCoordinator = entry.runtime_data
+    if coord.hs.model_id in CAMERA_MODELS:
+        add([AnycubicCamera(coord)])
 
 
 class AnycubicCamera(Camera):

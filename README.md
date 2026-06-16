@@ -1,13 +1,13 @@
 # AnyCubic 3D Printer - Local
 
-A Home Assistant custom integration for the **AnyCubic Kobra S1 Max + ACE 2**, talking to the
-printer's **stock LAN Mode** over its local MQTT broker — **no AnyCubic cloud account, no rooting**.
-(The Kobra S1 uses the same LAN protocol and is expected to work, but only the S1 Max has been
-validated on hardware.)
+A Home Assistant custom integration for the **AnyCubic Kobra 3 / S1 series** (and ACE / ACE 2),
+talking to the printer's **stock LAN Mode** over its local MQTT broker — **no AnyCubic cloud account,
+no rooting**.
 
 [![hacs](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz)
 
-> **Status:** v1.0.0 — validated end-to-end against real hardware (monitoring *and* control).
+> **Status:** v1.1.0 — validated end-to-end on a Kobra S1 Max; the rest of the Kobra 3 / S1 family
+> shares the identical protocol. Entities adapt to each model (see **Supported printers**).
 
 ## Features
 
@@ -33,9 +33,27 @@ LAN Mode exposes a local MQTT broker (TLS, port 9883) reached through a document
 JSON reports; controls are JSON commands on the same topics. Crypto keys are derived on the fly and
 never persisted — nothing sensitive is stored on the Home Assistant host.
 
+## Supported printers
+
+The Kobra 3 / S1 generation all speak the same signed LAN protocol, so they share one code path. The
+integration reads the printer's `modelId` and only creates the entities that model actually has.
+
+| Printer | `modelId` | Status |
+| --- | --- | --- |
+| Kobra S1 Max | `20029` | ✅ Validated on hardware (enclosed: chamber temp/light, box fan, camera, ACE 2) |
+| Kobra S1 | `20025` | ✅ Same enclosed feature set, identical protocol |
+| Kobra 3 / 3 V2 / 3 Max | `20024` / `20027` / `20026` | ✅ Open-frame — no chamber temp/light or box fan; camera is the AnyCubic add-on |
+| Kobra 2 Pro / Plus / Max | `20021` / `20022` / `20023` | ⚠️ Experimental — older *unsigned* handshake, not yet validated (you'll get a clear "unsupported handshake" message if it can't connect) |
+| Kobra X | `20030` | ⚠️ Experimental — different controller; camera is WebRTC (no local stream) so no camera entity |
+| Photon (resin) | — | ❌ Different platform, no local LAN API |
+
+Enclosure-only entities (chamber temperature, chamber light, box fan) appear **only** on the enclosed
+S1 / S1 Max. The camera appears on the Kobra 3 / S1 family (built-in on enclosed, add-on on Kobra 3).
+ACE / ACE 2 entities appear whenever a multi-color box is attached, on any of these printers.
+
 ## Requirements
 
-- AnyCubic Kobra **S1 Max** (or S1) with **LAN Mode enabled** on the printer
+- An AnyCubic printer from the table above with **LAN Mode enabled**
   (printer screen → *Settings → Network → LAN Mode*).
 - Home Assistant 2024.9 or newer, with HACS.
 - The `ffmpeg` add-on / dependency (bundled with most HA installs) for the camera.
@@ -44,9 +62,9 @@ never persisted — nothing sensitive is stored on the Home Assistant host.
 
 1. HACS → ⋮ → **Custom repositories**.
 2. Add this repository's URL, category **Integration**, then **Add**.
-3. Find **AnyCubic (local)** in HACS and **Download**.
+3. Find **AnyCubic 3D Printer - Local** in HACS and **Download**.
 4. **Restart Home Assistant.**
-5. **Settings → Devices & Services → Add Integration → AnyCubic (local)**.
+5. **Settings → Devices & Services → Add Integration → AnyCubic 3D Printer - Local**.
 6. Enter the printer's **IP address or hostname** (e.g. `192.168.1.50` or `printer.local`).
    Host names are resolved with whatever DNS/mDNS your HA host has.
 
@@ -64,6 +82,10 @@ never persisted — nothing sensitive is stored on the Home Assistant host.
 | ACE `sensor` | Humidity, Box temperature, Loaded slot, Slot 1–4 (material/color/remaining as attributes) |
 | ACE `switch` | Drying, Auto-feed |
 | ACE `number` | Drying temperature, Drying time |
+
+Chamber temperature, Chamber light, and the box (chamber) fan are created **only on enclosed models**
+(S1 / S1 Max); the camera only on models with a local stream; ACE entities only when a box is attached.
+See **Supported printers** above.
 
 ## Example dashboard
 

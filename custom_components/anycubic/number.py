@@ -7,6 +7,7 @@ from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import ENCLOSED_MODELS
 from .coordinator import AnycubicCoordinator
 from .definitions import PRINTER_NUMBERS, AnycubicNumberEntityDescription
 from .entity import AnycubicAceEntity, AnycubicEntity
@@ -14,7 +15,10 @@ from .entity import AnycubicAceEntity, AnycubicEntity
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
     coord: AnycubicCoordinator = entry.runtime_data
-    entities: list = [AnycubicNumber(coord, d) for d in PRINTER_NUMBERS]
+    enclosed = coord.hs.model_id in ENCLOSED_MODELS
+    entities: list = [
+        AnycubicNumber(coord, d) for d in PRINTER_NUMBERS if enclosed or not d.enclosed_only
+    ]
     entities += [AnycubicDryingTempNumber(coord), AnycubicDryingTimeNumber(coord)]
     add(entities)
 

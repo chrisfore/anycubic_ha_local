@@ -59,7 +59,12 @@ def do_handshake(host: str, fetch=_http_fetch) -> HandshakeResult:
     info = fetch("GET", f"http://{host}:18910/info")
     if info.get("ctrlType") == "cloud":
         raise CloudModeError("Printer is in CLOUD mode — enable LAN Mode")
-    token = info["token"]
+    token = info.get("token")
+    if not token or not info.get("ctrlInfoUrl") or not info.get("modelId"):
+        # Older Kobra 2 firmware (and some others) use a different unsigned handshake we don't speak.
+        raise HandshakeError(
+            "This printer doesn't use the signed LAN handshake this integration needs "
+            "(Kobra 3 / S1 generation). Kobra 2 / Kobra X aren't supported yet.")
     ts = int(time.time() * 1000)
     nonce = "".join(random.choices(string.ascii_letters + string.digits, k=6))
     did = "".join(random.choices(string.ascii_uppercase + string.digits, k=32))

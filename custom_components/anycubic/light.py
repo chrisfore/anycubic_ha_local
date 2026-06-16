@@ -9,12 +9,16 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .anycubic_local.models import LightState
+from .const import ENCLOSED_MODELS
 from .coordinator import AnycubicCoordinator
 from .entity import AnycubicEntity
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
-    add([AnycubicLight(entry.runtime_data)])
+    # The chamber light is enclosure hardware (KS1 / KS1 Max only).
+    coord: AnycubicCoordinator = entry.runtime_data
+    if coord.hs.model_id in ENCLOSED_MODELS:
+        add([AnycubicLight(coord)])
 
 
 class AnycubicLight(AnycubicEntity, LightEntity):
