@@ -15,6 +15,7 @@ from .anycubic_local.models import AceBox, PrinterState, Slot
 @dataclass(frozen=True, kw_only=True)
 class AnycubicSensorEntityDescription(SensorEntityDescription):
     value_fn: Callable[[PrinterState], object]
+    enclosed_only: bool = False   # only create on enclosed printers (KS1 / KS1 Max)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -34,7 +35,7 @@ PRINTER_SENSORS: tuple[AnycubicSensorEntityDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT, value_fn=lambda p: p.bed_temp),
     AnycubicSensorEntityDescription(key="chamber_temperature", translation_key="chamber_temperature",
         device_class=_T, native_unit_of_measurement=_C, suggested_unit_of_measurement=_C,
-        state_class=SensorStateClass.MEASUREMENT, value_fn=lambda p: p.chamber_temp),
+        state_class=SensorStateClass.MEASUREMENT, value_fn=lambda p: p.chamber_temp, enclosed_only=True),
     AnycubicSensorEntityDescription(key="progress", translation_key="progress",
         native_unit_of_measurement=PERCENTAGE, state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda p: p.progress),
@@ -60,6 +61,7 @@ PRINTER_BINARY_SENSORS: tuple[AnycubicBinaryEntityDescription, ...] = (
 class AnycubicNumberEntityDescription(NumberEntityDescription):
     command: str        # commands.build() command name
     attr: str           # PrinterState field to read and optimistically update
+    enclosed_only: bool = False   # only create on enclosed printers (KS1 / KS1 Max)
 
 
 # Live printer setpoints — read the printer's reported target, write via print/update settings.
@@ -81,7 +83,8 @@ PRINTER_NUMBERS: tuple[AnycubicNumberEntityDescription, ...] = (
         native_min_value=0, native_max_value=100, native_step=1, icon="mdi:fan-auto"),
     AnycubicNumberEntityDescription(key="box_fan", translation_key="box_fan",
         command="set_box_fan", attr="box_fan_level", native_unit_of_measurement=PERCENTAGE,
-        native_min_value=0, native_max_value=100, native_step=1, icon="mdi:fan-chevron-up"),
+        native_min_value=0, native_max_value=100, native_step=1, icon="mdi:fan-chevron-up",
+        enclosed_only=True),
 )
 
 

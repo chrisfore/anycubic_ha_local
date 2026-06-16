@@ -6,7 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import ACE_SLOT_COUNT
+from .const import ACE_SLOT_COUNT, ENCLOSED_MODELS
 from .coordinator import AnycubicCoordinator
 from .definitions import (
     ACE_SENSORS,
@@ -20,7 +20,10 @@ from .entity import AnycubicAceEntity, AnycubicEntity
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
     coord: AnycubicCoordinator = entry.runtime_data
-    entities: list = [AnycubicSensor(coord, d) for d in PRINTER_SENSORS]
+    enclosed = coord.hs.model_id in ENCLOSED_MODELS
+    entities: list = [
+        AnycubicSensor(coord, d) for d in PRINTER_SENSORS if enclosed or not d.enclosed_only
+    ]
     entities += [AnycubicAceBoxSensor(coord, d) for d in ACE_SENSORS]
     entities += [AnycubicAceSlotSensor(coord, i) for i in range(1, ACE_SLOT_COUNT + 1)]
     add(entities)
