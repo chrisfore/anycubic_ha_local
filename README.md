@@ -6,7 +6,7 @@ no rooting**.
 
 [![hacs](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz)
 
-> **Status:** v1.1.0 — validated end-to-end on a Kobra S1 Max; the rest of the Kobra 3 / S1 family
+> **Status:** v1.1.1 — validated end-to-end on a Kobra S1 Max; the rest of the Kobra 3 / S1 family
 > shares the identical protocol. Entities adapt to each model (see **Supported printers**).
 
 ## Features
@@ -72,7 +72,7 @@ ACE / ACE 2 entities appear whenever a multi-color box is attached, on any of th
 
 | Domain | Entities |
 | --- | --- |
-| `sensor` | Status, Nozzle/Bed/Chamber temperature, Progress, Current/Total layer, Time remaining, File name |
+| `sensor` | Status, Nozzle/Bed/Chamber temperature, Progress, Current/Total layer, Time remaining, File name, Firmware |
 | `binary_sensor` | Printing, Paused |
 | `camera` | Camera |
 | `light` | Chamber light |
@@ -97,9 +97,7 @@ and assumes the default device names — adjust the entity-ID prefixes if you re
 
 ## Notes & caveats
 
-- **Stop** cancels the running print. The stop command was inferred from the protocol (not directly
-  captured), so confirm it on your printer the first time — watch that Status moves to *stopping →
-  stopped*, since the printer acknowledges any command whether or not it acts on it.
+- **Stop** cancels the running print (the printer transitions *stopping → stopped*).
 - **Target temperatures heat the printer even while idle** (so you can preheat or change filament).
   Set a target back to 0 to turn the heater off.
 - **Box fan / chamber fan** is reported as a 0–100 level.
