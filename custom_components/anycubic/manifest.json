@@ -9,5 +9,5 @@
   "issue_tracker": "https://github.com/chrisfore/anycubic_ha_local/issues",
   "loggers": ["custom_components.anycubic"],
   "requirements": ["cryptography>=42"],
-  "version": "1.1.1"
+  "version": "1.1.2"
 }
