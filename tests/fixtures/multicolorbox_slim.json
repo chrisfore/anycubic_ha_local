@@ -1,0 +1,7 @@
+{"multi_color_box": [{
+  "id": 0, "loaded_slot": 1,
+  "drying_status": {"status": 1, "target_temp": 45, "duration": 240, "humidity": 30},
+  "slots": [
+    {"index": 1, "sku": "AHPEFG-102", "type": "PETG", "color": [67,82,59], "status": 5, "consumables_percent": 95}
+  ]
+}]}

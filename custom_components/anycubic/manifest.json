@@ -1,0 +1,13 @@
+{
+  "domain": "anycubic",
+  "name": "AnyCubic 3D Printer - Local",
+  "codeowners": ["@chrisfore"],
+  "config_flow": true,
+  "dependencies": ["ffmpeg"],
+  "documentation": "https://github.com/chrisfore/anycubic_ha_local",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/chrisfore/anycubic_ha_local/issues",
+  "loggers": ["custom_components.anycubic"],
+  "requirements": ["cryptography>=42"],
+  "version": "1.0.0"
+}

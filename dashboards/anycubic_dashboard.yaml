@@ -1,0 +1,197 @@
+# AnyCubic Kobra S1 Max + ACE 2 — example dashboard
+# =================================================================================
+# Layout: ACE 2 on top, the printer in the middle, all the information/controls below.
+#
+# Requires two HACS "Frontend" cards (install once, then reload resources):
+#   - Mushroom        https://github.com/piitaya/lovelace-mushroom
+#   - card-mod        https://github.com/thomasloven/lovelace-card-mod
+# (Everything else is built into Home Assistant.)
+#
+# How to use: Settings -> Dashboards -> add dashboard -> open the three-dot menu ->
+# "Edit dashboard" -> three-dot menu -> "Raw configuration editor", then paste this as a
+# view's cards, OR paste a single card via "Add card -> Manual" using the vertical-stack below.
+#
+# Entity IDs assume the default device names "AnyCubic Kobra S1 Max" and "ACE 2". If you
+# renamed either device, do a find/replace on the prefixes "anycubic_kobra_s1_max" / "ace_2".
+
+
+title: AnyCubic
+views:
+  - title: Printer
+    path: anycubic
+    icon: mdi:printer-3d
+    cards:
+      - type: vertical-stack
+        cards:
+          # ============================ Camera (top) ============================
+          - type: picture-glance
+            title: ""
+            camera_image: camera.anycubic_kobra_s1_max_camera
+            camera_view: live
+            entities:
+              - entity: light.anycubic_kobra_s1_max_chamber_light
+
+          # ============================ ACE 2 ============================
+          - type: custom:mushroom-title-card
+            title: ACE 2
+            subtitle: Filament
+
+          # Four filament slots — the icon is tinted with each slot's real filament colour,
+          # a green check badge marks the loaded slot.
+          - type: horizontal-stack
+            cards:
+              - type: custom:mushroom-template-card
+                entity: sensor.ace_2_slot_1
+                primary: Slot 1
+                secondary: >-
+                  {{ states('sensor.ace_2_slot_1') }}{% if state_attr('sensor.ace_2_slot_1','remaining') is not none %} · {{ state_attr('sensor.ace_2_slot_1','remaining') }}%{% endif %}
+                icon: mdi:printer-3d-nozzle
+                badge_icon: >-
+                  {{ 'mdi:check-circle' if state_attr('sensor.ace_2_slot_1','loaded') else '' }}
+                badge_color: green
+                card_mod:
+                  style: |
+                    ha-card ha-state-icon {
+                      color: {{ state_attr('sensor.ace_2_slot_1','color') or '#888888' }} !important;
+                    }
+              - type: custom:mushroom-template-card
+                entity: sensor.ace_2_slot_2
+                primary: Slot 2
+                secondary: >-
+                  {{ states('sensor.ace_2_slot_2') }}{% if state_attr('sensor.ace_2_slot_2','remaining') is not none %} · {{ state_attr('sensor.ace_2_slot_2','remaining') }}%{% endif %}
+                icon: mdi:printer-3d-nozzle
+                badge_icon: >-
+                  {{ 'mdi:check-circle' if state_attr('sensor.ace_2_slot_2','loaded') else '' }}
+                badge_color: green
+                card_mod:
+                  style: |
+                    ha-card ha-state-icon {
+                      color: {{ state_attr('sensor.ace_2_slot_2','color') or '#888888' }} !important;
+                    }
+              - type: custom:mushroom-template-card
+                entity: sensor.ace_2_slot_3
+                primary: Slot 3
+                secondary: >-
+                  {{ states('sensor.ace_2_slot_3') }}{% if state_attr('sensor.ace_2_slot_3','remaining') is not none %} · {{ state_attr('sensor.ace_2_slot_3','remaining') }}%{% endif %}
+                icon: mdi:printer-3d-nozzle
+                badge_icon: >-
+                  {{ 'mdi:check-circle' if state_attr('sensor.ace_2_slot_3','loaded') else '' }}
+                badge_color: green
+                card_mod:
+                  style: |
+                    ha-card ha-state-icon {
+                      color: {{ state_attr('sensor.ace_2_slot_3','color') or '#888888' }} !important;
+                    }
+              - type: custom:mushroom-template-card
+                entity: sensor.ace_2_slot_4
+                primary: Slot 4
+                secondary: >-
+                  {{ states('sensor.ace_2_slot_4') }}{% if state_attr('sensor.ace_2_slot_4','remaining') is not none %} · {{ state_attr('sensor.ace_2_slot_4','remaining') }}%{% endif %}
+                icon: mdi:printer-3d-nozzle
+                badge_icon: >-
+                  {{ 'mdi:check-circle' if state_attr('sensor.ace_2_slot_4','loaded') else '' }}
+                badge_color: green
+                card_mod:
+                  style: |
+                    ha-card ha-state-icon {
+                      color: {{ state_attr('sensor.ace_2_slot_4','color') or '#888888' }} !important;
+                    }
+
+          # ACE environment + dryer
+          - type: horizontal-stack
+            cards:
+              - type: custom:mushroom-entity-card
+                entity: sensor.ace_2_humidity
+                icon: mdi:water-percent
+                name: Humidity
+              - type: custom:mushroom-entity-card
+                entity: sensor.ace_2_box_temperature
+                icon: mdi:thermometer
+                name: Box temp
+              - type: custom:mushroom-entity-card
+                entity: sensor.ace_2_loaded_slot
+                icon: mdi:tray-arrow-down
+                name: Loaded
+          - type: horizontal-stack
+            cards:
+              - type: custom:mushroom-entity-card
+                entity: switch.ace_2_drying
+                icon: mdi:weather-sunny
+              - type: custom:mushroom-entity-card
+                entity: switch.ace_2_auto_feed
+                icon: mdi:autorenew
+          - type: entities
+            title: Drying setpoints
+            entities:
+              - entity: number.ace_2_drying_temperature
+              - entity: number.ace_2_drying_time
+
+          # ============================ Printer ============================
+          - type: custom:mushroom-title-card
+            title: Kobra S1 Max
+
+          - type: custom:mushroom-template-card
+            entity: sensor.anycubic_kobra_s1_max_status
+            primary: >-
+              {{ states('sensor.anycubic_kobra_s1_max_file_name') }}
+            secondary: >-
+              {{ states('sensor.anycubic_kobra_s1_max_status') | capitalize }} · {{ states('sensor.anycubic_kobra_s1_max_progress') }}%
+            icon: mdi:printer-3d
+            icon_color: >-
+              {{ 'blue' if is_state('binary_sensor.anycubic_kobra_s1_max_printing','on')
+                 else ('orange' if is_state('binary_sensor.anycubic_kobra_s1_max_paused','on') else 'disabled') }}
+
+          - type: gauge
+            entity: sensor.anycubic_kobra_s1_max_progress
+            name: Progress
+            min: 0
+            max: 100
+            needle: true
+            severity:
+              green: 0
+              yellow: 0
+              red: 0
+
+          # Print controls (show only while a job is active)
+          - type: custom:mushroom-chips-card
+            alignment: center
+            chips:
+              - type: entity
+                entity: button.anycubic_kobra_s1_max_pause
+              - type: entity
+                entity: button.anycubic_kobra_s1_max_resume
+              - type: entity
+                entity: button.anycubic_kobra_s1_max_stop
+
+          # ============================ Information (below) ============================
+          - type: glance
+            title: Temperatures
+            columns: 3
+            entities:
+              - entity: sensor.anycubic_kobra_s1_max_nozzle_temperature
+                name: Nozzle
+              - entity: sensor.anycubic_kobra_s1_max_bed_temperature
+                name: Bed
+              - entity: sensor.anycubic_kobra_s1_max_chamber_temperature
+                name: Chamber
+
+          - type: entities
+            title: Print
+            entities:
+              - entity: sensor.anycubic_kobra_s1_max_status
+              - entity: sensor.anycubic_kobra_s1_max_progress
+              - entity: sensor.anycubic_kobra_s1_max_current_layer
+              - entity: sensor.anycubic_kobra_s1_max_total_layers
+              - entity: sensor.anycubic_kobra_s1_max_time_remaining
+              - entity: sensor.anycubic_kobra_s1_max_file_name
+
+          - type: entities
+            title: Controls
+            entities:
+              - entity: select.anycubic_kobra_s1_max_print_speed
+              - entity: number.anycubic_kobra_s1_max_nozzle_target_temperature
+              - entity: number.anycubic_kobra_s1_max_bed_target_temperature
+              - entity: number.anycubic_kobra_s1_max_part_cooling_fan
+              - entity: number.anycubic_kobra_s1_max_auxiliary_fan
+              - entity: number.anycubic_kobra_s1_max_chamber_fan
+              - entity: light.anycubic_kobra_s1_max_chamber_light

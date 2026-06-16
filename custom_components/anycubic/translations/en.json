@@ -1,0 +1,70 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "description": "Enter your printer's IP address or hostname (e.g. 192.168.1.50 or printer.local). Names are resolved with whatever DNS/mDNS your Home Assistant host has. Turn on LAN Mode on the printer first.",
+        "data": { "host": "Printer IP address or hostname" }
+      },
+      "reauth_confirm": {
+        "title": "Re-enable LAN Mode",
+        "description": "Home Assistant can no longer reach {host} over LAN Mode — the printer may have switched back to cloud mode. Turn LAN Mode back on at the printer, then submit."
+      }
+    },
+    "error": { "cannot_connect": "Could not reach the printer. Check the IP and that LAN Mode is on." },
+    "abort": {
+      "already_configured": "This printer is already configured.",
+      "reauth_successful": "LAN Mode reconnected."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": { "name": "Status" },
+      "nozzle_temperature": { "name": "Nozzle temperature" },
+      "bed_temperature": { "name": "Bed temperature" },
+      "chamber_temperature": { "name": "Chamber temperature" },
+      "progress": { "name": "Progress" },
+      "current_layer": { "name": "Current layer" },
+      "total_layers": { "name": "Total layers" },
+      "time_remaining": { "name": "Time remaining" },
+      "filename": { "name": "File name" },
+      "ace_humidity": { "name": "Humidity" },
+      "ace_box_temperature": { "name": "Box temperature" },
+      "ace_loaded_slot": { "name": "Loaded slot" },
+      "ace_slot": { "name": "Slot {n}" }
+    },
+    "binary_sensor": {
+      "printing": { "name": "Printing" },
+      "paused": { "name": "Paused" }
+    },
+    "switch": {
+      "ace_drying": { "name": "Drying" },
+      "ace_auto_feed": { "name": "Auto-feed" }
+    },
+    "button": {
+      "pause": { "name": "Pause" },
+      "resume": { "name": "Resume" },
+      "stop": { "name": "Stop" }
+    },
+    "number": {
+      "nozzle_target": { "name": "Nozzle target temperature" },
+      "bed_target": { "name": "Bed target temperature" },
+      "fan_speed": { "name": "Part cooling fan" },
+      "aux_fan": { "name": "Auxiliary fan" },
+      "box_fan": { "name": "Chamber fan" },
+      "drying_temp": { "name": "Drying temperature" },
+      "drying_duration": { "name": "Drying time" }
+    },
+    "select": {
+      "speed_mode": {
+        "name": "Print speed",
+        "state": { "silent": "Silent", "standard": "Standard", "sport": "Sport" }
+      }
+    },
+    "camera": {
+      "camera": { "name": "Camera" }
+    },
+    "light": {
+      "chamber_light": { "name": "Chamber light" }
+    }
+  }
+}
