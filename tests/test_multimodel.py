@@ -59,3 +59,23 @@ def test_handshake_rejects_unsigned_models_cleanly():
     info = {"modelId": "20021", "cn": "K2P"}
     with pytest.raises(HandshakeError):
         do_handshake("1.2.3.4", fetch=lambda method, url: info)
+
+
+def test_parse_mac_from_usn():
+    from custom_components.anycubic.anycubic_local.handshake import _parse_mac
+    assert _parse_mac("uuid:fdm:AA-BB-CC-DD-EE-FF") == "AA-BB-CC-DD-EE-FF"
+    assert _parse_mac(None) is None
+    assert _parse_mac("no-mac-here") is None
+
+
+async def test_device_has_network_mac_connection(hass):
+    from homeassistant.helpers import device_registry as dr
+    hs = HandshakeResult("1.2.3.4", 9883, "u", "p", "DEV", "20029", "SER-MAC", mac="AA-BB-CC-DD-EE-FF")
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-MAC", data={"host": "1.2.3.4"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=hs), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    dev = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, "SER-MAC")})
+    assert (dr.CONNECTION_NETWORK_MAC, "aa:bb:cc:dd:ee:ff") in dev.connections

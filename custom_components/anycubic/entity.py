@@ -1,7 +1,11 @@
 """Base entity for AnyCubic — links every entity to the printer device."""
 from __future__ import annotations
 
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.device_registry import (
+    CONNECTION_NETWORK_MAC,
+    DeviceInfo,
+    format_mac,
+)
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import ACE_MODEL_NAMES, ACE_SUFFIX, DOMAIN, MANUFACTURER, MODEL_NAMES
@@ -18,7 +22,7 @@ class AnycubicEntity(CoordinatorEntity[AnycubicCoordinator]):
     @property
     def device_info(self) -> DeviceInfo:
         p = self.coordinator.data.printer
-        return DeviceInfo(
+        info = DeviceInfo(
             identifiers={(DOMAIN, self.coordinator.hs.serial)},
             manufacturer=MANUFACTURER,
             name=MODEL_NAMES.get(self.coordinator.hs.model_id) or p.model or "AnyCubic printer",
@@ -26,6 +30,9 @@ class AnycubicEntity(CoordinatorEntity[AnycubicCoordinator]):
             sw_version=p.firmware,
             configuration_url=f"http://{self.coordinator.host}",
         )
+        if self.coordinator.hs.mac:
+            info["connections"] = {(CONNECTION_NETWORK_MAC, format_mac(self.coordinator.hs.mac))}
+        return info
 
 
 class AnycubicAceEntity(CoordinatorEntity[AnycubicCoordinator]):

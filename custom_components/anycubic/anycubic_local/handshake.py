@@ -45,6 +45,14 @@ class HandshakeResult:
     device_id: str
     model_id: str
     serial: str
+    mac: str | None = None   # from /info "usn" (e.g. "uuid:fdm:AA-BB-CC-DD-EE-FF")
+
+
+def _parse_mac(usn) -> str | None:
+    if not usn:
+        return None
+    m = re.search(r"([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}", str(usn))
+    return m.group(0) if m else None
 
 
 def _http_fetch(method: str, url: str, timeout: float = 6.0) -> dict:
@@ -77,4 +85,5 @@ def do_handshake(host: str, fetch=_http_fetch) -> HandshakeResult:
     return HandshakeResult(
         broker_host=m.group(1), broker_port=int(m.group(2)),
         username=data["username"], password=data["password"],
-        device_id=data["deviceId"], model_id=str(info["modelId"]), serial=info.get("cn", ""))
+        device_id=data["deviceId"], model_id=str(info["modelId"]), serial=info.get("cn", ""),
+        mac=_parse_mac(info.get("usn")))
