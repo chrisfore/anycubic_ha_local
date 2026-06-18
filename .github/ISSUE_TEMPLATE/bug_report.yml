@@ -1,0 +1,71 @@
+name: Bug report
+description: Something isn't working with the AnyCubic 3D Printer - Local integration.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug! Please include **redacted diagnostics** — on the printer's
+        device page in Home Assistant choose ⋮ → **Download diagnostics** (automatically redacted
+        of addresses and identifiers) and attach it in the "Logs / diagnostics" box below.
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version
+      placeholder: e.g. 2026.6.1
+    validations:
+      required: true
+  - type: input
+    id: integration_version
+    attributes:
+      label: Integration version
+      description: Shown in HACS, or on the integration's page.
+      placeholder: e.g. 1.1.2
+    validations:
+      required: true
+  - type: dropdown
+    id: model
+    attributes:
+      label: Printer model
+      options:
+        - Kobra S1 Max
+        - Kobra S1
+        - Kobra 3
+        - Kobra 3 V2
+        - Kobra 3 Max
+        - Kobra 2 Pro
+        - Kobra 2 Plus
+        - Kobra 2 Max
+        - Kobra X
+        - Other (tell us below)
+    validations:
+      required: true
+  - type: textarea
+    id: what_happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / diagnostics
+      description: Paste relevant `custom_components.anycubic` logs and/or attach the redacted diagnostics file.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I attached redacted diagnostics (or explained why not).
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true

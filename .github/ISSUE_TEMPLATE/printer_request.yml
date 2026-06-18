@@ -1,0 +1,68 @@
+name: Request support for my printer
+description: Help add support for an AnyCubic printer that isn't listed yet.
+title: "[Printer]: "
+labels: ["printer-support"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Help me add your AnyCubic printer! Two quick browser steps below — no software to install.
+
+        > The `token` value in `/info` is **temporary** and safe to share. You can redact your IP
+        > address if you prefer; the key field the maintainer needs is `modelId`.
+  - type: input
+    id: model_name
+    attributes:
+      label: Printer model (marketing name)
+      placeholder: e.g. Kobra 3 Max
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version
+      description: Printer screen → Settings → (About / Version).
+      placeholder: e.g. 2.5.9.9
+    validations:
+      required: true
+  - type: textarea
+    id: info_json
+    attributes:
+      label: Output of http://<printer-ip>:18910/info
+      description: >
+        On a device on the same network, open http://YOUR-PRINTER-IP:18910/info in a web browser
+        (replace YOUR-PRINTER-IP — e.g. http://192.168.1.50:18910/info). Copy the JSON it shows
+        and paste it here.
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: feature_json
+    attributes:
+      label: Output of http://<printer-ip>:18910/feature (optional)
+      description: >
+        Also try http://YOUR-PRINTER-IP:18910/feature and http://YOUR-PRINTER-IP:18910/features.
+        If either shows JSON, paste it here. If you get "404" / "Not Found" / a blank page, skip it.
+      render: json
+  - type: checkboxes
+    id: hardware
+    attributes:
+      label: Which features does your printer physically have?
+      options:
+        - label: Enclosed / heated chamber with a door
+        - label: Built-in camera
+        - label: Multicolor box attached (ACE / ACE 2)
+        - label: Touchscreen
+        - label: Auto-leveling
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else?
+      description: Quirks, what works, what doesn't, link to the product page, etc.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I checked the "Supported printers" table and my model isn't already listed.
+          required: true
