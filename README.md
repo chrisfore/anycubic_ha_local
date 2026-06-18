@@ -52,6 +52,19 @@ Enclosure-only entities (chamber temperature, chamber light, box fan) appear **o
 S1 / S1 Max. The camera appears on the Kobra 3 / S1 family (built-in on enclosed, add-on on Kobra 3).
 ACE / ACE 2 entities appear whenever a multi-color box is attached, on any of these printers.
 
+### My printer isn't listed — help me add it
+
+The Kobra 3 / S1 family shares one protocol, so adding a model is usually quick. To help:
+
+1. On a device on the same network as the printer, open **`http://<printer-ip>:18910/info`** in a
+   web browser (for example `http://192.168.1.50:18910/info`). Copy the JSON it returns.
+2. Open a **[Request support for my printer](../../issues/new?template=printer_request.yml)** issue,
+   paste that JSON, and tick which features your printer physically has (chamber, camera, ACE box).
+
+The `token` field is temporary and safe to share; redact your IP if you like — the key field is
+`modelId`. (Curious folks can also try `http://<printer-ip>:18910/feature`; paste it too if it
+returns JSON.)
+
 ## Requirements
 
 - An AnyCubic printer from the table above with **LAN Mode enabled**
@@ -117,6 +130,23 @@ and assumes the default device names — adjust the entity-ID prefixes if you re
 - **Camera won't play:** make sure `ffmpeg` is available and the printer is reachable on port 18088.
 - **Bug reports:** download diagnostics from the device page (⋮ → *Download diagnostics*) — it is
   automatically redacted of addresses and identifiers.
+
+## Feedback, bugs & requests
+
+Everything runs through **[GitHub Issues](../../issues/new/choose)**:
+
+- **Bug report** — include redacted diagnostics (device page → ⋮ → *Download diagnostics*).
+- **Feature request / feedback** — ideas and suggestions are welcome.
+- **Request support for my printer** — see *[My printer isn't listed](#my-printer-isnt-listed--help-me-add-it)* above.
+
+## 🍺 Buy me a beer
+
+This is a free, no-cloud labour of love. If it saved you some hassle and you'd like to say thanks:
+
+- **[Sponsor on GitHub](https://github.com/sponsors/chrisfore)** — 0% fees, it all reaches me.
+- **[Venmo @Chris-Fore-20](https://venmo.com/u/Chris-Fore-20)**
+
+Totally optional — bug reports and printer info are just as appreciated. 🙌
 
 ## License
 

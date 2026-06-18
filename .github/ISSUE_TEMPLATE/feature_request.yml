@@ -1,0 +1,26 @@
+name: Feature request / feedback
+description: Suggest an improvement or share feedback.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea! Describe what you'd like and why it would help.
+  - type: textarea
+    id: idea
+    attributes:
+      label: The idea or feedback
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why it matters / your use case
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and didn't find a duplicate.
+          required: true
