@@ -34,6 +34,10 @@ _LOGGER = logging.getLogger(__name__)
 # box (multiColorBox) is NOT pushed — it only answers an on-demand getInfo — so we re-poll on an interval.
 _QUERY_TYPES = ("info", "tempature", "fan", "light", "multiColorBox")
 
+# `peripherie` is a static capability inventory ({camera, multiColorBox, udisk} presence flags) — it
+# doesn't change, so we ask for it once at connect (for diagnostics / model onboarding) and never poll it.
+_CONNECT_ONLY_QUERY_TYPES = ("peripherie",)
+
 
 @dataclass
 class AnycubicData:
@@ -56,6 +60,12 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         self.drying_set_temp = ACE_DRYING_DEFAULT_TEMP
         self.drying_set_hours = ACE_DRYING_DEFAULT_DURATION_MIN // 60
         self.data = AnycubicData()
+        # Capability data captured for diagnostics / new-model onboarding (see diagnostics.py).
+        # Non-sensitive: the printer's reported feature map, the peripheral presence inventory, and
+        # which report types this printer actually emits.
+        self.raw_features: dict | None = None
+        self.peripherie: dict | None = None
+        self.seen_report_types: set[str] = set()
         self._factory = transport_factory if transport_factory is not None else mqtt_mod.AnycubicMqtt
         self._transport = None
 
@@ -67,7 +77,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         """
         transport = self._factory(self.hs, on_report=self._on_report)
         transport.connect()
-        for t in _QUERY_TYPES:
+        for t in (*_QUERY_TYPES, *_CONNECT_ONLY_QUERY_TYPES):
             transport.query(t)
         return transport
 
@@ -103,10 +113,16 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             self._transport.publish, topic, json.dumps(payload))
 
     def _apply(self, msg_type: str, data: dict) -> None:
+        self.seen_report_types.add(msg_type)
         if msg_type == "info":
             self.data.printer = parse_info(data)
+            features = data.get("features")
+            if isinstance(features, dict):
+                self.raw_features = features
         elif msg_type == "multiColorBox":
             self.data.ace = merge_boxes(self.data.ace, parse_multicolorbox(data))
         elif msg_type == "light":
             self.data.light = parse_light(data)
+        elif msg_type == "peripherie" and isinstance(data, dict):
+            self.peripherie = data
         self.async_set_updated_data(self.data)

@@ -42,3 +42,25 @@ async def test_tempature_push_does_not_blank_printer(hass):
     await hass.async_block_till_done()
     assert coord.data.printer.nozzle_temp == 210            # unchanged, NOT None
     assert coord.data.printer.progress == 42
+
+
+async def test_coordinator_queries_peripherie_once_at_connect(hass):
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    # peripherie (the capability inventory) is asked for at connect, alongside the normal poll types.
+    assert "peripherie" in coord._transport.queries
+    assert "info" in coord._transport.queries
+
+
+async def test_coordinator_captures_capabilities(hass):
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    coord._on_report("info", {"state": "free", "model": "AnyCubic Kobra S1 Max",
+                              "temp": {"curr_chamber_temp": 36},
+                              "features": {"camera_timelapse_support": True, "fod_support": True}})
+    coord._on_report("peripherie", {"camera": 1, "multiColorBox": 1, "udisk": 0})
+    await hass.async_block_till_done()
+    # The raw feature map and peripheral inventory are stashed verbatim for diagnostics / onboarding.
+    assert coord.raw_features == {"camera_timelapse_support": True, "fod_support": True}
+    assert coord.peripherie == {"camera": 1, "multiColorBox": 1, "udisk": 0}
+    assert {"info", "peripherie"} <= coord.seen_report_types
