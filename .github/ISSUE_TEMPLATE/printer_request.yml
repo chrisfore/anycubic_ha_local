@@ -6,10 +6,16 @@ body:
   - type: markdown
     attributes:
       value: |
-        Help me add your AnyCubic printer! Two quick browser steps below — no software to install.
+        Help me add your AnyCubic printer! The integration does the detective work — just attach its
+        diagnostics. Nothing to install or run by hand:
 
-        > The `token` value in `/info` is **temporary** and safe to share. You can redact your IP
-        > address if you prefer; the key field the maintainer needs is `modelId`.
+        1. Install the integration and add your printer. It connects for **any** printer in the
+           Kobra 3 / S1 family, even unlisted ones (you'll get the base entities).
+        2. On the printer's device page in Home Assistant: ⋮ → **Download diagnostics**
+           (automatically redacted of addresses and identifiers).
+        3. Drag that file into the **Diagnostics file** box below.
+
+        The diagnostics include a `capabilities` block with everything needed to add your model.
   - type: input
     id: model_name
     attributes:
@@ -26,28 +32,19 @@ body:
     validations:
       required: true
   - type: textarea
-    id: info_json
+    id: diagnostics
     attributes:
-      label: Output of http://<printer-ip>:18910/info
+      label: Diagnostics file
       description: >
-        On a device on the same network, open http://YOUR-PRINTER-IP:18910/info in a web browser
-        (replace YOUR-PRINTER-IP — e.g. http://192.168.1.50:18910/info). Copy the JSON it shows
-        and paste it here.
-      render: json
+        Attach the redacted "Download diagnostics" file here (drag & drop). This is the important
+        bit — its `capabilities` block tells me the model ID, feature map, and camera/ACE presence.
+      placeholder: Drag the downloaded diagnostics file into this box.
     validations:
       required: true
-  - type: textarea
-    id: feature_json
-    attributes:
-      label: Output of http://<printer-ip>:18910/feature (optional)
-      description: >
-        Also try http://YOUR-PRINTER-IP:18910/feature and http://YOUR-PRINTER-IP:18910/features.
-        If either shows JSON, paste it here. If you get "404" / "Not Found" / a blank page, skip it.
-      render: json
   - type: checkboxes
     id: hardware
     attributes:
-      label: Which features does your printer physically have?
+      label: Which features does your printer physically have? (quick cross-check)
       options:
         - label: Enclosed / heated chamber with a door
         - label: Built-in camera
@@ -55,10 +52,13 @@ body:
         - label: Touchscreen
         - label: Auto-leveling
   - type: textarea
-    id: notes
+    id: cant_connect
     attributes:
-      label: Anything else?
-      description: Quirks, what works, what doesn't, link to the product page, etc.
+      label: Can't connect?
+      description: >
+        If the integration can't add your printer at all (e.g. an older Kobra 2 or a Kobra X on a
+        different protocol), paste any error message here. Diagnostics won't be available in that
+        case — your model + firmware above still help.
   - type: checkboxes
     id: checks
     attributes:

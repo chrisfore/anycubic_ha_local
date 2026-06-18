@@ -53,6 +53,7 @@ def _enc(plaintext: bytes, token: str, local_token: str) -> str:
 def test_do_handshake_drives_full_flow():
     token = "0123456789abcdefABCDEF0123456789"; local_token = "localtok12345678"
     info = {"token": token, "cn": "SER-1", "modelId": "20029",
+            "modelName": "Anycubic Kobra S1 Max", "deviceType": "fdm",
             "ctrlInfoUrl": "http://1.2.3.4:18910/ctrl", "ctrlType": "lan"}
     decrypted = {"broker": "mqtts://1.2.3.4:9883", "username": "u", "password": "p",
                  "deviceId": "DEV-1"}
@@ -68,5 +69,6 @@ def test_do_handshake_drives_full_flow():
     assert res.broker_host == "1.2.3.4" and res.broker_port == 9883
     assert res.username == "u" and res.password == "p"
     assert res.device_id == "DEV-1" and res.model_id == "20029" and res.serial == "SER-1"
+    assert res.model_name == "Anycubic Kobra S1 Max" and res.device_type == "fdm"
     assert calls[0] == ("GET", "http://1.2.3.4:18910/info")
     assert calls[1][0] == "POST" and "/ctrl?" in calls[1][1] and "sign=" in calls[1][1]

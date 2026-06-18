@@ -7,7 +7,7 @@ no rooting**.
 [![hacs](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz)
 [![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chrisfore&repository=anycubic_ha_local&category=integration)
 
-> **Status:** v1.1.2 — validated end-to-end on a Kobra S1 Max; the rest of the Kobra 3 / S1 family
+> **Status:** v1.1.3 — validated end-to-end on a Kobra S1 Max; the rest of the Kobra 3 / S1 family
 > shares the identical protocol. Entities adapt to each model (see **Supported printers**).
 
 ## Features
@@ -54,16 +54,20 @@ ACE / ACE 2 entities appear whenever a multi-color box is attached, on any of th
 
 ### My printer isn't listed — help me add it
 
-The Kobra 3 / S1 family shares one protocol, so adding a model is usually quick. To help:
+The Kobra 3 / S1 family shares one protocol, so adding a model is usually quick — and the
+integration does the detective work for you. There's nothing to install or run by hand:
 
-1. On a device on the same network as the printer, open **`http://<printer-ip>:18910/info`** in a
-   web browser (for example `http://192.168.1.50:18910/info`). Copy the JSON it returns.
-2. Open a **[Request support for my printer](../../issues/new?template=printer_request.yml)** issue,
-   paste that JSON, and tick which features your printer physically has (chamber, camera, ACE box).
+1. Install the integration and add your printer. It connects for **any** printer in this family,
+   even one that isn't listed yet (you'll just get the base entities).
+2. On the printer's device page in Home Assistant, choose ⋮ → **Download diagnostics**
+   (automatically redacted of addresses and identifiers).
+3. Open a **[Request support for my printer](../../issues/new?template=printer_request.yml)** issue
+   and **attach that file**.
 
-The `token` field is temporary and safe to share; redact your IP if you like — the key field is
-`modelId`. (Curious folks can also try `http://<printer-ip>:18910/feature`; paste it too if it
-returns JSON.)
+The diagnostics include a `capabilities` block — model ID & name, the printer's own reported
+feature map, the camera / multicolor-box presence inventory, and whether it has a chamber sensor —
+which is everything needed to add the model. If the integration can't connect at all (e.g. an
+older Kobra 2 or a Kobra X on a different protocol), say so in the issue with your model + firmware.
 
 ## Requirements
 
