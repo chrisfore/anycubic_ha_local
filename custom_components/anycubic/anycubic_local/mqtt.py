@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import ssl
 import time
 import uuid
@@ -11,6 +12,8 @@ import paho.mqtt.client as mqtt
 
 from .const import query_topic, report_prefix
 from .handshake import HandshakeResult
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class AnycubicMqtt:
@@ -26,10 +29,23 @@ class AnycubicMqtt:
         except Exception:  # noqa: BLE001
             pass
         self._c.on_message = self._handle
+        # Sessions are clean, so the broker forgets our subscription on every drop
+        # (the printer's broker restarts whenever the printer reboots). Subscribing in
+        # on_connect covers the initial CONNACK and every paho auto-reconnect; subscribing
+        # only once in connect() leaves publishes working but reports silently dead.
+        self._c.on_connect = self._on_connect
+        self._c.on_disconnect = self._on_disconnect
+
+    def _on_connect(self, *args) -> None:
+        self._c.subscribe(f"{report_prefix(self._hs.model_id, self._hs.device_id)}/#")
+        _LOGGER.debug("connected to %s:%s, subscribed to reports",
+                      self._hs.broker_host, self._hs.broker_port)
+
+    def _on_disconnect(self, *args) -> None:
+        _LOGGER.warning("printer broker connection lost; paho will auto-reconnect")
 
     def connect(self) -> None:
         self._c.connect(self._hs.broker_host, self._hs.broker_port, keepalive=60)
-        self._c.subscribe(f"{report_prefix(self._hs.model_id, self._hs.device_id)}/#")
         self._c.loop_start()
 
     def disconnect(self) -> None:

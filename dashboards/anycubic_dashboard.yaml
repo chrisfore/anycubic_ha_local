@@ -133,8 +133,6 @@ views:
           - type: custom:mushroom-template-card
             entity: sensor.anycubic_kobra_s1_max_status
             primary: >-
-              {{ states('sensor.anycubic_kobra_s1_max_file_name') }}
-            secondary: >-
               {{ states('sensor.anycubic_kobra_s1_max_status') | capitalize }} · {{ states('sensor.anycubic_kobra_s1_max_progress') }}%
             icon: mdi:printer-3d
             icon_color: >-
@@ -152,16 +150,39 @@ views:
               yellow: 0
               red: 0
 
-          # Print controls (show only while a job is active)
+          # Print controls. Button entities have no useful state to display (their state
+          # is the last-pressed timestamp, "Unknown" until first press), so the chips are
+          # icon-only and tap performs the press. Unavailable buttons (e.g. Resume while
+          # not paused) render dimmed automatically.
           - type: custom:mushroom-chips-card
             alignment: center
             chips:
               - type: entity
                 entity: button.anycubic_kobra_s1_max_pause
+                content_info: none
+                tap_action:
+                  action: perform-action
+                  perform_action: button.press
+                  target:
+                    entity_id: button.anycubic_kobra_s1_max_pause
               - type: entity
                 entity: button.anycubic_kobra_s1_max_resume
+                content_info: none
+                tap_action:
+                  action: perform-action
+                  perform_action: button.press
+                  target:
+                    entity_id: button.anycubic_kobra_s1_max_resume
               - type: entity
                 entity: button.anycubic_kobra_s1_max_stop
+                content_info: none
+                tap_action:
+                  action: perform-action
+                  perform_action: button.press
+                  target:
+                    entity_id: button.anycubic_kobra_s1_max_stop
+                  confirmation:
+                    text: Stop this print?
 
           # ============================ Information (below) ============================
           - type: glance
