@@ -24,26 +24,18 @@ views:
       - type: vertical-stack
         cards:
           # ============================ Camera (top) ============================
-          # Shown only while a job is active: opening the stream sends startCapture,
-          # and the printer turns its chamber light on whenever capture starts —
-          # so an always-on live view lights the printer on every page visit.
-          - type: conditional
-            conditions:
-              - condition: or
-                conditions:
-                  - condition: state
-                    entity: binary_sensor.anycubic_kobra_s1_max_printing
-                    state: "on"
-                  - condition: state
-                    entity: binary_sensor.anycubic_kobra_s1_max_paused
-                    state: "on"
-            card:
-              type: picture-glance
-              title: ""
-              camera_image: camera.anycubic_kobra_s1_max_camera
-              camera_view: live
-              entities:
-                - entity: light.anycubic_kobra_s1_max_chamber_light
+          # Tap-to-view tile, not an embedded live view: opening the stream sends
+          # startCapture and the printer turns its chamber light on whenever capture
+          # starts, so the feed (and the light) only starts when deliberately tapped.
+          - type: custom:mushroom-template-card
+            entity: camera.anycubic_kobra_s1_max_camera
+            primary: Camera
+            secondary: Tap to view the live feed
+            icon: mdi:cctv
+            icon_color: >-
+              {{ 'blue' if is_state('binary_sensor.anycubic_kobra_s1_max_printing','on') else 'disabled' }}
+            tap_action:
+              action: more-info
 
           # ============================ ACE 2 ============================
           - type: custom:mushroom-title-card
@@ -144,25 +136,44 @@ views:
           - type: custom:mushroom-title-card
             title: Kobra S1 Max
 
+          # Idle shows just "Idle" — the percent (and the gauge below) belong to a job.
+          # When no print is running the integration reports the LAST print's numbers
+          # (progress 100, final layer), so job cards are gated on an active job.
           - type: custom:mushroom-template-card
             entity: sensor.anycubic_kobra_s1_max_status
             primary: >-
+              {% if is_state('binary_sensor.anycubic_kobra_s1_max_printing','on')
+                 or is_state('binary_sensor.anycubic_kobra_s1_max_paused','on') %}
               {{ states('sensor.anycubic_kobra_s1_max_status') | capitalize }} · {{ states('sensor.anycubic_kobra_s1_max_progress') }}%
+              {% else %}
+              {{ states('sensor.anycubic_kobra_s1_max_status') | capitalize }}
+              {% endif %}
             icon: mdi:printer-3d
             icon_color: >-
               {{ 'blue' if is_state('binary_sensor.anycubic_kobra_s1_max_printing','on')
                  else ('orange' if is_state('binary_sensor.anycubic_kobra_s1_max_paused','on') else 'disabled') }}
 
-          - type: gauge
-            entity: sensor.anycubic_kobra_s1_max_progress
-            name: Progress
-            min: 0
-            max: 100
-            needle: true
-            severity:
-              green: 0
-              yellow: 0
-              red: 0
+          - type: conditional
+            conditions:
+              - condition: or
+                conditions:
+                  - condition: state
+                    entity: binary_sensor.anycubic_kobra_s1_max_printing
+                    state: "on"
+                  - condition: state
+                    entity: binary_sensor.anycubic_kobra_s1_max_paused
+                    state: "on"
+            card:
+              type: gauge
+              entity: sensor.anycubic_kobra_s1_max_progress
+              name: Progress
+              min: 0
+              max: 100
+              needle: true
+              severity:
+                green: 0
+                yellow: 0
+                red: 0
 
           # Print controls. Button entities have no useful state to display (their state
           # is the last-pressed timestamp, "Unknown" until first press), so the chips are
@@ -210,15 +221,27 @@ views:
               - entity: sensor.anycubic_kobra_s1_max_chamber_temperature
                 name: Chamber
 
-          - type: entities
-            title: Print
-            entities:
-              - entity: sensor.anycubic_kobra_s1_max_status
-              - entity: sensor.anycubic_kobra_s1_max_progress
-              - entity: sensor.anycubic_kobra_s1_max_current_layer
-              - entity: sensor.anycubic_kobra_s1_max_total_layers
-              - entity: sensor.anycubic_kobra_s1_max_time_remaining
-              - entity: sensor.anycubic_kobra_s1_max_file_name
+          # Job details are stale between jobs (last print's values) — active jobs only.
+          - type: conditional
+            conditions:
+              - condition: or
+                conditions:
+                  - condition: state
+                    entity: binary_sensor.anycubic_kobra_s1_max_printing
+                    state: "on"
+                  - condition: state
+                    entity: binary_sensor.anycubic_kobra_s1_max_paused
+                    state: "on"
+            card:
+              type: entities
+              title: Print
+              entities:
+                - entity: sensor.anycubic_kobra_s1_max_status
+                - entity: sensor.anycubic_kobra_s1_max_progress
+                - entity: sensor.anycubic_kobra_s1_max_current_layer
+                - entity: sensor.anycubic_kobra_s1_max_total_layers
+                - entity: sensor.anycubic_kobra_s1_max_time_remaining
+                - entity: sensor.anycubic_kobra_s1_max_file_name
 
           - type: entities
             title: Controls
