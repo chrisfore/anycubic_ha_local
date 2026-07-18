@@ -24,12 +24,26 @@ views:
       - type: vertical-stack
         cards:
           # ============================ Camera (top) ============================
-          - type: picture-glance
-            title: ""
-            camera_image: camera.anycubic_kobra_s1_max_camera
-            camera_view: live
-            entities:
-              - entity: light.anycubic_kobra_s1_max_chamber_light
+          # Shown only while a job is active: opening the stream sends startCapture,
+          # and the printer turns its chamber light on whenever capture starts —
+          # so an always-on live view lights the printer on every page visit.
+          - type: conditional
+            conditions:
+              - condition: or
+                conditions:
+                  - condition: state
+                    entity: binary_sensor.anycubic_kobra_s1_max_printing
+                    state: "on"
+                  - condition: state
+                    entity: binary_sensor.anycubic_kobra_s1_max_paused
+                    state: "on"
+            card:
+              type: picture-glance
+              title: ""
+              camera_image: camera.anycubic_kobra_s1_max_camera
+              camera_view: live
+              entities:
+                - entity: light.anycubic_kobra_s1_max_chamber_light
 
           # ============================ ACE 2 ============================
           - type: custom:mushroom-title-card
