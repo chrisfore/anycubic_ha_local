@@ -24,18 +24,44 @@ views:
       - type: vertical-stack
         cards:
           # ============================ Camera (top) ============================
-          # Tap-to-view tile, not an embedded live view: opening the stream sends
-          # startCapture and the printer turns its chamber light on whenever capture
-          # starts, so the feed (and the light) only starts when deliberately tapped.
-          - type: custom:mushroom-template-card
-            entity: camera.anycubic_kobra_s1_max_camera
-            primary: Camera
-            secondary: Tap to view the live feed
-            icon: mdi:cctv
-            icon_color: >-
-              {{ 'blue' if is_state('binary_sensor.anycubic_kobra_s1_max_printing','on') else 'disabled' }}
-            tap_action:
-              action: more-info
+          # Live view auto-shows only while a job is active (the printer lights the
+          # chamber for the job anyway). When idle it collapses to a tap-to-view tile,
+          # because opening the stream sends startCapture and the printer turns its
+          # chamber light on with capture — so idle page views never wake the light.
+          - type: conditional
+            conditions:
+              - condition: or
+                conditions:
+                  - condition: state
+                    entity: binary_sensor.anycubic_kobra_s1_max_printing
+                    state: "on"
+                  - condition: state
+                    entity: binary_sensor.anycubic_kobra_s1_max_paused
+                    state: "on"
+            card:
+              type: picture-glance
+              title: ""
+              camera_image: camera.anycubic_kobra_s1_max_camera
+              camera_view: live
+              entities:
+                - entity: light.anycubic_kobra_s1_max_chamber_light
+          - type: conditional
+            conditions:
+              - condition: state
+                entity: binary_sensor.anycubic_kobra_s1_max_printing
+                state_not: "on"
+              - condition: state
+                entity: binary_sensor.anycubic_kobra_s1_max_paused
+                state_not: "on"
+            card:
+              type: custom:mushroom-template-card
+              entity: camera.anycubic_kobra_s1_max_camera
+              primary: Camera
+              secondary: Tap to view the live feed
+              icon: mdi:cctv
+              icon_color: disabled
+              tap_action:
+                action: more-info
 
           # ============================ ACE 2 ============================
           - type: custom:mushroom-title-card
