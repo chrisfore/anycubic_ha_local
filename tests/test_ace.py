@@ -97,3 +97,53 @@ async def test_ace_drying_switch(hass):
         coord.async_send_command.assert_awaited_with("drying_stop")
         await hass.async_block_till_done()
         assert hass.states.get("switch.ace_2_drying").state == "off"
+
+
+async def test_ace_device_renamed_to_reported_model(hass):
+    # The ACE device registers as "ACE 2" (before the box reports) so entity IDs are
+    # deterministic, but once the box reports its model_id the device display name and
+    # model must reflect the real hardware (issue #3: an ACE Pro showed as "ACE 2").
+    from homeassistant.helpers import device_registry as dr
+
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "1.2.3.4"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coord = entry.runtime_data
+        registry = dr.async_get(hass)
+        dev = registry.async_get_device(identifiers={(DOMAIN, "SER-1_ace0")})
+        assert dev is not None and dev.name == "ACE 2"
+
+        coord._apply("multiColorBox", {"multi_color_box": [{
+            "id": 0, "model_id": 40001, "humidity": 24, "temp": 35, "slots": []}]})
+        await hass.async_block_till_done()
+
+        dev = registry.async_get_device(identifiers={(DOMAIN, "SER-1_ace0")})
+        assert dev.name == "ACE Pro"
+        assert dev.model == "ACE Pro"
+        # Entity IDs stay on the registration-time name — dashboards keep working.
+        assert hass.states.get("sensor.ace_2_humidity").state == "24"
+
+
+async def test_ace_device_user_rename_respected(hass):
+    # If the user renamed the device in the UI, the model-based rename must not clobber it.
+    from homeassistant.helpers import device_registry as dr
+
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "1.2.3.4"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coord = entry.runtime_data
+        registry = dr.async_get(hass)
+        dev = registry.async_get_device(identifiers={(DOMAIN, "SER-1_ace0")})
+        registry.async_update_device(dev.id, name_by_user="Filament box")
+        coord._apply("multiColorBox", {"multi_color_box": [{
+            "id": 0, "model_id": 40001, "humidity": 24, "temp": 35, "slots": []}]})
+        await hass.async_block_till_done()
+        dev = registry.async_get_device(identifiers={(DOMAIN, "SER-1_ace0")})
+        assert dev.name_by_user == "Filament box"
+        assert dev.model == "ACE Pro"

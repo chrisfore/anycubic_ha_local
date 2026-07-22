@@ -6,7 +6,8 @@ import logging
 from dataclasses import dataclass, field
 from datetime import timedelta
 
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 
 from .anycubic_local import mqtt as mqtt_mod
@@ -24,6 +25,8 @@ from .anycubic_local.models import (
 from .const import (
     ACE_DRYING_DEFAULT_DURATION_MIN,
     ACE_DRYING_DEFAULT_TEMP,
+    ACE_MODEL_NAMES,
+    ACE_SUFFIX,
     DEFAULT_QUERY_INTERVAL,
     DOMAIN,
 )
@@ -101,8 +104,13 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         return self.data
 
     def _on_report(self, msg_type: str, data: dict) -> None:
-        """Called on the paho network thread — marshal onto the HA event loop."""
-        self.hass.add_job(self._apply, msg_type, data)
+        """Called on the paho network thread — marshal onto the HA event loop.
+
+        Must be call_soon_threadsafe: add_job with a plain (non-@callback) function
+        dispatches to an executor thread, and async_set_updated_data off the event
+        loop trips HA's thread-safety check on every report.
+        """
+        self.hass.loop.call_soon_threadsafe(self._apply, msg_type, data)
 
     async def async_send_command(self, command: str, **kwargs) -> None:
         """Build a control command and publish it (executor — paho publish is blocking-ish)."""
@@ -112,6 +120,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         await self.hass.async_add_executor_job(
             self._transport.publish, topic, json.dumps(payload))
 
+    @callback
     def _apply(self, msg_type: str, data: dict) -> None:
         self.seen_report_types.add(msg_type)
         if msg_type == "info":
@@ -121,8 +130,28 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
                 self.raw_features = features
         elif msg_type == "multiColorBox":
             self.data.ace = merge_boxes(self.data.ace, parse_multicolorbox(data))
+            self._sync_ace_device_model()
         elif msg_type == "light":
             self.data.light = parse_light(data)
         elif msg_type == "peripherie" and isinstance(data, dict):
             self.peripherie = data
         self.async_set_updated_data(self.data)
+
+    @callback
+    def _sync_ace_device_model(self) -> None:
+        """Show the real box model (ACE Pro vs ACE 2) once the box reports it.
+
+        The ACE device registers under the literal name "ACE 2" before the box has
+        reported, so entity IDs stay deterministic (ace_2_*); this renames only the
+        registry display name/model. A user rename (name_by_user) still wins.
+        """
+        boxes = self.data.ace
+        model_id = boxes[0].model_id if boxes else None
+        name = ACE_MODEL_NAMES.get(str(model_id)) if model_id is not None else None
+        if not name:
+            return
+        registry = dr.async_get(self.hass)
+        device = registry.async_get_device(
+            identifiers={(DOMAIN, f"{self.hs.serial}_{ACE_SUFFIX}")})
+        if device is not None and (device.name != name or device.model != name):
+            registry.async_update_device(device.id, name=name, model=name)

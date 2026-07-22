@@ -1,4 +1,6 @@
 # tests/test_coordinator.py
+import threading
+
 from custom_components.anycubic.coordinator import AnycubicCoordinator
 from custom_components.anycubic.anycubic_local.handshake import HandshakeResult
 
@@ -42,6 +44,30 @@ async def test_tempature_push_does_not_blank_printer(hass):
     await hass.async_block_till_done()
     assert coord.data.printer.nozzle_temp == 210            # unchanged, NOT None
     assert coord.data.printer.progress == 42
+
+
+async def test_on_report_applies_on_the_event_loop_thread(hass):
+    # Reports arrive on the paho network thread. _apply calls async_set_updated_data,
+    # which HA only allows on the event loop — running it anywhere else (e.g. an
+    # executor thread) raises RuntimeError on every report and floods the log.
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    loop_thread = threading.current_thread()
+    applied_on = []
+    orig_apply = coord._apply
+
+    def spy(msg_type, data):
+        applied_on.append(threading.current_thread())
+        orig_apply(msg_type, data)
+
+    coord._apply = spy
+    worker = threading.Thread(target=coord._on_report, args=("info", {"state": "free"}))
+    worker.start()
+    worker.join()
+    await hass.async_block_till_done()
+    assert applied_on, "_apply never ran"
+    assert applied_on[0] is loop_thread
+    assert coord.data.printer is not None
 
 
 async def test_coordinator_queries_peripherie_once_at_connect(hass):
