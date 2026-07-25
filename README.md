@@ -7,7 +7,7 @@ no rooting**.
 [![hacs](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz)
 [![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chrisfore&repository=anycubic_ha_local&category=integration)
 
-> **Status:** v1.1.4 — validated end-to-end on a Kobra S1 Max; the rest of the Kobra 3 / S1 family
+> **Status:** v1.2.0 — validated end-to-end on a Kobra S1 Max; the rest of the Kobra 3 / S1 family
 > shares the identical protocol. Entities adapt to each model (see **Supported printers**).
 
 ## Features
@@ -51,6 +51,8 @@ integration reads the printer's `modelId` and only creates the entities that mod
 Enclosure-only entities (chamber temperature, chamber light, box fan) appear **only** on the enclosed
 S1 / S1 Max. The camera appears on the Kobra 3 / S1 family (built-in on enclosed, add-on on Kobra 3).
 ACE / ACE 2 entities appear whenever a multi-color box is attached, on any of these printers.
+With **two ACE units** attached, each box gets its own device (the second is numbered, e.g.
+“ACE Pro #2”) with the full set of sensors and controls.
 
 ### My printer isn't listed — help me add it
 
