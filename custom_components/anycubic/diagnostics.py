@@ -43,8 +43,11 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
             "printer": asdict(data.printer),
             "ace": [asdict(box) for box in data.ace],
             "light": asdict(data.light),
-            "drying_setpoints": {"temp_c": coordinator.drying_set_temp,
-                                 "hours": coordinator.drying_set_hours},
+            "drying_setpoints": {
+                str(box_id): {"temp_c": coordinator.drying_temp(box_id),
+                              "hours": coordinator.drying_hours(box_id)}
+                for box_id in sorted({0, *(box.id for box in data.ace)})
+            },
         },
         TO_REDACT,
     )

@@ -9,12 +9,15 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import AnycubicCoordinator
-from .entity import AnycubicAceEntity
+from .entity import AnycubicAceEntity, async_setup_ace_entities
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
     coord: AnycubicCoordinator = entry.runtime_data
-    add([AnycubicAceDryingSwitch(coord), AnycubicAceAutoFeedSwitch(coord)])
+    async_setup_ace_entities(
+        entry, coord, add,
+        lambda box_id: [AnycubicAceDryingSwitch(coord, box_id),
+                        AnycubicAceAutoFeedSwitch(coord, box_id)])
 
 
 class AnycubicAceDryingSwitch(AnycubicAceEntity, SwitchEntity):
@@ -24,8 +27,8 @@ class AnycubicAceDryingSwitch(AnycubicAceEntity, SwitchEntity):
     _attr_device_class = SwitchDeviceClass.SWITCH
     _attr_icon = "mdi:weather-sunny"
 
-    def __init__(self, coordinator: AnycubicCoordinator) -> None:
-        super().__init__(coordinator, "drying")
+    def __init__(self, coordinator: AnycubicCoordinator, box_id: int = 0) -> None:
+        super().__init__(coordinator, "drying", box_id)
 
     @property
     def is_on(self) -> bool:
@@ -34,13 +37,14 @@ class AnycubicAceDryingSwitch(AnycubicAceEntity, SwitchEntity):
     async def async_turn_on(self, **kwargs: Any) -> None:
         await self.coordinator.async_send_command(
             "drying_start",
-            target_temp=self.coordinator.drying_set_temp,
-            duration=self.coordinator.drying_set_hours * 60,
+            target_temp=self.coordinator.drying_temp(self._box_id),
+            duration=self.coordinator.drying_hours(self._box_id) * 60,
+            box_id=self._box_id,
         )
         self._set_optimistic(True)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        await self.coordinator.async_send_command("drying_stop")
+        await self.coordinator.async_send_command("drying_stop", box_id=self._box_id)
         self._set_optimistic(False)
 
     def _set_optimistic(self, on: bool) -> None:
@@ -58,19 +62,19 @@ class AnycubicAceAutoFeedSwitch(AnycubicAceEntity, SwitchEntity):
     _attr_device_class = SwitchDeviceClass.SWITCH
     _attr_icon = "mdi:autorenew"
 
-    def __init__(self, coordinator: AnycubicCoordinator) -> None:
-        super().__init__(coordinator, "auto_feed")
+    def __init__(self, coordinator: AnycubicCoordinator, box_id: int = 0) -> None:
+        super().__init__(coordinator, "auto_feed", box_id)
 
     @property
     def is_on(self) -> bool:
         return bool(self._box and self._box.auto_feed)
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        await self.coordinator.async_send_command("auto_feed", on=True)
+        await self.coordinator.async_send_command("auto_feed", on=True, box_id=self._box_id)
         self._set_optimistic(1)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
-        await self.coordinator.async_send_command("auto_feed", on=False)
+        await self.coordinator.async_send_command("auto_feed", on=False, box_id=self._box_id)
         self._set_optimistic(0)
 
     def _set_optimistic(self, value: int) -> None:

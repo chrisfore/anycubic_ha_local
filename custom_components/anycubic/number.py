@@ -10,17 +10,17 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import ENCLOSED_MODELS
 from .coordinator import AnycubicCoordinator
 from .definitions import PRINTER_NUMBERS, AnycubicNumberEntityDescription
-from .entity import AnycubicAceEntity, AnycubicEntity
+from .entity import AnycubicAceEntity, AnycubicEntity, async_setup_ace_entities
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
     coord: AnycubicCoordinator = entry.runtime_data
     enclosed = coord.hs.model_id in ENCLOSED_MODELS
-    entities: list = [
-        AnycubicNumber(coord, d) for d in PRINTER_NUMBERS if enclosed or not d.enclosed_only
-    ]
-    entities += [AnycubicDryingTempNumber(coord), AnycubicDryingTimeNumber(coord)]
-    add(entities)
+    add([AnycubicNumber(coord, d) for d in PRINTER_NUMBERS if enclosed or not d.enclosed_only])
+    async_setup_ace_entities(
+        entry, coord, add,
+        lambda box_id: [AnycubicDryingTempNumber(coord, box_id),
+                        AnycubicDryingTimeNumber(coord, box_id)])
 
 
 class AnycubicNumber(AnycubicEntity, NumberEntity):
@@ -68,15 +68,15 @@ class AnycubicDryingTempNumber(_AnycubicDryingSetpoint):
     _attr_native_step = 5
     _attr_icon = "mdi:thermometer"
 
-    def __init__(self, coordinator: AnycubicCoordinator) -> None:
-        super().__init__(coordinator, "drying_temp")
+    def __init__(self, coordinator: AnycubicCoordinator, box_id: int = 0) -> None:
+        super().__init__(coordinator, "drying_temp", box_id)
 
     @property
     def native_value(self) -> float:
-        return self.coordinator.drying_set_temp
+        return self.coordinator.drying_temp(self._box_id)
 
     async def async_set_native_value(self, value: float) -> None:
-        self.coordinator.drying_set_temp = int(value)
+        self.coordinator.set_drying_temp(self._box_id, int(value))
         self.coordinator.async_set_updated_data(self.coordinator.data)
 
 
@@ -91,13 +91,13 @@ class AnycubicDryingTimeNumber(_AnycubicDryingSetpoint):
     _attr_native_step = 1
     _attr_icon = "mdi:timer-sand"
 
-    def __init__(self, coordinator: AnycubicCoordinator) -> None:
-        super().__init__(coordinator, "drying_duration")
+    def __init__(self, coordinator: AnycubicCoordinator, box_id: int = 0) -> None:
+        super().__init__(coordinator, "drying_duration", box_id)
 
     @property
     def native_value(self) -> float:
-        return self.coordinator.drying_set_hours
+        return self.coordinator.drying_hours(self._box_id)
 
     async def async_set_native_value(self, value: float) -> None:
-        self.coordinator.drying_set_hours = int(value)
+        self.coordinator.set_drying_hours(self._box_id, int(value))
         self.coordinator.async_set_updated_data(self.coordinator.data)

@@ -26,9 +26,9 @@ from .const import (
     ACE_DRYING_DEFAULT_DURATION_MIN,
     ACE_DRYING_DEFAULT_TEMP,
     ACE_MODEL_NAMES,
-    ACE_SUFFIX,
     DEFAULT_QUERY_INTERVAL,
     DOMAIN,
+    ace_suffix,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -59,9 +59,10 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # (camera, device link) so a name is honored and re-resolved; MQTT uses the
         # printer-reported broker. Falls back to the broker host when not supplied.
         self.host = host or hs.broker_host
-        # ACE drying setpoints (number entities edit these; the drying switch uses them).
-        self.drying_set_temp = ACE_DRYING_DEFAULT_TEMP
-        self.drying_set_hours = ACE_DRYING_DEFAULT_DURATION_MIN // 60
+        # ACE drying setpoints per box id (number entities edit these; the drying switch
+        # uses them). Unset boxes fall back to the validated app defaults.
+        self._drying_temps: dict[int, int] = {}
+        self._drying_hours: dict[int, int] = {}
         self.data = AnycubicData()
         # Capability data captured for diagnostics / new-model onboarding (see diagnostics.py).
         # Non-sensitive: the printer's reported feature map, the peripheral presence inventory, and
@@ -137,21 +138,35 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             self.peripherie = data
         self.async_set_updated_data(self.data)
 
+    def drying_temp(self, box_id: int) -> int:
+        return self._drying_temps.get(box_id, ACE_DRYING_DEFAULT_TEMP)
+
+    def set_drying_temp(self, box_id: int, value: int) -> None:
+        self._drying_temps[box_id] = value
+
+    def drying_hours(self, box_id: int) -> int:
+        return self._drying_hours.get(box_id, ACE_DRYING_DEFAULT_DURATION_MIN // 60)
+
+    def set_drying_hours(self, box_id: int, value: int) -> None:
+        self._drying_hours[box_id] = value
+
     @callback
     def _sync_ace_device_model(self) -> None:
-        """Show the real box model (ACE Pro vs ACE 2) once the box reports it.
+        """Show each box's real model (ACE Pro vs ACE 2) once it reports it.
 
-        The ACE device registers under the literal name "ACE 2" before the box has
-        reported, so entity IDs stay deterministic (ace_2_*); this renames only the
-        registry display name/model. A user rename (name_by_user) still wins.
+        Boxes register before their model is known (box 0 as the literal "ACE 2" so
+        entity IDs stay deterministic, further boxes as "ACE #N"); this renames only
+        the registry display name/model. A user rename (name_by_user) still wins.
         """
-        boxes = self.data.ace
-        model_id = boxes[0].model_id if boxes else None
-        name = ACE_MODEL_NAMES.get(str(model_id)) if model_id is not None else None
-        if not name:
-            return
+        from .entity import ace_device_name  # local import: entity.py imports this module
+
         registry = dr.async_get(self.hass)
-        device = registry.async_get_device(
-            identifiers={(DOMAIN, f"{self.hs.serial}_{ACE_SUFFIX}")})
-        if device is not None and (device.name != name or device.model != name):
-            registry.async_update_device(device.id, name=name, model=name)
+        for box in self.data.ace:
+            model = ACE_MODEL_NAMES.get(str(box.model_id)) if box.model_id is not None else None
+            if not model:
+                continue
+            name = ace_device_name(box.id, box.model_id)
+            device = registry.async_get_device(
+                identifiers={(DOMAIN, f"{self.hs.serial}_{ace_suffix(box.id)}")})
+            if device is not None and (device.name != name or device.model != model):
+                registry.async_update_device(device.id, name=name, model=model)

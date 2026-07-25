@@ -95,13 +95,14 @@ async def test_drying_numbers_feed_the_switch(hass):
     assert temp.native_value == 45 and dur.native_value == 4
     await temp.async_set_native_value(55)
     await dur.async_set_native_value(6)
-    assert coord.drying_set_temp == 55 and coord.drying_set_hours == 6
+    assert coord.drying_temp(0) == 55 and coord.drying_hours(0) == 6
 
     coord._apply("multiColorBox", {"multi_color_box": [{"id": 0, "temp": 30}]})
     coord.async_send_command = AsyncMock()
     sw = AnycubicAceDryingSwitch(coord)
     await sw.async_turn_on()
-    coord.async_send_command.assert_awaited_with("drying_start", target_temp=55, duration=360)
+    coord.async_send_command.assert_awaited_with(
+        "drying_start", target_temp=55, duration=360, box_id=0)
 
 
 async def test_auto_feed_switch(hass):
@@ -113,8 +114,8 @@ async def test_auto_feed_switch(hass):
 
     assert sw.is_on is False
     await sw.async_turn_on()
-    coord.async_send_command.assert_awaited_with("auto_feed", on=True)
+    coord.async_send_command.assert_awaited_with("auto_feed", on=True, box_id=0)
     assert sw.is_on is True
     await sw.async_turn_off()
-    coord.async_send_command.assert_awaited_with("auto_feed", on=False)
+    coord.async_send_command.assert_awaited_with("auto_feed", on=False, box_id=0)
     assert sw.is_on is False

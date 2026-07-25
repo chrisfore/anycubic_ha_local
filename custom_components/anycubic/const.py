@@ -41,8 +41,12 @@ ENCLOSED_MODELS: frozenset[str] = frozenset({"20025", "20029"})
 # Kobra 2 has no camera; Kobra X uses WebRTC (no local FLV) — both excluded.
 CAMERA_MODELS: frozenset[str] = frozenset({"20024", "20025", "20026", "20027", "20029"})
 
-ACE_SUFFIX = "ace0"   # box 0; multi-ACE later
 ACE_SLOT_COUNT = 4
+
+
+def ace_suffix(box_id: int) -> str:
+    """Device-identifier / unique-id suffix for an ACE box ("ace0", "ace1", ...)."""
+    return f"ace{box_id}"
 
 # Defaults used when the drying switch is turned on (the values the AnyCubic app sent live).
 ACE_DRYING_DEFAULT_TEMP = 45        # °C
