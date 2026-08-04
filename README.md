@@ -4,7 +4,7 @@ A Home Assistant custom integration for the **AnyCubic Kobra 3 / S1 series** (an
 talking to the printer's **stock LAN Mode** over its local MQTT broker — **no AnyCubic cloud account,
 no rooting**.
 
-[![hacs](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://hacs.xyz)
+[![hacs](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz)
 [![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chrisfore&repository=anycubic_ha_local&category=integration)
 
 > **Status:** v1.2.0 — validated end-to-end on a Kobra S1 Max; the rest of the Kobra 3 / S1 family
@@ -78,17 +78,16 @@ older Kobra 2 or a Kobra X on a different protocol), say so in the issue with yo
 - Home Assistant 2024.9 or newer, with HACS.
 - The `ffmpeg` add-on / dependency (bundled with most HA installs) for the camera.
 
-## Installation (HACS custom repository)
+## Installation (HACS)
 
-**Quickest:** click the **"Add to HACS"** badge at the top — it opens your Home Assistant and pre-fills
-this repository. Then **Download** and **restart**. Or add it manually:
+This integration is in the **HACS default store** — no custom-repository step needed.
+**Quickest:** click the **"Add to HACS"** badge at the top — it opens the repository page in your
+Home Assistant. Or find it manually:
 
-1. HACS → ⋮ → **Custom repositories**.
-2. Add this repository's URL, category **Integration**, then **Add**.
-3. Find **AnyCubic 3D Printer - Local** in HACS and **Download**.
-4. **Restart Home Assistant.**
-5. **Settings → Devices & Services → Add Integration → AnyCubic 3D Printer - Local**.
-6. Enter the printer's **IP address or hostname** (e.g. `192.168.1.50` or `printer.local`).
+1. HACS → search for **AnyCubic 3D Printer - Local** and **Download**.
+2. **Restart Home Assistant.**
+3. **Settings → Devices & Services → Add Integration → AnyCubic 3D Printer - Local**.
+4. Enter the printer's **IP address or hostname** (e.g. `192.168.1.50` or `printer.local`).
    Host names are resolved with whatever DNS/mDNS your HA host has.
 
 ## Entities
