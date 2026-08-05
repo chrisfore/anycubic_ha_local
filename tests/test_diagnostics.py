@@ -56,3 +56,30 @@ async def test_diagnostics_redacts_identifiers(hass):
     blob = str(diag)
     for secret in ("10.0.0.5", "secretpw", "SER-1", "DEV", "JaneDoe"):
         assert secret not in blob
+
+
+async def test_diagnostics_includes_raw_multicolorbox_report(hass):
+    """The last raw multiColorBox payload is captured verbatim so protocol issues
+    (unknown fields, model-specific key differences) can be triaged from a
+    diagnostics attachment alone — including keys our parser doesn't know about."""
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "10.0.0.5"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coord = entry.runtime_data
+        raw = {"multi_color_box": [{
+            "id": 0, "status": 1, "model_id": 40001, "auto_feed": 0, "loaded_slot": 1,
+            "slots": [{"index": 0, "sku": "AHHSGY-106", "type": "PLA High Speed",
+                       "color": [117, 120, 123], "status": 5, "consumables_percent": 0,
+                       "some_future_field": 87}],
+        }]}
+        coord._apply("multiColorBox", raw)
+        await hass.async_block_till_done()
+
+        diag = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diag["raw_multicolorbox"] == raw
+    # Unknown/unparsed wire keys survive verbatim — that's the whole point.
+    assert diag["raw_multicolorbox"]["multi_color_box"][0]["slots"][0]["some_future_field"] == 87
