@@ -7,7 +7,7 @@ no rooting**.
 [![hacs](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz)
 [![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chrisfore&repository=anycubic_ha_local&category=integration)
 
-> **Status:** v1.2.0 — validated end-to-end on a Kobra S1 Max; the rest of the Kobra 3 / S1 family
+> **Status:** v1.2.1 — validated end-to-end on a Kobra S1 Max; the rest of the Kobra 3 / S1 family
 > shares the identical protocol. Entities adapt to each model (see **Supported printers**).
 
 ## Features

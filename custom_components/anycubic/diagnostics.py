@@ -42,6 +42,10 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
             },
             "printer": asdict(data.printer),
             "ace": [asdict(box) for box in data.ace],
+            # Verbatim last multiColorBox payload — carries wire keys the parser may not
+            # know about (e.g. model-specific slot fields), for protocol triage from a
+            # diagnostics attachment alone.
+            "raw_multicolorbox": coordinator.raw_multicolorbox,
             "light": asdict(data.light),
             "drying_setpoints": {
                 str(box_id): {"temp_c": coordinator.drying_temp(box_id),

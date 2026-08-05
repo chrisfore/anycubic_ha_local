@@ -69,6 +69,10 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # which report types this printer actually emits.
         self.raw_features: dict | None = None
         self.peripherie: dict | None = None
+        # Last raw multiColorBox payload, verbatim — diagnostics exposes it so protocol
+        # differences across printer/ACE firmwares (unknown or renamed slot keys) can be
+        # triaged from a diagnostics attachment alone.
+        self.raw_multicolorbox: dict | None = None
         self.seen_report_types: set[str] = set()
         self._factory = transport_factory if transport_factory is not None else mqtt_mod.AnycubicMqtt
         self._transport = None
@@ -130,6 +134,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             if isinstance(features, dict):
                 self.raw_features = features
         elif msg_type == "multiColorBox":
+            self.raw_multicolorbox = data
             self.data.ace = merge_boxes(self.data.ace, parse_multicolorbox(data))
             self._sync_ace_device_model()
         elif msg_type == "light":
