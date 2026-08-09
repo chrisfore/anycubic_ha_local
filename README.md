@@ -7,7 +7,7 @@ no rooting**.
 [![hacs](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz)
 [![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chrisfore&repository=anycubic_ha_local&category=integration)
 
-> **Status:** v1.2.1 — validated end-to-end on a Kobra S1 Max; the rest of the Kobra 3 / S1 family
+> **Status:** v1.2.2 — validated end-to-end on a Kobra S1 Max; the rest of the Kobra 3 / S1 family
 > shares the identical protocol. Entities adapt to each model (see **Supported printers**).
 
 ## Features
@@ -133,6 +133,10 @@ and assumes the default device names — adjust the entity-ID prefixes if you re
 - **Loaded slot shows nothing / "None":** no filament is loaded into the toolhead (the printer's
   `-1` sentinel is shown as *None*).
 - **Camera won't play:** make sure `ffmpeg` is available and the printer is reachable on port 18088.
+- **Chamber light turns on by itself after a Home Assistant restart:** the printer firmware switches
+  the chamber LED on whenever camera capture starts, and that can't be overridden. v1.2.2 stops HA's
+  startup stream probe from triggering capture; also leave **Preload camera stream** (camera →
+  settings gear) off, or HA keeps the capture — and the LED — running the whole time HA is up.
 - **Bug reports:** download diagnostics from the device page (⋮ → *Download diagnostics*) — it is
   automatically redacted of addresses and identifiers.
 
