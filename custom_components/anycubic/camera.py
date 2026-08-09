@@ -38,6 +38,17 @@ class AnycubicCamera(Camera):
             name=MODEL_NAMES.get(self.coordinator.hs.model_id) or "AnyCubic printer",
         )
 
+    async def async_refresh_providers(self, *args, **kwargs) -> None:
+        """Opt out of HA's WebRTC-provider probe for this camera.
+
+        The probe calls stream_source() on every entity add (and whenever a provider
+        registers), and stream_source() commands camera_start — which makes the printer
+        firmware switch the chamber LED on. With go2rtc bundled in HA, that lit the
+        chamber on every HA start / entry reload. Skipping the probe costs only WebRTC
+        playback; the frontend falls back to HLS, which reaches stream_source() at real
+        playback time instead.
+        """
+
     async def stream_source(self) -> str:
         """Ask the printer to start the feed, then hand HA's ffmpeg the FLV URL."""
         await self.coordinator.async_send_command("camera_start")
