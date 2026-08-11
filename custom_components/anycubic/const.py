@@ -22,6 +22,7 @@ MODEL_NAMES: dict[str, str] = {
     "20025": "AnyCubic Kobra S1",
     "20026": "AnyCubic Kobra 3 Max",
     "20027": "AnyCubic Kobra 3 V2",
+    "20028": "AnyCubic Kobra 4",
     "20029": "AnyCubic Kobra S1 Max",
     "20030": "AnyCubic Kobra X",
 }
@@ -37,9 +38,10 @@ ACE_MODEL_NAMES: dict[str, str] = {
 # real hardware only here. On open-frame Kobra models those fields are absent or no-ops.
 ENCLOSED_MODELS: frozenset[str] = frozenset({"20025", "20029"})
 
-# Models with an FLV camera at :18088 (built-in on enclosed, add-on on the Kobra 3 family).
-# Kobra 2 has no camera; Kobra X uses WebRTC (no local FLV) — both excluded.
-CAMERA_MODELS: frozenset[str] = frozenset({"20024", "20025", "20026", "20027", "20029"})
+# Models with an FLV camera at :18088 (built-in on enclosed and the Kobra 4, add-on on the
+# Kobra 3 family). Kobra 2 has no camera; Kobra X uses WebRTC (no local FLV) — both excluded.
+# Kobra 4 confirmed from user diagnostics (issue #6): rtspUrl in the info report, peripherie camera=1.
+CAMERA_MODELS: frozenset[str] = frozenset({"20024", "20025", "20026", "20027", "20028", "20029"})
 
 ACE_SLOT_COUNT = 4
 

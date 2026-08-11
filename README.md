@@ -7,7 +7,7 @@ no rooting**.
 [![hacs](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz)
 [![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chrisfore&repository=anycubic_ha_local&category=integration)
 
-> **Status:** v1.2.2 — validated end-to-end on a Kobra S1 Max; the rest of the Kobra 3 / S1 family
+> **Status:** v1.2.3 — validated end-to-end on a Kobra S1 Max; the rest of the Kobra 3 / S1 family
 > shares the identical protocol. Entities adapt to each model (see **Supported printers**).
 
 ## Features
@@ -44,12 +44,14 @@ integration reads the printer's `modelId` and only creates the entities that mod
 | Kobra S1 Max | `20029` | ✅ Validated on hardware (enclosed: chamber temp/light, box fan, camera, ACE 2) |
 | Kobra S1 | `20025` | ✅ Same enclosed feature set, identical protocol |
 | Kobra 3 / 3 V2 / 3 Max | `20024` / `20027` / `20026` | ✅ Open-frame — no chamber temp/light or box fan; camera is the AnyCubic add-on |
+| Kobra 4 | `20028` | ✅ Validated from user diagnostics — open-frame, built-in camera, ACE supported |
 | Kobra 2 Pro / Plus / Max | `20021` / `20022` / `20023` | ⚠️ Experimental — older *unsigned* handshake, not yet validated (you'll get a clear "unsupported handshake" message if it can't connect) |
 | Kobra X | `20030` | ⚠️ Experimental — different controller; camera is WebRTC (no local stream) so no camera entity |
 | Photon (resin) | — | ❌ Different platform, no local LAN API |
 
 Enclosure-only entities (chamber temperature, chamber light, box fan) appear **only** on the enclosed
-S1 / S1 Max. The camera appears on the Kobra 3 / S1 family (built-in on enclosed, add-on on Kobra 3).
+S1 / S1 Max. The camera appears on the Kobra 3 / 4 / S1 family (built-in on enclosed and the
+Kobra 4, add-on on Kobra 3).
 ACE / ACE 2 entities appear whenever a multi-color box is attached, on any of these printers.
 With **two ACE units** attached, each box gets its own device (the second is numbered, e.g.
 “ACE Pro #2”) with the full set of sensors and controls.
