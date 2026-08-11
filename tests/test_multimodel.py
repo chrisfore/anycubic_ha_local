@@ -45,6 +45,17 @@ async def test_kobra_x_has_no_local_camera(hass):
     assert hass.states.get("sensor.anycubic_kobra_x_nozzle_temperature") is not None
 
 
+async def test_kobra_4_open_frame_with_camera(hass):
+    """Kobra 4 (modelId 20028) — validated from user diagnostics (issue #6): open frame
+    (no chamber temp), built-in FLV camera (rtspUrl in the info report), ACE supported."""
+    await _setup(hass, "20028", "SER-K4")
+    g = hass.states.get
+    assert g("sensor.anycubic_kobra_4_nozzle_temperature") is not None
+    assert g("camera.anycubic_kobra_4_camera") is not None
+    assert g("sensor.anycubic_kobra_4_chamber_temperature") is None
+    assert g("light.anycubic_kobra_4_chamber_light") is None
+
+
 async def test_s1max_keeps_full_entity_set(hass):
     await _setup(hass, "20029", "SER-S1M")  # validated reference device — must be unchanged
     g = hass.states.get
