@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from typing import Any
+from urllib.parse import urlsplit
 
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
@@ -11,9 +12,22 @@ from homeassistant.core import HomeAssistant
 from .coordinator import AnycubicCoordinator
 
 # Identifiers / addresses that should never leave the user's machine in a shared report.
-# camera_url embeds the printer's IP; filename can embed the user's name.
-TO_REDACT = {"host", "ip", "camera_url", "filename", "username", "password", "device_id",
+# filename can embed the user's name. camera_url is handled by _mask_url_host instead:
+# scheme/port/path must survive (they're how an unvalidated model's camera gets debugged
+# from a diagnostics attachment — issue #6), only the address is secret.
+TO_REDACT = {"host", "ip", "filename", "username", "password", "device_id",
              "serial", "broker_host", "deviceId", "mac"}
+
+
+def _mask_url_host(url: str | None) -> str | None:
+    """Redact only the host (and any query, which could carry a token) of a URL."""
+    if not url:
+        return url
+    parts = urlsplit(url)
+    if not parts.hostname:
+        return "**REDACTED**"
+    netloc = parts.netloc.replace(parts.hostname, "**REDACTED**")
+    return parts._replace(netloc=netloc, query="**REDACTED**" if parts.query else "").geturl()
 
 
 async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
@@ -40,7 +54,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
                 "peripherie": coordinator.peripherie,
                 "report_types_seen": sorted(coordinator.seen_report_types),
             },
-            "printer": asdict(data.printer),
+            "printer": asdict(data.printer) | {"camera_url": _mask_url_host(data.printer.camera_url)},
             "ace": [asdict(box) for box in data.ace],
             # Verbatim last multiColorBox payload — carries wire keys the parser may not
             # know about (e.g. model-specific slot fields), for protocol triage from a
