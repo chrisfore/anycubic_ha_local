@@ -44,7 +44,7 @@ integration reads the printer's `modelId` and only creates the entities that mod
 | Kobra S1 Max | `20029` | ✅ Validated on hardware (enclosed: chamber temp/light, box fan, camera, ACE 2) |
 | Kobra S1 | `20025` | ✅ Same enclosed feature set, identical protocol |
 | Kobra 3 / 3 V2 / 3 Max | `20024` / `20027` / `20026` | ✅ Open-frame — no chamber temp/light or box fan; camera is the AnyCubic add-on |
-| Kobra 4 | `20028` | ✅ Validated from user diagnostics — open-frame, built-in camera, ACE supported |
+| Kobra 4 | `20028` | ✅ Validated on hardware by a user — open-frame, built-in camera (newer tokenized stream, v1.2.4+), ACE supported |
 | Kobra 2 Pro / Plus / Max | `20021` / `20022` / `20023` | ⚠️ Experimental — older *unsigned* handshake, not yet validated (you'll get a clear "unsupported handshake" message if it can't connect) |
 | Kobra X | `20030` | ⚠️ Experimental — different controller; camera is WebRTC (no local stream) so no camera entity |
 | Photon (resin) | — | ❌ Different platform, no local LAN API |
