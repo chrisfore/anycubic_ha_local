@@ -77,3 +77,7 @@ class AnycubicMqtt:
         data = obj.get("data")
         if data is not None:
             self._on_report(msg_type, data)
+        elif msg_type == "video":
+            # S1-family video reports answer startCapture with data:null ("initSuccess").
+            # They must still reach a capture-kick waiter, or it stalls until timeout.
+            self._on_report(msg_type, {})

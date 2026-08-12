@@ -1,6 +1,7 @@
 """Push coordinator: owns the transport, holds merged PrinterState + ACE boxes."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
@@ -41,6 +42,11 @@ _QUERY_TYPES = ("info", "tempature", "fan", "light", "multiColorBox")
 # doesn't change, so we ask for it once at connect (for diagnostics / model onboarding) and never poll it.
 _CONNECT_ONLY_QUERY_TYPES = ("peripherie",)
 
+# Camera capture kick (see async_start_capture): the official client's stop -> pause -> start
+# sequence, then a bounded wait for the printer's video report.
+VIDEO_KICK_DELAY = 1.0
+VIDEO_REPORT_TIMEOUT = 4.0
+
 
 @dataclass
 class AnycubicData:
@@ -74,6 +80,11 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # triaged from a diagnostics attachment alone.
         self.raw_multicolorbox: dict | None = None
         self.seen_report_types: set[str] = set()
+        # Stream URL from the latest video report. New-generation firmware (Kobra 4 / X)
+        # answers startCapture with a per-session tokenized URL (:18088/live/<token>);
+        # kept out of PrinterState because parse_info rebuilds that on every info report.
+        self.video_stream_url: str | None = None
+        self._video_report: asyncio.Event | None = None
         self._factory = transport_factory if transport_factory is not None else mqtt_mod.AnycubicMqtt
         self._transport = None
 
@@ -117,6 +128,25 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         """
         self.hass.loop.call_soon_threadsafe(self._apply, msg_type, data)
 
+    async def async_start_capture(self) -> None:
+        """Start camera capture the way the official client does.
+
+        The slicer's LAN camera always sends stopCapture, pauses, then startCapture —
+        new-generation firmware (Kobra 4 / X) doesn't begin pushing on a bare start —
+        and the startCapture answer carries the tokenized stream URL, captured into
+        video_stream_url by _apply. S1-family printers answer with no URL; the wait
+        just ends early and callers fall back to the info-report URL.
+        """
+        self._video_report = asyncio.Event()
+        await self.async_send_command("camera_stop")
+        await asyncio.sleep(VIDEO_KICK_DELAY)
+        await self.async_send_command("camera_start")
+        try:
+            async with asyncio.timeout(VIDEO_REPORT_TIMEOUT):
+                await self._video_report.wait()
+        except TimeoutError:
+            _LOGGER.debug("no video report within %ss of startCapture", VIDEO_REPORT_TIMEOUT)
+
     async def async_send_command(self, command: str, **kwargs) -> None:
         """Build a control command and publish it (executor — paho publish is blocking-ish)."""
         if self._transport is None:
@@ -141,6 +171,12 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             self.data.light = parse_light(data)
         elif msg_type == "peripherie" and isinstance(data, dict):
             self.peripherie = data
+        elif msg_type == "video":
+            url = (data.get("urls") or {}).get("rtspUrl") if isinstance(data, dict) else None
+            if url:
+                self.video_stream_url = url
+            if self._video_report is not None:
+                self._video_report.set()
         self.async_set_updated_data(self.data)
 
     def drying_temp(self, box_id: int) -> int:
