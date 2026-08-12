@@ -1,14 +1,14 @@
 # AnyCubic 3D Printer - Local
 
-A Home Assistant custom integration for the **AnyCubic Kobra 3 / S1 series** (and ACE / ACE 2),
+A Home Assistant custom integration for the **AnyCubic Kobra 3 / 4 / S1 series** (and ACE / ACE 2),
 talking to the printer's **stock LAN Mode** over its local MQTT broker — **no AnyCubic cloud account,
 no rooting**.
 
 [![hacs](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz)
 [![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chrisfore&repository=anycubic_ha_local&category=integration)
 
-> **Status:** v1.2.4 — validated end-to-end on a Kobra S1 Max; the rest of the Kobra 3 / S1 family
-> shares the identical protocol. Entities adapt to each model (see **Supported printers**).
+> **Status:** v1.2.4 — validated end-to-end on a Kobra S1 Max and user-validated on a Kobra 4; the
+> rest of the family shares the identical protocol. Entities adapt to each model (see **Supported printers**).
 
 ## Features
 
@@ -36,8 +36,10 @@ never persisted — nothing sensitive is stored on the Home Assistant host.
 
 ## Supported printers
 
-The Kobra 3 / S1 generation all speak the same signed LAN protocol, so they share one code path. The
-integration reads the printer's `modelId` and only creates the entities that model actually has.
+The Kobra 3 / 4 / S1 generations all speak the same signed LAN protocol, so they share one code
+path (the newer Kobra 4-era firmware differs only in how the camera stream is started, handled
+automatically). The integration reads the printer's `modelId` and only creates the entities that
+model actually has.
 
 | Printer | `modelId` | Status |
 | --- | --- | --- |
@@ -46,7 +48,7 @@ integration reads the printer's `modelId` and only creates the entities that mod
 | Kobra 3 / 3 V2 / 3 Max | `20024` / `20027` / `20026` | ✅ Open-frame — no chamber temp/light or box fan; camera is the AnyCubic add-on |
 | Kobra 4 | `20028` | ✅ Validated on hardware by a user — open-frame, built-in camera (newer tokenized stream, v1.2.4+), ACE supported |
 | Kobra 2 Pro / Plus / Max | `20021` / `20022` / `20023` | ⚠️ Experimental — older *unsigned* handshake, not yet validated (you'll get a clear "unsupported handshake" message if it can't connect) |
-| Kobra X | `20030` | ⚠️ Experimental — different controller; camera is WebRTC (no local stream) so no camera entity |
+| Kobra X | `20030` | ⚠️ Untested — we believe it should work (it shares the Kobra 4's newer firmware base), but we need a user's help / hardware diagnostics to validate; no camera entity until then |
 | Photon (resin) | — | ❌ Different platform, no local LAN API |
 
 Enclosure-only entities (chamber temperature, chamber light, box fan) appear **only** on the enclosed
@@ -58,7 +60,7 @@ With **two ACE units** attached, each box gets its own device (the second is num
 
 ### My printer isn't listed — help me add it
 
-The Kobra 3 / S1 family shares one protocol, so adding a model is usually quick — and the
+The Kobra 3 / 4 / S1 family shares one protocol, so adding a model is usually quick — and the
 integration does the detective work for you. There's nothing to install or run by hand:
 
 1. Install the integration and add your printer. It connects for **any** printer in this family,
