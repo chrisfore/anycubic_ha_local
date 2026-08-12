@@ -98,3 +98,26 @@ async def test_setup_with_webrtc_provider_does_not_start_capture(hass):
 
     video_cmds = [t for t in published if t.rsplit("/", 1)[-1] == "video"]
     assert not video_cmds, f"setup commanded the printer camera: {video_cmds}"
+
+
+async def test_stream_source_prefers_printer_reported_url(hass):
+    """The printer self-reports its camera URL in the info report (urls.rtspUrl).
+    Prefer it over the hardcoded :18088/flv — an unvalidated model may serve its
+    stream on a different scheme/port/path (issue #6, Kobra 4 "no feed"). The
+    host is swapped for the user-entered one (mDNS names must keep winning)."""
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "printer.local"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coord = entry.runtime_data
+        coord._apply("info", {"model": "Kobra 4", "state": "free",
+                              "urls": {"rtspUrl": "rtsp://10.0.0.5:8554/streaming/live/1"}})
+        await hass.async_block_till_done()
+
+    from custom_components.anycubic.camera import AnycubicCamera
+    cam = AnycubicCamera(coord)
+    coord.async_send_command = AsyncMock()
+    assert await cam.stream_source() == "rtsp://printer.local:8554/streaming/live/1"
+    coord.async_send_command.assert_awaited_with("camera_start")

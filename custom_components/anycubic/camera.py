@@ -1,6 +1,8 @@
 """Live camera — the printer's on-demand H.264 FLV stream."""
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -50,8 +52,19 @@ class AnycubicCamera(Camera):
         """
 
     async def stream_source(self) -> str:
-        """Ask the printer to start the feed, then hand HA's ffmpeg the FLV URL."""
+        """Ask the printer to start the feed, then hand HA its stream URL.
+
+        The printer self-reports the URL in the info report (urls.rtspUrl) — prefer
+        it, since an unvalidated model may serve a different scheme/port/path than
+        the S1-family :18088/flv (issue #6, Kobra 4). Only the host is replaced:
+        the user-entered name must keep winning over the printer-reported IP.
+        """
         await self.coordinator.async_send_command("camera_start")
+        reported = self.coordinator.data.printer.camera_url
+        if reported and (parts := urlsplit(reported)).hostname:
+            return parts._replace(
+                netloc=parts.netloc.replace(parts.hostname, self.coordinator.host)
+            ).geturl()
         return f"http://{self.coordinator.host}:18088/flv"
 
     async def async_will_remove_from_hass(self) -> None:
