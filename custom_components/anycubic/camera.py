@@ -52,15 +52,16 @@ class AnycubicCamera(Camera):
         """
 
     async def stream_source(self) -> str:
-        """Ask the printer to start the feed, then hand HA its stream URL.
+        """Kick the printer's capture, then hand HA its stream URL.
 
-        The printer self-reports the URL in the info report (urls.rtspUrl) — prefer
-        it, since an unvalidated model may serve a different scheme/port/path than
-        the S1-family :18088/flv (issue #6, Kobra 4). Only the host is replaced:
-        the user-entered name must keep winning over the printer-reported IP.
+        Freshest source wins: the startCapture answer (new-generation firmware
+        returns a per-session tokenized URL there — issue #6, Kobra 4), then the
+        info report's urls.rtspUrl, then the S1-family :18088/flv. Only the host
+        is replaced: the user-entered name must keep winning over the
+        printer-reported IP.
         """
-        await self.coordinator.async_send_command("camera_start")
-        reported = self.coordinator.data.printer.camera_url
+        await self.coordinator.async_start_capture()
+        reported = self.coordinator.video_stream_url or self.coordinator.data.printer.camera_url
         if reported and (parts := urlsplit(reported)).hostname:
             return parts._replace(
                 netloc=parts.netloc.replace(parts.hostname, self.coordinator.host)

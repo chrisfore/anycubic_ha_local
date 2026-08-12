@@ -69,3 +69,17 @@ def test_resubscribes_after_broker_reconnect():
     assert len(client._c.subs) == subs_after_connect + 1, (
         "subscription not re-established after reconnect")
     assert all("printer/public/20029/DEV/#" in s for s in client._c.subs)
+
+
+def test_forwards_video_report_with_null_data():
+    """S1-family video reports carry data:null (state:"initSuccess") — they must still
+    reach the coordinator so a waiter knows the printer answered startCapture."""
+    hs = HandshakeResult("1.2.3.4", 9883, "u", "p", "DEV", "20029", "SER")
+    seen = []
+    client = m.AnycubicMqtt(hs, on_report=lambda t, d: seen.append((t, d)), client_factory=FakeClient)
+    client.connect()
+    client._c.on_message(client._c, None, _msg(
+        "anycubic/anycubicCloud/v1/printer/public/20029/DEV/video/report",
+        {"type": "video", "action": "startCapture", "state": "initSuccess",
+         "code": 200, "data": None}))
+    assert seen == [("video", {})]

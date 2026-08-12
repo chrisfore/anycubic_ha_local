@@ -1,5 +1,6 @@
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.anycubic.const import DOMAIN
@@ -14,6 +15,14 @@ class FakeTransport:
     def disconnect(self): pass
     def query(self, t): pass
     def publish(self, t, p): pass
+
+
+@pytest.fixture(autouse=True)
+def _fast_capture_kick():
+    """The capture kick's real pauses (1s + 4s report wait) would dominate every test."""
+    with patch("custom_components.anycubic.coordinator.VIDEO_KICK_DELAY", 0), \
+         patch("custom_components.anycubic.coordinator.VIDEO_REPORT_TIMEOUT", 0.05):
+        yield
 
 
 async def test_camera_stream_source_starts_capture(hass):
@@ -121,3 +130,38 @@ async def test_stream_source_prefers_printer_reported_url(hass):
     coord.async_send_command = AsyncMock()
     assert await cam.stream_source() == "rtsp://printer.local:8554/streaming/live/1"
     coord.async_send_command.assert_awaited_with("camera_start")
+
+
+async def test_stream_source_kicks_capture_and_uses_video_report_url(hass):
+    """New-generation firmware (Kobra 4 / X): the official client always sends
+    stopCapture, waits, then startCapture (a bare start doesn't begin pushing),
+    and the startCapture answer carries the tokenized stream URL. stream_source
+    must follow that flow and hand out the fresh URL, host-swapped."""
+    import json as _json
+
+    published = []
+
+    class KickTransport(FakeTransport):
+        def __init__(self, hs, on_report, **k):
+            self.on_report = on_report
+        def publish(self, t, p):
+            published.append((t, _json.loads(p)))
+            if _json.loads(p).get("action") == "startCapture":
+                self.on_report("video", {"urls": {"rtspUrl": "http://10.0.0.9:18088/live/k5DawnaQ"}})
+
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "printer.local"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", KickTransport), \
+         patch("custom_components.anycubic.coordinator.VIDEO_KICK_DELAY", 0):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coord = entry.runtime_data
+
+        from custom_components.anycubic.camera import AnycubicCamera
+        cam = AnycubicCamera(coord)
+        url = await cam.stream_source()
+
+    assert url == "http://printer.local:18088/live/k5DawnaQ"
+    video_actions = [p["action"] for t, p in published if t.rsplit("/", 1)[-1] == "video"]
+    assert video_actions == ["stopCapture", "startCapture"]

@@ -90,3 +90,17 @@ async def test_coordinator_captures_capabilities(hass):
     assert coord.raw_features == {"camera_timelapse_support": True, "fod_support": True}
     assert coord.peripherie == {"camera": 1, "multiColorBox": 1, "udisk": 0}
     assert {"info", "peripherie"} <= coord.seen_report_types
+
+
+async def test_video_report_url_is_captured(hass):
+    """New-generation firmware (Kobra 4 / X) answers startCapture with a video report
+    whose data carries the tokenized stream URL. It must be kept in its own field —
+    the next info report rebuilds PrinterState and would wipe it."""
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    coord._on_report("video", {"urls": {"rtspUrl": "http://1.2.3.4:18088/live/k5DawnaQ"}})
+    await hass.async_block_till_done()
+    assert coord.video_stream_url == "http://1.2.3.4:18088/live/k5DawnaQ"
+    coord._on_report("info", {"state": "free", "model": "AnyCubic Kobra 4"})
+    await hass.async_block_till_done()
+    assert coord.video_stream_url == "http://1.2.3.4:18088/live/k5DawnaQ"
