@@ -83,3 +83,36 @@ async def test_diagnostics_includes_raw_multicolorbox_report(hass):
     assert diag["raw_multicolorbox"] == raw
     # Unknown/unparsed wire keys survive verbatim — that's the whole point.
     assert diag["raw_multicolorbox"]["multi_color_box"][0]["slots"][0]["some_future_field"] == 87
+
+
+async def test_diagnostics_camera_url_keeps_shape_hides_host(hass):
+    """camera_url must show the protocol shape (scheme/port/path) with only the host
+    redacted. Full-value redaction erased the one datum needed to debug a camera
+    that won't stream on an unvalidated model (issue #6, Kobra 4 "no feed")."""
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "10.0.0.5"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coord = entry.runtime_data
+        coord._apply("info", {"model": "Kobra S1 Max", "state": "free",
+                              "urls": {"rtspUrl": "http://10.0.0.5:18088/flv"}})
+        await hass.async_block_till_done()
+        diag = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diag["printer"]["camera_url"] == "http://**REDACTED**:18088/flv"
+    assert "10.0.0.5" not in str(diag)
+
+
+async def test_diagnostics_camera_url_absent_stays_none(hass):
+    """No info report yet -> camera_url is None and the masking must not blow up."""
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "10.0.0.5"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        diag = await async_get_config_entry_diagnostics(hass, entry)
+
+    assert diag["printer"]["camera_url"] is None
