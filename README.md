@@ -7,8 +7,9 @@ no rooting**.
 [![hacs](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz)
 [![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chrisfore&repository=anycubic_ha_local&category=integration)
 
-> **Status:** v1.2.4 — validated end-to-end on a Kobra S1 Max and user-validated on a Kobra 4; the
-> rest of the family shares the identical protocol. Entities adapt to each model (see **Supported printers**).
+> **Status:** v1.2.4 — validated end-to-end on a Kobra S1 Max and user-validated on a Kobra 4 and
+> Kobra 3; the rest of the family shares the identical protocol. Entities adapt to each model (see
+> **Supported printers**).
 
 ## Features
 
@@ -45,7 +46,7 @@ model actually has.
 | --- | --- | --- |
 | Kobra S1 Max | `20029` | ✅ Validated on hardware (enclosed: chamber temp/light, box fan, camera, ACE 2) |
 | Kobra S1 | `20025` | ✅ Same enclosed feature set, identical protocol |
-| Kobra 3 / 3 V2 / 3 Max | `20024` / `20027` / `20026` | ✅ Open-frame — no chamber temp/light or box fan; camera is the AnyCubic add-on |
+| Kobra 3 / 3 V2 / 3 Max | `20024` / `20027` / `20026` | ✅ Kobra 3 validated on hardware by a user (incl. ACE) — open-frame, no chamber temp/light or box fan; camera is the AnyCubic add-on |
 | Kobra 4 | `20028` | ✅ Validated on hardware by a user — open-frame, built-in camera (newer tokenized stream, v1.2.4+), ACE supported |
 | Kobra 2 Pro / Plus / Max | `20021` / `20022` / `20023` | ⚠️ Experimental — older *unsigned* handshake, not yet validated (you'll get a clear "unsupported handshake" message if it can't connect) |
 | Kobra X | `20030` | ⚠️ Untested — we believe it should work (it shares the Kobra 4's newer firmware base), but we need a user's help / hardware diagnostics to validate; no camera entity until then |
