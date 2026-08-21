@@ -8,6 +8,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .const import box_has_dryer
 from .coordinator import AnycubicCoordinator
 from .entity import AnycubicAceEntity, async_setup_ace_entities
 
@@ -16,8 +17,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEnt
     coord: AnycubicCoordinator = entry.runtime_data
     async_setup_ace_entities(
         entry, coord, add,
-        lambda box_id: [AnycubicAceDryingSwitch(coord, box_id),
-                        AnycubicAceAutoFeedSwitch(coord, box_id)])
+        lambda box_id: ([AnycubicAceDryingSwitch(coord, box_id)] if box_has_dryer(box_id) else [])
+        + [AnycubicAceAutoFeedSwitch(coord, box_id)])
 
 
 class AnycubicAceDryingSwitch(AnycubicAceEntity, SwitchEntity):

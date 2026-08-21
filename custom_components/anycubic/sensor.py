@@ -6,7 +6,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import ACE_SLOT_COUNT, ENCLOSED_MODELS
+from .const import ACE_SLOT_COUNT, ENCLOSED_MODELS, box_has_dryer
 from .coordinator import AnycubicCoordinator
 from .definitions import (
     ACE_SENSORS,
@@ -24,7 +24,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEnt
     add([AnycubicSensor(coord, d) for d in PRINTER_SENSORS if enclosed or not d.enclosed_only])
 
     def ace_sensors(box_id: int) -> list:
-        return [AnycubicAceBoxSensor(coord, d, box_id) for d in ACE_SENSORS] + [
+        dryer = box_has_dryer(box_id)
+        return [AnycubicAceBoxSensor(coord, d, box_id)
+                for d in ACE_SENSORS if dryer or not d.dry_box_only] + [
             AnycubicAceSlotSensor(coord, i, box_id) for i in range(1, ACE_SLOT_COUNT + 1)]
 
     async_setup_ace_entities(entry, coord, add, ace_sensors)

@@ -64,6 +64,17 @@ def primary_ace_box_id(model_id: str) -> int:
     return -1 if model_id in BUILTIN_ACE_MODELS else 0
 
 
+def box_has_dryer(box_id: int) -> bool:
+    """Whether a multi-material unit has a sealed dry box, or is only a feeder.
+
+    A built-in changer (negative id) is feed-only: the Kobra X owner who reported issue #8
+    confirmed the spools "just hang loosely on top of the printer", and it reports a
+    constant 0 for humidity and box temperature. Drying controls and dry-box sensors there
+    would never do anything. External boxes on the same printer still have their dryer.
+    """
+    return box_id >= 0
+
+
 def ace_suffix(box_id: int) -> str:
     """Device-identifier / unique-id suffix for an ACE box ("ace0", "ace1", ...)."""
     return f"ace{box_id}"
