@@ -93,6 +93,8 @@ PRINTER_NUMBERS: tuple[AnycubicNumberEntityDescription, ...] = (
 @dataclass(frozen=True, kw_only=True)
 class AceSensorEntityDescription(SensorEntityDescription):
     value_fn: Callable[[AceBox], object]
+    # Only measures something on a unit with a sealed dry box, not on a bare feeder.
+    dry_box_only: bool = False
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -103,10 +105,12 @@ class AceBinaryEntityDescription(BinarySensorEntityDescription):
 ACE_SENSORS: tuple[AceSensorEntityDescription, ...] = (
     AceSensorEntityDescription(key="humidity", translation_key="ace_humidity",
         device_class=SensorDeviceClass.HUMIDITY, native_unit_of_measurement=PERCENTAGE,
-        state_class=SensorStateClass.MEASUREMENT, value_fn=lambda b: b.humidity),
+        state_class=SensorStateClass.MEASUREMENT, value_fn=lambda b: b.humidity,
+        dry_box_only=True),
     AceSensorEntityDescription(key="box_temperature", translation_key="ace_box_temperature",
         device_class=_T, native_unit_of_measurement=_C, suggested_unit_of_measurement=_C,
-        state_class=SensorStateClass.MEASUREMENT, value_fn=lambda b: b.temp),
+        state_class=SensorStateClass.MEASUREMENT, value_fn=lambda b: b.temp,
+        dry_box_only=True),
     AceSensorEntityDescription(key="loaded_slot", translation_key="ace_loaded_slot",
         # Printer slots are 0-indexed; show 1-4 to match the "Slot N" labels. -1/None = nothing loaded.
         value_fn=lambda b: "None" if b.loaded_slot in (None, -1) else b.loaded_slot + 1),

@@ -370,3 +370,42 @@ async def test_stale_box_device_is_deletable_but_live_ones_are_not(hass):
     assert await async_remove_config_entry_device(hass, entry, stale) is True
     assert await async_remove_config_entry_device(hass, entry, printer) is False
     assert await async_remove_config_entry_device(hass, entry, live_box) is False
+
+
+async def test_builtin_unit_has_no_dryer_entities(hass):
+    """The Kobra X's built-in changer is a feeder, not a dry box — its owner confirmed
+    the spools "just hang loosely on top of the printer" (issue #8), and it reports a
+    constant 0 humidity/temperature. Dryer controls and dry-box sensors there would be
+    permanently meaningless, so they are not created. Feeding entities still are."""
+    coord = await _setup_kobra_x(hass)
+    coord._apply("multiColorBox", KX_BUILTIN)
+    await hass.async_block_till_done()
+
+    g = hass.states.get
+    assert g("switch.multi_color_unit_drying") is None
+    assert g("number.multi_color_unit_drying_temperature") is None
+    assert g("number.multi_color_unit_drying_time") is None
+    assert g("sensor.multi_color_unit_humidity") is None
+    assert g("sensor.multi_color_unit_box_temperature") is None
+    # What the unit really does: feed filament from four slots.
+    assert g("switch.multi_color_unit_auto_feed") is not None
+    assert g("sensor.multi_color_unit_loaded_slot") is not None
+    assert g("sensor.multi_color_unit_slot_1").state == "PLA"
+
+
+async def test_external_box_on_builtin_printer_keeps_its_dryer(hass):
+    """Gating is per box, not per printer: a Kobra X expanded with an external ACE 2 Pro
+    has a real dry box on that unit."""
+    coord = await _setup_kobra_x(hass)
+    coord._apply("multiColorBox", {"head_tools_model": 1, "multi_color_box": [
+        KX_BUILTIN["multi_color_box"][0],
+        {"id": 0, "model_id": 40002, "temp": 30, "humidity": 20,
+         "drying_status": {"status": 0}, "slots": []},
+    ]})
+    await hass.async_block_till_done()
+
+    g = hass.states.get
+    assert g("switch.ace_2_drying") is not None
+    assert g("number.ace_2_drying_temperature") is not None
+    assert g("sensor.ace_2_humidity").state == "20"
+    assert g("sensor.ace_2_box_temperature").state == "30"

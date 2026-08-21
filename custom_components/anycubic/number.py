@@ -7,7 +7,7 @@ from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import ENCLOSED_MODELS
+from .const import ENCLOSED_MODELS, box_has_dryer
 from .coordinator import AnycubicCoordinator
 from .definitions import PRINTER_NUMBERS, AnycubicNumberEntityDescription
 from .entity import AnycubicAceEntity, AnycubicEntity, async_setup_ace_entities
@@ -20,7 +20,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEnt
     async_setup_ace_entities(
         entry, coord, add,
         lambda box_id: [AnycubicDryingTempNumber(coord, box_id),
-                        AnycubicDryingTimeNumber(coord, box_id)])
+                        AnycubicDryingTimeNumber(coord, box_id)] if box_has_dryer(box_id) else [])
 
 
 class AnycubicNumber(AnycubicEntity, NumberEntity):

@@ -7,7 +7,7 @@ cloud account, no rooting**.
 [![hacs](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz)
 [![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chrisfore&repository=anycubic_ha_local&category=integration)
 
-> **Status:** v1.2.5 — validated end-to-end on a Kobra S1 Max and user-validated on a Kobra 4,
+> **Status:** v1.2.6 — validated end-to-end on a Kobra S1 Max and user-validated on a Kobra 4,
 > Kobra 3 and Kobra X; the rest of the family shares the identical protocol. Entities adapt to each
 > model (see **Supported printers**).
 
@@ -49,7 +49,7 @@ model actually has.
 | Kobra 3 / 3 V2 / 3 Max | `20024` / `20027` / `20026` | ✅ Kobra 3 validated on hardware by a user (incl. ACE) — open-frame, no chamber temp/light or box fan; camera is the AnyCubic add-on |
 | Kobra 4 | `20028` | ✅ Validated on hardware by a user — open-frame, built-in camera (newer tokenized stream, v1.2.4+), ACE supported |
 | Kobra 2 Pro / Plus / Max | `20021` / `20022` / `20023` | ⚠️ Experimental — older *unsigned* handshake, not yet validated (you'll get a clear "unsupported handshake" message if it can't connect) |
-| Kobra X | `20030` | ✅ Validated on hardware by a user — open-frame, built-in camera (tokenized stream, v1.2.4+), built-in 4-colour changer shown as **Multi-color unit** (v1.2.5+) |
+| Kobra X | `20030` | ✅ Validated on hardware by a user — open-frame, built-in camera (tokenized stream, v1.2.4+), built-in 4-colour changer (feeder, no dryer) shown as **Multi-color unit** (v1.2.5+) |
 | Photon (resin) | — | ❌ Different platform, no local LAN API |
 
 Enclosure-only entities (chamber temperature, chamber light, box fan) appear **only** on the enclosed
@@ -59,8 +59,10 @@ ACE / ACE 2 entities appear whenever a multi-color box is attached, on any of th
 With **two ACE units** attached, each box gets its own device (the second is numbered, e.g.
 “ACE Pro #2”) with the full set of sensors and controls.
 On the **Kobra X**, whose 4-colour changer is built into the printer rather than being a separate
-box, that unit appears as a single device named **Multi-color unit**; external expansion boxes
-still show up alongside it as their own ACE devices.
+box, that unit appears as a single device named **Multi-color unit**. It is a feeder with no dry
+box, so it gets the slot and auto-feed entities but no drying controls or humidity/box-temperature
+sensors; external expansion boxes still show up alongside it as their own ACE devices, dryer
+included.
 
 ### My printer isn't listed — help me add it
 
