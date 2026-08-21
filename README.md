@@ -1,15 +1,15 @@
 # AnyCubic 3D Printer - Local
 
-A Home Assistant custom integration for the **AnyCubic Kobra 3 / 4 / S1 series** (and ACE / ACE 2),
-talking to the printer's **stock LAN Mode** over its local MQTT broker — **no AnyCubic cloud account,
-no rooting**.
+A Home Assistant custom integration for the **AnyCubic Kobra 3 / 4 / X / S1 series** (and ACE /
+ACE 2), talking to the printer's **stock LAN Mode** over its local MQTT broker — **no AnyCubic
+cloud account, no rooting**.
 
 [![hacs](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz)
 [![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chrisfore&repository=anycubic_ha_local&category=integration)
 
-> **Status:** v1.2.4 — validated end-to-end on a Kobra S1 Max and user-validated on a Kobra 4 and
-> Kobra 3; the rest of the family shares the identical protocol. Entities adapt to each model (see
-> **Supported printers**).
+> **Status:** v1.2.5 — validated end-to-end on a Kobra S1 Max and user-validated on a Kobra 4,
+> Kobra 3 and Kobra X; the rest of the family shares the identical protocol. Entities adapt to each
+> model (see **Supported printers**).
 
 ## Features
 
@@ -37,8 +37,8 @@ never persisted — nothing sensitive is stored on the Home Assistant host.
 
 ## Supported printers
 
-The Kobra 3 / 4 / S1 generations all speak the same signed LAN protocol, so they share one code
-path (the newer Kobra 4-era firmware differs only in how the camera stream is started, handled
+The Kobra 3 / 4 / X / S1 generations all speak the same signed LAN protocol, so they share one code
+path (the newer Kobra 4 / X firmware differs only in how the camera stream is started, handled
 automatically). The integration reads the printer's `modelId` and only creates the entities that
 model actually has.
 
@@ -49,19 +49,22 @@ model actually has.
 | Kobra 3 / 3 V2 / 3 Max | `20024` / `20027` / `20026` | ✅ Kobra 3 validated on hardware by a user (incl. ACE) — open-frame, no chamber temp/light or box fan; camera is the AnyCubic add-on |
 | Kobra 4 | `20028` | ✅ Validated on hardware by a user — open-frame, built-in camera (newer tokenized stream, v1.2.4+), ACE supported |
 | Kobra 2 Pro / Plus / Max | `20021` / `20022` / `20023` | ⚠️ Experimental — older *unsigned* handshake, not yet validated (you'll get a clear "unsupported handshake" message if it can't connect) |
-| Kobra X | `20030` | ⚠️ Untested — we believe it should work (it shares the Kobra 4's newer firmware base), but we need a user's help / hardware diagnostics to validate; no camera entity until then |
+| Kobra X | `20030` | ✅ Validated on hardware by a user — open-frame, built-in camera (tokenized stream, v1.2.4+), built-in 4-colour changer shown as **Multi-color unit** (v1.2.5+) |
 | Photon (resin) | — | ❌ Different platform, no local LAN API |
 
 Enclosure-only entities (chamber temperature, chamber light, box fan) appear **only** on the enclosed
-S1 / S1 Max. The camera appears on the Kobra 3 / 4 / S1 family (built-in on enclosed and the
-Kobra 4, add-on on Kobra 3).
+S1 / S1 Max. The camera appears on the Kobra 3 / 4 / X / S1 family (built-in on enclosed and on the
+Kobra 4 / X, add-on on Kobra 3).
 ACE / ACE 2 entities appear whenever a multi-color box is attached, on any of these printers.
 With **two ACE units** attached, each box gets its own device (the second is numbered, e.g.
 “ACE Pro #2”) with the full set of sensors and controls.
+On the **Kobra X**, whose 4-colour changer is built into the printer rather than being a separate
+box, that unit appears as a single device named **Multi-color unit**; external expansion boxes
+still show up alongside it as their own ACE devices.
 
 ### My printer isn't listed — help me add it
 
-The Kobra 3 / 4 / S1 family shares one protocol, so adding a model is usually quick — and the
+The Kobra 3 / 4 / X / S1 family shares one protocol, so adding a model is usually quick — and the
 integration does the detective work for you. There's nothing to install or run by hand:
 
 1. Install the integration and add your printer. It connects for **any** printer in this family,
@@ -74,7 +77,7 @@ integration does the detective work for you. There's nothing to install or run b
 The diagnostics include a `capabilities` block — model ID & name, the printer's own reported
 feature map, the camera / multicolor-box presence inventory, and whether it has a chamber sensor —
 which is everything needed to add the model. If the integration can't connect at all (e.g. an
-older Kobra 2 or a Kobra X on a different protocol), say so in the issue with your model + firmware.
+older Kobra 2 on the unsigned protocol), say so in the issue with your model + firmware.
 
 ## Requirements
 

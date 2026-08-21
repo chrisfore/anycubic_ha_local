@@ -11,9 +11,9 @@ DEFAULT_QUERY_INTERVAL = 30  # seconds; heartbeat poll
 MANUFACTURER = "AnyCubic"
 
 # Printer modelId -> name. IDs verified across multiple on-printer sources (Rinkhals api.cfg,
-# mann1x, TigerTag, 1coderookie). The Kobra 3 / S1 generation (20024-20029) speaks the same
-# signed LAN handshake + field schema as the validated S1 Max. Kobra 2 (2002x) and Kobra X (20030)
-# are experimental (different/older handshake) — named here, but their handshake needs validation.
+# mann1x, TigerTag, 1coderookie). The Kobra 3 / S1 / X generation (20024-20030) speaks the same
+# signed LAN handshake + field schema as the validated S1 Max — Kobra X confirmed from user
+# diagnostics (issue #8). Only Kobra 2 (2002x) is experimental (older, unsigned handshake).
 MODEL_NAMES: dict[str, str] = {
     "20021": "AnyCubic Kobra 2 Pro",
     "20022": "AnyCubic Kobra 2 Plus",
@@ -38,12 +38,30 @@ ACE_MODEL_NAMES: dict[str, str] = {
 # real hardware only here. On open-frame Kobra models those fields are absent or no-ops.
 ENCLOSED_MODELS: frozenset[str] = frozenset({"20025", "20029"})
 
-# Models with an FLV camera at :18088 (built-in on enclosed and the Kobra 4, add-on on the
-# Kobra 3 family). Kobra 2 has no camera; Kobra X uses WebRTC (no local FLV) — both excluded.
-# Kobra 4 confirmed from user diagnostics (issue #6): rtspUrl in the info report, peripherie camera=1.
-CAMERA_MODELS: frozenset[str] = frozenset({"20024", "20025", "20026", "20027", "20028", "20029"})
+# Models with a camera at :18088 (built-in on enclosed and on the Kobra 4 / X, add-on on the
+# Kobra 3 family); Kobra 2 has no camera. Kobra 4 (issue #6) and Kobra X (issue #8) both confirmed
+# from user diagnostics — peripherie camera=1 plus a stream URL in the info report. The
+# new-generation models serve a tokenized path (/live/<token>) instead of /flv; camera.py follows
+# whatever URL the printer reports, so no per-model handling is needed here.
+CAMERA_MODELS: frozenset[str] = frozenset(
+    {"20024", "20025", "20026", "20027", "20028", "20029", "20030"})
+
+# Printers whose multi-material changer is built into the toolhead (AnyCubic's "ACE Gen 2" on the
+# Kobra X) rather than an attached box. They report it as box id -1 with head_tools_model 1, where
+# an external ACE reports id 0 — hardware-confirmed on a Kobra X (issue #8) against a Kobra 4 with
+# an external ACE 2. External expansion boxes still report 0+ and get their own devices.
+BUILTIN_ACE_MODELS: frozenset[str] = frozenset({"20030"})
 
 ACE_SLOT_COUNT = 4
+
+
+def primary_ace_box_id(model_id: str) -> int:
+    """Box id of the printer's own multi-material unit — the one registered at setup.
+
+    Pre-registering the wrong id creates a second, permanently-dead box device next to
+    the real one (issue #8), so this must match what the printer actually reports.
+    """
+    return -1 if model_id in BUILTIN_ACE_MODELS else 0
 
 
 def ace_suffix(box_id: int) -> str:
