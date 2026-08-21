@@ -14,8 +14,8 @@ from .coordinator import AnycubicCoordinator
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
-    # Only models with a local FLV camera (built-in on enclosed, add-on on the Kobra 3 family).
-    # Kobra 2 has no camera; Kobra X streams WebRTC with no local FLV.
+    # Only models with a local camera (built-in on enclosed and on the Kobra 4 / X, add-on on
+    # the Kobra 3 family). Kobra 2 has no camera.
     coord: AnycubicCoordinator = entry.runtime_data
     if coord.hs.model_id in CAMERA_MODELS:
         add([AnycubicCamera(coord)])

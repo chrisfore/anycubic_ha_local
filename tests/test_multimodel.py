@@ -39,10 +39,17 @@ async def test_open_frame_kobra3_gates_enclosure_hardware(hass):
     assert g("light.anycubic_kobra_3_chamber_light") is None
 
 
-async def test_kobra_x_has_no_local_camera(hass):
-    await _setup(hass, "20030", "SER-KX")  # AnyCubic Kobra X (WebRTC camera, no local FLV)
-    assert hass.states.get("camera.anycubic_kobra_x_camera") is None
-    assert hass.states.get("sensor.anycubic_kobra_x_nozzle_temperature") is not None
+async def test_kobra_x_open_frame_with_camera(hass):
+    """Kobra X (modelId 20030) — validated from user diagnostics (issue #8): the LAN
+    handshake works, peripherie reports camera=1 and the info report carries the
+    new-generation tokenized stream URL (:18088/live/<token>), so it gets a camera.
+    Open frame, so no chamber hardware."""
+    await _setup(hass, "20030", "SER-KX")
+    g = hass.states.get
+    assert g("sensor.anycubic_kobra_x_nozzle_temperature") is not None
+    assert g("camera.anycubic_kobra_x_camera") is not None
+    assert g("sensor.anycubic_kobra_x_chamber_temperature") is None
+    assert g("light.anycubic_kobra_x_chamber_light") is None
 
 
 async def test_kobra_4_open_frame_with_camera(hass):

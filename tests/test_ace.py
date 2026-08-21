@@ -263,3 +263,110 @@ async def test_ace_device_user_rename_respected(hass):
         dev = registry.async_get_device(identifiers={(DOMAIN, "SER-1_ace0")})
         assert dev.name_by_user == "Filament box"
         assert dev.model == "ACE Pro"
+
+
+HS_KX = HandshakeResult("1.2.3.4", 9883, "u", "p", "DEV", "20030", "SER-KX")
+
+# The Kobra X's 4-color changer is built into the toolhead (AnyCubic's "ACE Gen 2"), not an
+# attached box: it reports id -1 with head_tools_model 1, where an external ACE reports id 0.
+KX_BUILTIN = {"head_tools_model": 1, "multi_color_box": [{
+    "id": -1, "model_id": 40002, "status": 1, "temp": 0, "humidity": 0, "loaded_slot": -1,
+    "slots": [{"index": 0, "type": "PLA", "color": [255, 255, 255],
+               "status": 5, "consumables_percent": 100}]}]}
+
+
+async def _setup_kobra_x(hass):
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-KX", data={"host": "1.2.3.4"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS_KX), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    return entry.runtime_data
+
+
+def _ace_devices(hass, serial):
+    from homeassistant.helpers import device_registry as dr
+
+    return [d for d in dr.async_get(hass).devices.values()
+            if any(i[1].startswith(f"{serial}_ace") for i in d.identifiers)]
+
+
+async def test_builtin_multicolor_unit_registers_once(hass):
+    """Issue #8, Kobra X: the built-in changer reports as box -1, so pre-registering
+    box 0 spawned a *second*, permanently-dead "ACE 2" device beside the real one.
+    A printer with one multi-material unit must produce exactly one device."""
+    from homeassistant.helpers import device_registry as dr
+
+    coord = await _setup_kobra_x(hass)
+    coord._apply("multiColorBox", KX_BUILTIN)
+    await hass.async_block_till_done()
+
+    assert len(_ace_devices(hass, "SER-KX")) == 1
+    registry = dr.async_get(hass)
+    assert registry.async_get_device(identifiers={(DOMAIN, "SER-KX_ace0")}) is None
+    dev = registry.async_get_device(identifiers={(DOMAIN, "SER-KX_ace-1")})
+    # Named for what it is: the user owns no separate ACE 2 box.
+    assert dev is not None and dev.name == "Multi-color unit"
+    assert dev.via_device_id is not None
+    assert hass.states.get("sensor.multi_color_unit_slot_1").state == "PLA"
+
+
+async def test_builtin_unit_commands_target_its_own_box_id(hass):
+    """The built-in unit keeps its real id on the wire — commands must carry -1, not 0."""
+    coord = await _setup_kobra_x(hass)
+    coord._apply("multiColorBox", KX_BUILTIN)
+    await hass.async_block_till_done()
+    coord.async_send_command = AsyncMock()
+
+    await hass.services.async_call(
+        "switch", "turn_on", {"entity_id": "switch.multi_color_unit_auto_feed"}, blocking=True)
+    coord.async_send_command.assert_awaited_with("auto_feed", on=True, box_id=-1)
+
+
+async def test_kobra_x_external_box_adds_its_own_device(hass):
+    """The Kobra X expands with external ACE 2 Pro units; those still report as
+    attached boxes (id 0+) and must each get their own device."""
+    from homeassistant.helpers import device_registry as dr
+
+    coord = await _setup_kobra_x(hass)
+    coord._apply("multiColorBox", {"head_tools_model": 1, "multi_color_box": [
+        KX_BUILTIN["multi_color_box"][0],
+        {"id": 0, "model_id": 40002, "temp": 30, "humidity": 20, "slots": []},
+    ]})
+    await hass.async_block_till_done()
+
+    assert len(_ace_devices(hass, "SER-KX")) == 2
+    registry = dr.async_get(hass)
+    assert registry.async_get_device(
+        identifiers={(DOMAIN, "SER-KX_ace-1")}).name == "Multi-color unit"
+    assert registry.async_get_device(identifiers={(DOMAIN, "SER-KX_ace0")}).name == "ACE 2"
+
+
+async def test_stale_box_device_is_deletable_but_live_ones_are_not(hass):
+    """A pre-fix install on a Kobra X left a phantom box-0 device (issue #8). Without
+    async_remove_config_entry_device Home Assistant hides the Delete button, so the user
+    is stuck with it — but a device the printer still reports must not be removable."""
+    from homeassistant.helpers import device_registry as dr
+
+    from custom_components.anycubic import async_remove_config_entry_device
+
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-KX", data={"host": "1.2.3.4"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS_KX), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coord = entry.runtime_data
+        coord._apply("multiColorBox", KX_BUILTIN)
+        await hass.async_block_till_done()
+
+    registry = dr.async_get(hass)
+    stale = registry.async_get_or_create(
+        config_entry_id=entry.entry_id, identifiers={(DOMAIN, "SER-KX_ace0")}, name="ACE 2")
+    printer = registry.async_get_device(identifiers={(DOMAIN, "SER-KX")})
+    live_box = registry.async_get_device(identifiers={(DOMAIN, "SER-KX_ace-1")})
+
+    assert await async_remove_config_entry_device(hass, entry, stale) is True
+    assert await async_remove_config_entry_device(hass, entry, printer) is False
+    assert await async_remove_config_entry_device(hass, entry, live_box) is False

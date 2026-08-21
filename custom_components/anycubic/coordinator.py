@@ -199,13 +199,13 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         entity IDs stay deterministic, further boxes as "ACE #N"); this renames only
         the registry display name/model. A user rename (name_by_user) still wins.
         """
-        from .entity import ace_device_name  # local import: entity.py imports this module
+        from .entity import ace_device_model, ace_device_name  # local: entity.py imports this module
 
         registry = dr.async_get(self.hass)
         for box in self.data.ace:
-            model = ACE_MODEL_NAMES.get(str(box.model_id)) if box.model_id is not None else None
-            if not model:
+            if box.model_id is None or str(box.model_id) not in ACE_MODEL_NAMES:
                 continue
+            model = ace_device_model(box.id, box.model_id)
             name = ace_device_name(box.id, box.model_id)
             device = registry.async_get_device(
                 identifiers={(DOMAIN, f"{self.hs.serial}_{ace_suffix(box.id)}")})
