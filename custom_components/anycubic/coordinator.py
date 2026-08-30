@@ -4,16 +4,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from dataclasses import dataclass, field
 from datetime import timedelta
 
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import ConfigEntryAuthFailed
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .anycubic_local import mqtt as mqtt_mod
 from .anycubic_local.commands import build as build_command
-from .anycubic_local.handshake import HandshakeResult
+from .anycubic_local.exceptions import CloudModeError
+from .anycubic_local.handshake import HandshakeResult, do_handshake
 from .anycubic_local.models import (
     AceBox,
     LightState,
@@ -46,6 +49,17 @@ _CONNECT_ONLY_QUERY_TYPES = ("peripherie",)
 # sequence, then a bounded wait for the printer's video report.
 VIDEO_KICK_DELAY = 1.0
 VIDEO_REPORT_TIMEOUT = 4.0
+
+# Dead-session recovery. A healthy printer answers every poll, so silence this long
+# means the session is gone even when the socket still looks open to paho — which is
+# the shape of the bug in issue #9: polls kept "succeeding" into a session the printer
+# had already dropped, and entities held their last values while reporting healthy.
+SILENCE_POLLS_BEFORE_RECOVERY = 4
+STALE_AFTER = SILENCE_POLLS_BEFORE_RECOVERY * DEFAULT_QUERY_INTERVAL
+# Recovery re-handshakes and rebuilds the transport. Only after this many consecutive
+# attempts have failed to produce a single report do the entities go unavailable —
+# recovering quietly is right, but hiding a printer we genuinely cannot reach is not.
+MAX_RECOVERIES_BEFORE_UNAVAILABLE = 2
 
 
 @dataclass
@@ -87,6 +101,11 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         self._video_report: asyncio.Event | None = None
         self._factory = transport_factory if transport_factory is not None else mqtt_mod.AnycubicMqtt
         self._transport = None
+        # Monotonic timestamp of the last report the printer sent us, and how many
+        # recovery attempts have run since one arrived. Monotonic, not wall clock:
+        # a system clock jump must not read as hours of silence.
+        self._last_report: float | None = None
+        self._recoveries = 0
 
     def _build_and_connect(self):
         """Construct the transport (paho client + blocking tls_set) and connect.
@@ -102,6 +121,60 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
 
     async def async_start(self) -> None:
         self._transport = await self.hass.async_add_executor_job(self._build_and_connect)
+        # Start the silence clock at connect, so a printer that never answers at all
+        # is caught by the same watchdog as one that goes quiet later.
+        self._last_report = time.monotonic()
+
+    def _rebuild(self):
+        """Executor: drop the dead session, re-handshake, connect again.
+
+        The handshake is re-run rather than reusing self.hs because the broker
+        credentials are issued per session — a printer that rebooted, or that
+        dropped us when another client (the Slicer) took the connection, will
+        refuse the old ones.
+        """
+        old, self._transport = self._transport, None
+        if old is not None:
+            old.disconnect()
+        hs = do_handshake(self.host)
+        if self.hs.serial and hs.serial and hs.serial != self.hs.serial:
+            # The address now answers for a DIFFERENT printer (DHCP reuse). Rebuilding
+            # would silently repoint every entity at someone else's machine.
+            raise UpdateFailed(
+                f"{self.host} now answers for a different printer ({hs.serial})")
+        self.hs = hs
+        self._transport = self._build_and_connect()
+
+    async def _async_recover(self) -> None:
+        """Try to get a live session back. Raises UpdateFailed once it's hopeless.
+
+        The rebuild is attempted on EVERY cycle, including after this has started
+        reporting failure — giving up permanently would mean a printer that comes
+        back stays dead until someone reloads the integration by hand.
+        """
+        self._recoveries += 1
+        _LOGGER.warning("printer session looks dead; re-handshaking (attempt %s)",
+                        self._recoveries)
+        try:
+            await self.hass.async_add_executor_job(self._rebuild)
+        except CloudModeError as err:
+            # LAN Mode was turned off on the printer — same reauth path as setup.
+            raise ConfigEntryAuthFailed(str(err)) from err
+        except UpdateFailed:
+            raise
+        except Exception as err:  # noqa: BLE001
+            raise UpdateFailed(f"reconnect failed: {err}") from err
+        # Give the rebuilt session a full silence window before judging it again.
+        self._last_report = time.monotonic()
+        if self._recoveries > MAX_RECOVERIES_BEFORE_UNAVAILABLE:
+            # Reconnecting keeps working but the printer never answers. Say so, rather
+            # than serving values that stopped being true minutes ago.
+            raise UpdateFailed(
+                f"reconnected {self._recoveries} times without a single report")
+
+    def _silent(self) -> bool:
+        return (self._last_report is not None
+                and time.monotonic() - self._last_report > STALE_AFTER)
 
     def _poll(self) -> None:
         for t in _QUERY_TYPES:
@@ -115,8 +188,14 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
     async def _async_update_data(self) -> AnycubicData:
         # Re-poll on the interval so the ACE box (which the printer never pushes) stays fresh;
         # printer status also arrives via push between polls.
-        if self._transport is not None:
-            await self.hass.async_add_executor_job(self._poll)
+        # Three ways a session dies: paho notices (refused CONNACK, dropped socket); it
+        # doesn't, and the printer simply stops answering; or an earlier rebuild failed
+        # and left us with no transport at all. All three used to be invisible.
+        if (self._transport is None
+                or not getattr(self._transport, "connected", True)
+                or self._silent()):
+            await self._async_recover()
+        await self.hass.async_add_executor_job(self._poll)
         return self.data
 
     def _on_report(self, msg_type: str, data: dict) -> None:
@@ -157,6 +236,10 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
 
     @callback
     def _apply(self, msg_type: str, data: dict) -> None:
+        # Any report at all proves the session is alive; that, not a successful
+        # publish, is what clears the watchdog.
+        self._last_report = time.monotonic()
+        self._recoveries = 0
         self.seen_report_types.add(msg_type)
         if msg_type == "info":
             self.data.printer = parse_info(data)

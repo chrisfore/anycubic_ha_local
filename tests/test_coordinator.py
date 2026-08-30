@@ -1,17 +1,24 @@
 # tests/test_coordinator.py
 import threading
 
+import pytest
+from homeassistant.helpers.update_coordinator import UpdateFailed
+
+from custom_components.anycubic import coordinator as coord_mod
 from custom_components.anycubic.coordinator import AnycubicCoordinator
+from custom_components.anycubic.anycubic_local.exceptions import CloudModeError
 from custom_components.anycubic.anycubic_local.handshake import HandshakeResult
 
 HS = HandshakeResult("1.2.3.4", 9883, "u", "p", "DEV", "20029", "SER-1")
 
 
 class FakeTransport:
-    def __init__(self, hs, on_report, **k): self.on_report = on_report; self.queries = []
+    def __init__(self, hs, on_report, **k):
+        self.on_report = on_report; self.queries = []; self.connected = False
     def connect(self): self.connected = True
     def disconnect(self): self.connected = False
     def query(self, t): self.queries.append(t)
+    def publish(self, topic, payload): pass
 
 
 async def test_coordinator_applies_info_report(hass):
@@ -90,6 +97,152 @@ async def test_coordinator_captures_capabilities(hass):
     assert coord.raw_features == {"camera_timelapse_support": True, "fod_support": True}
     assert coord.peripherie == {"camera": 1, "multiColorBox": 1, "udisk": 0}
     assert {"info", "peripherie"} <= coord.seen_report_types
+
+
+# ------------------------------------------------- dead-session detection (issue #9)
+#
+# The reported symptom: entities freeze at their last values while the integration
+# still reports update_success: true. Every test below asserts on the RECOVERY, not
+# just on a flag, because a flag nobody acts on is what the bug was.
+
+
+def _go_silent(coord):
+    """Wind the last-report clock past the watchdog window."""
+    coord._last_report -= coord_mod.STALE_AFTER + 1
+
+
+def _handshakes(monkeypatch, result=HS, error=None):
+    calls = []
+
+    def fake(host, *a, **k):
+        calls.append(host)
+        if error is not None:
+            raise error
+        return result
+
+    monkeypatch.setattr(coord_mod, "do_handshake", fake)
+    return calls
+
+
+async def test_a_healthy_poll_neither_recovers_nor_fails(hass, monkeypatch):
+    calls = _handshakes(monkeypatch)
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    await coord._async_update_data()
+    assert calls == [], "re-handshaked a printer that was answering fine"
+    assert "info" in coord._transport.queries
+
+
+async def test_a_silent_printer_is_re_handshaked(hass, monkeypatch):
+    """The failure that produced issue #9: paho still thinks it is connected, so
+    nothing raises — the printer has simply stopped answering."""
+    calls = _handshakes(monkeypatch)
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    first = coord._transport
+    _go_silent(coord)
+    await coord._async_update_data()
+    assert calls == ["1.2.3.4"], "silence did not trigger a re-handshake"
+    assert coord._transport is not first, "transport was not rebuilt"
+    assert first.connected is False, "the dead session was left open"
+
+
+async def test_a_dropped_connection_is_re_handshaked(hass, monkeypatch):
+    calls = _handshakes(monkeypatch)
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    coord._transport.connected = False           # refused CONNACK / dropped socket
+    await coord._async_update_data()
+    assert calls == ["1.2.3.4"]
+
+
+async def test_a_report_clears_the_watchdog(hass, monkeypatch):
+    calls = _handshakes(monkeypatch)
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    _go_silent(coord)
+    coord._apply("info", {"state": "free"})      # the printer answered after all
+    await hass.async_block_till_done()
+    await coord._async_update_data()
+    assert calls == [], "recovered despite a fresh report"
+
+
+async def test_entities_stay_available_while_recovery_is_working(hass, monkeypatch):
+    """A rebuild that succeeds must not flap entities to unavailable — a printer
+    that is merely quiet for a couple of minutes is not an outage."""
+    _handshakes(monkeypatch)
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    _go_silent(coord)
+    await coord._async_update_data()             # attempt 1, no UpdateFailed
+
+
+async def test_repeated_silence_finally_marks_the_printer_unavailable(hass, monkeypatch):
+    """Recovering quietly is right; hiding a printer we genuinely cannot reach is not."""
+    _handshakes(monkeypatch)
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    for _ in range(coord_mod.MAX_RECOVERIES_BEFORE_UNAVAILABLE):
+        _go_silent(coord)
+        await coord._async_update_data()         # rebuilds, still no reports
+    _go_silent(coord)
+    with pytest.raises(UpdateFailed):
+        await coord._async_update_data()
+
+
+async def test_a_failing_handshake_marks_the_printer_unavailable(hass, monkeypatch):
+    _handshakes(monkeypatch, error=OSError("no route to host"))
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    _go_silent(coord)
+    with pytest.raises(UpdateFailed):
+        await coord._async_update_data()
+
+
+async def test_a_printer_that_comes_back_recovers_on_its_own(hass, monkeypatch):
+    """Giving up permanently would leave a returning printer dead until someone
+    reloaded the integration by hand, so recovery is retried every cycle."""
+    calls = _handshakes(monkeypatch, error=OSError("no route to host"))
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    _go_silent(coord)
+    for _ in range(4):                           # printer off the network
+        with pytest.raises(UpdateFailed):
+            await coord._async_update_data()
+    assert len(calls) == 4, "stopped trying to reach the printer"
+
+    _handshakes(monkeypatch)                     # printer back on the network
+    with pytest.raises(UpdateFailed):
+        await coord._async_update_data()         # reconnected, but nothing has answered
+    assert coord._transport is not None, "did not rebuild once the printer returned"
+    coord._apply("info", {"state": "free"})      # ...and now it answers
+    await hass.async_block_till_done()
+    assert coord._recoveries == 0, "still flagged as recovering after a report"
+    await coord._async_update_data()             # available again, no UpdateFailed
+
+
+async def test_lan_mode_turned_off_during_recovery_asks_for_reauth(hass, monkeypatch):
+    """Same path as setup: CloudModeError is a user action, not an outage."""
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+    _handshakes(monkeypatch, error=CloudModeError("LAN Mode off"))
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    _go_silent(coord)
+    with pytest.raises(ConfigEntryAuthFailed):
+        await coord._async_update_data()
+
+
+async def test_recovery_refuses_to_adopt_a_different_printer(hass, monkeypatch):
+    """The address can be reassigned by DHCP. Rebuilding blindly would silently
+    repoint every entity at someone else's machine."""
+    other = HandshakeResult("1.2.3.4", 9883, "u", "p", "DEV2", "20029", "SER-2")
+    _handshakes(monkeypatch, result=other)
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    _go_silent(coord)
+    with pytest.raises(UpdateFailed):
+        await coord._async_update_data()
+    assert coord.hs.serial == "SER-1", "entities were repointed at another printer"
 
 
 async def test_video_report_url_is_captured(hass):
