@@ -145,7 +145,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         self.hs = hs
         self._transport = self._build_and_connect()
 
-    async def _async_recover(self) -> None:
+    async def _async_recover(self, reason: str = "session looks dead") -> None:
         """Try to get a live session back. Raises UpdateFailed once it's hopeless.
 
         The rebuild is attempted on EVERY cycle, including after this has started
@@ -153,8 +153,8 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         back stays dead until someone reloads the integration by hand.
         """
         self._recoveries += 1
-        _LOGGER.warning("printer session looks dead; re-handshaking (attempt %s)",
-                        self._recoveries)
+        _LOGGER.warning("re-handshaking printer (attempt %s): %s",
+                        self._recoveries, reason)
         try:
             await self.hass.async_add_executor_job(self._rebuild)
         except CloudModeError as err:
@@ -191,10 +191,16 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # Three ways a session dies: paho notices (refused CONNACK, dropped socket); it
         # doesn't, and the printer simply stops answering; or an earlier rebuild failed
         # and left us with no transport at all. All three used to be invisible.
-        if (self._transport is None
-                or not getattr(self._transport, "connected", True)
-                or self._silent()):
-            await self._async_recover()
+        #
+        # Which one fired is logged, because they have different causes and a user's
+        # debug log is the only way to tell them apart from here (issue #9).
+        if self._transport is None:
+            await self._async_recover("no transport")
+        elif not getattr(self._transport, "connected", True):
+            await self._async_recover("broker reports us disconnected")
+        elif self._silent():
+            await self._async_recover(
+                f"no reports for {STALE_AFTER}s while the broker still reports connected")
         await self.hass.async_add_executor_job(self._poll)
         return self.data
 
