@@ -9,14 +9,14 @@ from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
+from .anycubic_local.const import SENSITIVE_KEYS
 from .coordinator import AnycubicCoordinator
 
-# Identifiers / addresses that should never leave the user's machine in a shared report.
-# filename can embed the user's name. camera_url is handled by _mask_url_host instead:
-# scheme/port/path must survive (they're how an unvalidated model's camera gets debugged
-# from a diagnostics attachment — issue #6), only the address is secret.
-TO_REDACT = {"host", "ip", "filename", "username", "password", "device_id",
-             "serial", "broker_host", "deviceId", "mac"}
+# Shared with the inbound-report debug log, so a key only has to be classified once.
+# camera_url is handled by _mask_url_host instead: scheme/port/path must survive (they're
+# how an unvalidated model's camera gets debugged from a diagnostics attachment — issue #6),
+# only the address is secret.
+TO_REDACT = SENSITIVE_KEYS
 
 
 def _mask_url_host(url: str | None) -> str | None:

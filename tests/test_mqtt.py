@@ -142,3 +142,28 @@ def test_forwards_video_report_with_null_data():
         {"type": "video", "action": "startCapture", "state": "initSuccess",
          "code": 200, "data": None}))
     assert seen == [("video", {})]
+
+
+def test_inbound_reports_are_logged_with_secrets_redacted(caplog):
+    """The report log is the instrument for issue #9 — it must name the type that arrived
+    and must not leak the address or filename into a log a user pastes into an issue."""
+    import logging
+    from custom_components.anycubic.anycubic_local.const import redacted
+
+    payload = {"type": "info", "action": "report",
+               "data": {"ip": "192.168.1.50", "filename": "alice-bracket.gcode",
+                        "temp": {"curr_nozzle_temp": 93}}}
+    out = redacted(payload)
+    assert out["data"]["ip"] == "**REDACTED**"
+    assert out["data"]["filename"] == "**REDACTED**"
+    # The values we actually need for triage must survive untouched.
+    assert out["data"]["temp"]["curr_nozzle_temp"] == 93
+    assert out["type"] == "info"
+    # And the original is not mutated.
+    assert payload["data"]["ip"] == "192.168.1.50"
+
+
+def test_redacted_leaves_absent_values_alone():
+    from custom_components.anycubic.anycubic_local.const import redacted
+    assert redacted({"ip": None, "slots": [{"filename": "x", "index": 1}]}) == {
+        "ip": None, "slots": [{"filename": "**REDACTED**", "index": 1}]}

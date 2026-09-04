@@ -10,7 +10,7 @@ from collections.abc import Callable
 
 import paho.mqtt.client as mqtt
 
-from .const import query_topic, report_prefix
+from .const import query_topic, redacted, report_prefix
 from .handshake import HandshakeResult
 
 _LOGGER = logging.getLogger(__name__)
@@ -120,6 +120,12 @@ class AnycubicMqtt:
         if obj.get("action") == "query" and obj.get("data") is None and "state" not in obj:
             return  # our own echoed query
         msg_type = obj.get("type") or message.topic.rsplit("/", 1)[-1]
+        # Which report actually arrived, and what it carried. Without this, a printer
+        # answering every poll with frozen values (issue #9) looks identical to one
+        # answering properly — the coordinator logs "updated" either way, and a report
+        # type that quietly stops arriving leaves no trace at all. Redacted because these
+        # lines get pasted into issues verbatim.
+        _LOGGER.debug("report %s: %s", msg_type, redacted(obj))
         if msg_type == "print":
             # The printer's answer to a control command (code 200 = accepted). Logged here
             # rather than in the coordinator because an ack carries code/state at the TOP

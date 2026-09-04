@@ -2,6 +2,23 @@
 
 PREFIX = "anycubic/anycubicCloud/v1"
 
+# Identifiers / addresses that must never leave the user's machine in something they
+# share. Diagnostics redacts these, and so does the inbound-report debug log — users
+# paste those straight into issues. filename can embed the user's own name.
+SENSITIVE_KEYS: frozenset[str] = frozenset({
+    "host", "ip", "filename", "username", "password", "device_id",
+    "serial", "broker_host", "deviceId", "mac"})
+
+
+def redacted(value):
+    """Deep-copy `value` with every SENSITIVE_KEYS entry masked."""
+    if isinstance(value, dict):
+        return {k: ("**REDACTED**" if k in SENSITIVE_KEYS and v is not None else redacted(v))
+                for k, v in value.items()}
+    if isinstance(value, list):
+        return [redacted(v) for v in value]
+    return value
+
 QUERY_TYPES = ["info", "tempature", "fan", "light", "multiColorBox", "print"]
 # note: "tempature" is the printer firmware's actual (misspelled) wire string and must NOT be corrected.
 # report `action` varies (query/report/refresh/workReport/setInfo) — key off TYPE, never action.
