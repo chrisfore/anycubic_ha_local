@@ -3,6 +3,7 @@
 All commands are validated against real hardware, including `stop`: the app sends
 {type:print, action:stop, data:{taskid:-1}} and the printer transitions stopping->stoped.
 """
+import time
 import uuid
 
 from .const import query_topic
@@ -17,7 +18,13 @@ def _box(payload: dict, box_id: int = 0) -> dict:
 def build(model_id: str, device_id: str, command: str, *, value=None, on=None,
           brightness=None, target_temp=None, duration=None, box_id: int = 0,
           ts=None, msgid=None):
-    """Return (topic, payload_dict) for a control command. ts/msgid injected by the caller/transport."""
+    """Return (topic, payload_dict) for a control command.
+
+    ts/msgid default to a real epoch-ms clock and a fresh uuid; they are parameters only
+    so tests can pin them. They used to default to 0 and were documented as "injected by
+    the caller/transport" — but nothing ever injected them, so every control command went
+    out with timestamp 0 while queries carried a real clock (issue #10).
+    """
     if command in ("pause", "resume", "stop"):
         mtype, action, data = "print", command, {"taskid": _TASKID}
     elif command in ("set_nozzle_temp", "set_bed_temp", "set_fan_speed", "set_aux_fan",
@@ -45,6 +52,7 @@ def build(model_id: str, device_id: str, command: str, *, value=None, on=None,
     else:
         raise ValueError(f"unknown command: {command}")
 
-    payload = {"type": mtype, "action": action, "timestamp": ts or 0,
+    payload = {"type": mtype, "action": action,
+               "timestamp": int(time.time() * 1000) if ts is None else ts,
                "msgid": msgid or str(uuid.uuid4()), "data": data}
     return query_topic(model_id, device_id, mtype), payload
