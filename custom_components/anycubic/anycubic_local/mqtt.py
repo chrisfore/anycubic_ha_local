@@ -64,7 +64,13 @@ class AnycubicMqtt:
         self._c.publish(query_topic(self._hs.model_id, self._hs.device_id, msg_type), body)
 
     def publish(self, topic: str, payload: str) -> None:
-        self._c.publish(topic, payload)
+        info = self._c.publish(topic, payload)
+        # paho reports a send it could not make in the RETURN VALUE, not by raising.
+        # Discarding it made a publish that never left the client indistinguishable from
+        # one the printer received and ignored (issue #10).
+        rc = getattr(info, "rc", mqtt.MQTT_ERR_SUCCESS)
+        if rc != mqtt.MQTT_ERR_SUCCESS:
+            _LOGGER.debug("publish to %s returned rc=%s", topic.rsplit("/", 1)[-1], rc)
 
     def _handle(self, client, userdata, message) -> None:
         try:
@@ -74,6 +80,15 @@ class AnycubicMqtt:
         if obj.get("action") == "query" and obj.get("data") is None and "state" not in obj:
             return  # our own echoed query
         msg_type = obj.get("type") or message.topic.rsplit("/", 1)[-1]
+        if msg_type == "print":
+            # The printer's answer to a control command (code 200 = accepted). Logged here
+            # rather than in the coordinator because an ack carries code/state at the TOP
+            # level with data usually null — the data-is-None drop below would swallow it.
+            # Without this, a command the firmware rejected looked exactly like one that was
+            # never sent (issue #10). `print` is never polled, so this is not a per-cycle line.
+            _LOGGER.debug("print ack: action=%s code=%s state=%s msg=%s",
+                          obj.get("action"), obj.get("code"), obj.get("state"),
+                          obj.get("msg") or obj.get("data"))
         data = obj.get("data")
         if data is not None:
             self._on_report(msg_type, data)
