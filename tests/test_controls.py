@@ -1,5 +1,7 @@
 from unittest.mock import AsyncMock, patch
 
+import pytest
+from homeassistant.exceptions import HomeAssistantError
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.anycubic.const import DOMAIN
@@ -59,6 +61,7 @@ async def test_printer_number_setpoints(hass):
     from custom_components.anycubic.definitions import PRINTER_NUMBERS
     from custom_components.anycubic.number import AnycubicNumber
     num = {d.key: AnycubicNumber(coord, d) for d in PRINTER_NUMBERS}
+    coord.data.printer = PrinterState(printing=True)
 
     await num["nozzle_target"].async_set_native_value(250)
     coord.async_send_command.assert_awaited_with("set_nozzle_temp", value=250)
@@ -75,7 +78,7 @@ async def test_speed_mode_select(hass):
     from custom_components.anycubic.select import AnycubicSpeedSelect
     sel = AnycubicSpeedSelect(coord)
 
-    coord.data.printer = PrinterState(print_speed_mode=2)
+    coord.data.printer = PrinterState(print_speed_mode=2, printing=True)
     assert sel.current_option == "standard"
     await sel.async_select_option("sport")
     coord.async_send_command.assert_awaited_with("set_speed_mode", value=3)
@@ -119,3 +122,41 @@ async def test_auto_feed_switch(hass):
     await sw.async_turn_off()
     coord.async_send_command.assert_awaited_with("auto_feed", on=False, box_id=0)
     assert sw.is_on is False
+
+
+async def test_setpoints_are_refused_when_no_job_is_running(hass):
+    """Idle, the printer discards a print/update settings command without acking it —
+    confirmed on a Kobra 3. Refuse loudly instead of pretending it worked (issue #10)."""
+    coord = await _setup(hass)
+    coord.async_send_command = AsyncMock()
+    from custom_components.anycubic.definitions import PRINTER_NUMBERS
+    from custom_components.anycubic.number import AnycubicNumber
+    from custom_components.anycubic.select import AnycubicSpeedSelect
+
+    coord.data.printer = PrinterState(nozzle_target=0, printing=False, paused=False)
+    num = {d.key: AnycubicNumber(coord, d) for d in PRINTER_NUMBERS}
+
+    for key in ("nozzle_target", "bed_target", "fan_speed", "aux_fan", "box_fan"):
+        with pytest.raises(HomeAssistantError):
+            await num[key].async_set_native_value(60)
+    with pytest.raises(HomeAssistantError):
+        await AnycubicSpeedSelect(coord).async_select_option("sport")
+
+    # Nothing was published, and the displayed target was not moved behind the user's back.
+    coord.async_send_command.assert_not_awaited()
+    assert coord.data.printer.nozzle_target == 0
+    # Still readable while idle — it is the printer's real reported target.
+    assert num["nozzle_target"].available
+
+
+async def test_setpoints_are_writable_while_paused(hass):
+    """A paused job still has a task, so the settings update still applies."""
+    coord = await _setup(hass)
+    coord.async_send_command = AsyncMock()
+    from custom_components.anycubic.definitions import PRINTER_NUMBERS
+    from custom_components.anycubic.number import AnycubicNumber
+
+    coord.data.printer = PrinterState(printing=False, paused=True)
+    num = {d.key: AnycubicNumber(coord, d) for d in PRINTER_NUMBERS}
+    await num["nozzle_target"].async_set_native_value(210)
+    coord.async_send_command.assert_awaited_with("set_nozzle_temp", value=210)
