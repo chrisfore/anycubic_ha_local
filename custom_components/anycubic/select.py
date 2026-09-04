@@ -4,6 +4,7 @@ from __future__ import annotations
 from homeassistant.components.select import SelectEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import AnycubicCoordinator
@@ -31,6 +32,10 @@ class AnycubicSpeedSelect(AnycubicEntity, SelectEntity):
         return _MODES.get(self.coordinator.data.printer.print_speed_mode)
 
     async def async_select_option(self, option: str) -> None:
+        # Same print/update settings command as the setpoints — inert with no task (issue #10).
+        if not self.coordinator.job_active:
+            raise HomeAssistantError(
+                "The printer only accepts speed changes while a print is running.")
         value = _VALUES[option]
         await self.coordinator.async_send_command("set_speed_mode", value=value)
         self.coordinator.data.printer.print_speed_mode = value

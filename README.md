@@ -7,7 +7,7 @@ cloud account, no rooting**.
 [![hacs](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz)
 [![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chrisfore&repository=anycubic_ha_local&category=integration)
 
-> **Status:** v1.2.6 — validated end-to-end on a Kobra S1 Max and user-validated on a Kobra 4,
+> **Status:** v1.2.7 — validated end-to-end on a Kobra S1 Max and user-validated on a Kobra 4,
 > Kobra 3 and Kobra X; the rest of the family shares the identical protocol. Entities adapt to each
 > model (see **Supported printers**).
 
@@ -25,6 +25,11 @@ cloud account, no rooting**.
 - **Print:** pause, resume, stop.
 - **Temperatures & fans:** nozzle / bed target temperature, part-cooling / auxiliary / chamber fans.
 - **Print speed:** silent / standard / sport.
+
+> **Temperatures, fans and print speed can only be changed while a print is running.** They are
+> print-*job* settings: the printer applies them to the current job and ignores them when idle
+> (confirmed on hardware — it does not even acknowledge the command). The values stay readable
+> when idle; only writing is refused. There is no preheat command in AnyCubic's LAN protocol.
 - **Chamber light:** on / off.
 - **ACE 2:** drying on/off (with adjustable temperature & time), auto-feed.
 

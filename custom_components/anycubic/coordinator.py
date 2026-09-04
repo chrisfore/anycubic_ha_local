@@ -147,6 +147,18 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         except TimeoutError:
             _LOGGER.debug("no video report within %ss of startCapture", VIDEO_REPORT_TIMEOUT)
 
+    @property
+    def job_active(self) -> bool:
+        """Is there a print task for a `print`/`update` settings command to apply to?
+
+        Confirmed on a Kobra 3 (issue #10): mid-print the printer answers a settings
+        update with `code=200 state=updated msg=done`; idle it discards the message
+        without acking at all. `taskid: "-1"` means "the current job", so with no job
+        there is nothing to update. Paused counts — the task still exists.
+        """
+        printer = self.data.printer
+        return printer.printing or printer.paused
+
     def _redact(self, topic: str) -> str:
         """Topics embed the device id, and these log lines get pasted into bug reports."""
         return topic.replace(self.hs.device_id, "**REDACTED**") if self.hs.device_id else topic

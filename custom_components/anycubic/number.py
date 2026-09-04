@@ -5,6 +5,7 @@ from homeassistant.components.number import NumberDeviceClass, NumberEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ENCLOSED_MODELS, box_has_dryer
@@ -26,9 +27,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEnt
 class AnycubicNumber(AnycubicEntity, NumberEntity):
     """A live printer setpoint — reads the reported target, writes via print/update settings.
 
-    Note: the temperature setpoints (nozzle/bed) are intentionally always writable so the user
-    can preheat or change filament while idle — they command the heaters even with no job running.
-    min=0 turns the heater off. The fans are harmless. This is a reviewed decision, not an oversight.
+    Writable only while a job is running. These are *print-job* settings: the firmware applies
+    them to the current task and silently discards them when there is none, so an idle write
+    used to look like it worked and then revert on the next poll (issue #10). The value stays
+    readable when idle — it is the printer's real reported target — but a write is refused
+    with an explanation rather than sent into a void. min=0 turns the heater off.
+
+    There is no idle preheat command in this protocol; `print`/`update` is the only way to
+    move a setpoint, and it needs a task.
     """
 
     entity_description: AnycubicNumberEntityDescription
@@ -42,8 +48,13 @@ class AnycubicNumber(AnycubicEntity, NumberEntity):
         return getattr(self.coordinator.data.printer, self.entity_description.attr)
 
     async def async_set_native_value(self, value: float) -> None:
+        if not self.coordinator.job_active:
+            raise HomeAssistantError(
+                "The printer only accepts setpoint changes while a print is running. "
+                "It ignores them when idle, so this would have had no effect.")
         await self.coordinator.async_send_command(self.entity_description.command, value=int(value))
-        # Reflect immediately; the printer echoes the new target on the next poll.
+        # Reflect immediately; the printer echoes the new target within a second. Safe now
+        # that the command is only sent when the firmware will actually act on it.
         setattr(self.coordinator.data.printer, self.entity_description.attr, int(value))
         self.coordinator.async_set_updated_data(self.coordinator.data)
 
