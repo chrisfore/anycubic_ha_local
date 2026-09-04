@@ -1,4 +1,6 @@
 # tests/test_mqtt.py
+import paho.mqtt.client as paho
+
 from custom_components.anycubic.anycubic_local import mqtt as m
 from custom_components.anycubic.anycubic_local.handshake import HandshakeResult
 
@@ -6,6 +8,7 @@ from custom_components.anycubic.anycubic_local.handshake import HandshakeResult
 class FakeClient:
     def __init__(self, *a, **k):
         self.subs = []; self.pubs = []
+        self.publish_rc = paho.MQTT_ERR_SUCCESS
         self.on_message = None; self.on_connect = None; self.on_disconnect = None
     def username_pw_set(self, u, p): self.u, self.p = u, p
     def tls_set(self, **k): self.tls = True
@@ -25,7 +28,10 @@ class FakeClient:
     def loop_stop(self): self.started = False
     def disconnect(self): self.conn = None
     def subscribe(self, t): self.subs.append(t)
-    def publish(self, t, payload): self.pubs.append((t, payload))
+    def publish(self, t, payload):
+        self.pubs.append((t, payload))
+        # paho hands back an MQTTMessageInfo whose rc reports a send into a dead socket
+        return type("Info", (), {"rc": self.publish_rc})()
 
 
 def _msg(topic, payload):
@@ -69,6 +75,59 @@ def test_resubscribes_after_broker_reconnect():
     assert len(client._c.subs) == subs_after_connect + 1, (
         "subscription not re-established after reconnect")
     assert all("printer/public/20029/DEV/#" in s for s in client._c.subs)
+
+
+def _client():
+    hs = HandshakeResult("1.2.3.4", 9883, "u", "p", "DEV", "20029", "SER")
+    c = m.AnycubicMqtt(hs, on_report=lambda t, d: None, client_factory=FakeClient)
+    c.connect()
+    return c
+
+
+def test_accepted_connack_reports_connected():
+    assert _client().connected is True
+
+
+def test_refused_connack_is_not_treated_as_connected():
+    """A refused CONNACK used to be indistinguishable from an accepted one: the code
+    subscribed anyway and reported healthy while receiving nothing (issue #9)."""
+    c = _client()
+    subs_before = len(c._c.subs)
+    c._c.on_connect(c._c, None, {}, 5)          # 5 = not authorised (stale credentials)
+    assert c.connected is False
+    assert len(c._c.subs) == subs_before, "subscribed on a refused connection"
+
+
+def test_refused_connack_is_detected_through_a_paho_v2_reason_code():
+    """paho v2 passes a ReasonCode object, not an int rc."""
+    c = _client()
+    c._c.on_connect(c._c, None, {}, type("RC", (), {"is_failure": True})(), None)
+    assert c.connected is False
+
+
+def test_an_unreadable_connack_code_is_treated_as_accepted():
+    """Failing open here is deliberate: misreading the code would take a healthy
+    printer offline, which is worse than the stale-data bug being fixed."""
+    c = _client()
+    c._c.on_connect(c._c, None, {}, object())
+    assert c.connected is True
+
+
+def test_dropped_connection_reports_disconnected():
+    c = _client()
+    c._c.on_disconnect(c._c, None, 1)
+    assert c.connected is False
+    c._c.on_connect(c._c, None, {}, 0)          # paho auto-reconnected
+    assert c.connected is True
+
+
+def test_publish_into_a_dead_socket_reports_disconnected():
+    """paho reports this in the return value rather than raising, so discarding it
+    let a poll keep 'succeeding' against a session the printer had already dropped."""
+    c = _client()
+    c._c.publish_rc = paho.MQTT_ERR_NO_CONN
+    c.query("info")
+    assert c.connected is False
 
 
 def test_forwards_video_report_with_null_data():
