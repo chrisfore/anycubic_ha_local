@@ -48,3 +48,66 @@ def test_parse_light(load_fixture):
     light = models.parse_light(load_fixture("light_report.json"))
     assert light.on is True
     assert light.brightness == 100
+
+
+def test_apply_temperature_folds_a_tempature_report():
+    state = models.PrinterState(nozzle_temp=210, nozzle_target=210, bed_temp=60,
+                                chamber_temp=41, progress=42, printing=True)
+    models.apply_temperature(state, {"taskid": "", "curr_nozzle_temp": 39,
+                                     "target_nozzle_temp": 0, "curr_hotbed_temp": 28,
+                                     "target_hotbed_temp": 0})
+    assert state.nozzle_temp == 39
+    assert state.nozzle_target == 0        # a real setpoint of 0 must land, not read as absent
+    assert state.bed_temp == 28
+    assert state.chamber_temp == 41        # key omitted -> keep the last known value
+    assert state.progress == 42            # job fields are not this report's business
+    assert state.printing is True
+
+
+def test_apply_fan_folds_a_fan_report():
+    state = models.PrinterState(fan_speed_pct=100, aux_fan_speed_pct=50, box_fan_level=1,
+                                progress=42)
+    models.apply_fan(state, {"taskid": "-1", "fan_speed_pct": 0, "box_fan_level": 3})
+    assert state.fan_speed_pct == 0
+    assert state.box_fan_level == 3
+    assert state.aux_fan_speed_pct == 50   # omitted -> unchanged
+    assert state.progress == 42
+
+
+def test_apply_progress_folds_a_print_report():
+    state = models.PrinterState(progress=5, current_layer=1, printing=True, status="printing")
+    applied = models.apply_progress(state, {
+        "taskid": "-1", "progress": 42, "curr_layer": 120, "total_layers": 900,
+        "remain_time": 31, "print_time": 610, "supplies_usage": 1200,
+        "filename": "plate.gcode.3mf"})
+    assert applied is True
+    assert state.progress == 42
+    assert state.current_layer == 120
+    assert state.total_layers == 900
+    assert state.remain_time == 31
+    assert state.filament_used == 1200
+    assert state.filename == "plate.gcode.3mf"
+    assert state.printing is True          # lifecycle stays info's job
+    assert state.status == "printing"
+
+
+def test_apply_progress_ignores_the_command_ack_and_settings_shapes():
+    # All three share the `print` topic; only the progress shape carries `progress`.
+    # Folding an ack would wipe progress/layer/remaining-time on every button press.
+    state = models.PrinterState(progress=42, current_layer=120, remain_time=31)
+    for ack in ({"taskid": "-1"},
+                {"taskid": "-1", "settings": {"target_nozzle_temp": 210}},
+                {"taskid": "-1", "localtask": "", "curr_nozzle_temp": 210,
+                 "curr_hotbed_temp": 60, "settings": {"fan_speed_pct": 100}}):
+        assert models.apply_progress(state, ack) is False
+    assert state.progress == 42
+    assert state.current_layer == 120
+    assert state.remain_time == 31
+
+
+def test_apply_progress_lands_a_genuine_zero():
+    # progress 0 / layer 0 at the start of a job are real values, not "absent".
+    state = models.PrinterState(progress=99, current_layer=900)
+    assert models.apply_progress(state, {"progress": 0, "curr_layer": 0}) is True
+    assert state.progress == 0
+    assert state.current_layer == 0

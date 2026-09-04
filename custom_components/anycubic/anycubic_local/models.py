@@ -171,6 +171,89 @@ def parse_info(data: dict) -> PrinterState:
     )
 
 
+# Maps a `tempature`/`fan` report onto the PrinterState fields it mirrors. Both reports
+# carry the same keys as info's `temp` / fan sub-objects, with a `taskid` alongside.
+_TEMP_FIELDS = {
+    "nozzle_temp": "curr_nozzle_temp",
+    "nozzle_target": "target_nozzle_temp",
+    "bed_temp": "curr_hotbed_temp",
+    "bed_target": "target_hotbed_temp",
+    "chamber_temp": "curr_chamber_temp",
+    "chamber_target": "target_chamber_temp",
+}
+_FAN_FIELDS = {
+    "fan_speed_pct": "fan_speed_pct",
+    "aux_fan_speed_pct": "aux_fan_speed_pct",
+    "box_fan_level": "box_fan_level",
+}
+
+
+def _fold(state: PrinterState, data: dict, fields: dict[str, str]) -> None:
+    """Copy the fields this report carries onto state; never blank one it omits.
+
+    A Kobra 3 has no chamber and omits those keys entirely, so an absent key means
+    "not reported", not "zero" — but a reported 0 (target off) is a real value and
+    must land, which is why this tests against None rather than falsiness.
+    """
+    for attr, key in fields.items():
+        value = data.get(key)
+        if value is not None:
+            setattr(state, attr, value)
+
+
+def apply_temperature(state: PrinterState, data: dict) -> None:
+    """Fold a `tempature` report into the state we already hold.
+
+    The printer pushes `tempature` within a second of a reading changing, while
+    `info` — which carries the same numbers — can go minutes between arrivals when
+    no other client is talking to the printer. Discarding `tempature` therefore left
+    every temperature entity moving only as fast as `info` did (issue #9): closing
+    the Slicer made readings lag by minutes, and reopening it made them jump.
+
+    Only the temperature fields are touched. `info` stays the sole source of job and
+    identity state, so a temperature push can never blank a print in progress.
+    """
+    _fold(state, data, _TEMP_FIELDS)
+
+
+def apply_fan(state: PrinterState, data: dict) -> None:
+    """Fold a `fan` report into the state we already hold — same shape, same reason."""
+    _fold(state, data, _FAN_FIELDS)
+
+
+# A `print` report mirrors info's `project` sub-object. Same keys, un-nested.
+_PROGRESS_FIELDS = {
+    "progress": "progress",
+    "current_layer": "curr_layer",
+    "total_layers": "total_layers",
+    "remain_time": "remain_time",
+    "print_time": "print_time",
+    "filament_used": "supplies_usage",
+    "filename": "filename",
+}
+
+
+def apply_progress(state: PrinterState, data: dict) -> bool:
+    """Fold a `print` progress report into the state we already hold.
+
+    `print` is pushed on every change during a job, while the same numbers reach us via
+    `info` only as fast as `info` arrives — the identical staleness that froze
+    temperatures in issue #9, applied to progress, layer and remaining time.
+
+    Three different payloads share the `print` topic: a command ack (`taskid` alone), a
+    settings snapshot (`settings` + current temps), and this progress shape. Only the
+    progress one carries `progress`, so that key is the discriminator; the others are
+    left to the ack logging in mqtt.py. Returns whether this was a progress report.
+
+    Lifecycle (printing/paused/status) is deliberately NOT folded: no pushed report
+    carries it, so `info` remains its only source.
+    """
+    if "progress" not in data:
+        return False
+    _fold(state, data, _PROGRESS_FIELDS)
+    return True
+
+
 @dataclass
 class LightState:
     on: bool = False

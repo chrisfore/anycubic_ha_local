@@ -41,22 +41,70 @@ async def test_coordinator_merges_ace(hass):
     assert coord.data.ace[0].humidity == 24
 
 
-async def test_tempature_push_does_not_blank_printer(hass):
+async def test_tempature_push_updates_temps_without_blanking_the_rest(hass):
+    # `tempature` is a raw temp dict, not an info envelope. It carries the newest
+    # reading — often minutes ahead of the next `info` (issue #9) — so it must move
+    # the temperature fields while leaving job state alone.
     coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
     await coord.async_start()
     coord._apply("info", {"state": "busy", "temp": {"curr_nozzle_temp": 210},
                           "project": {"state": "printing", "progress": 42, "pause": 0}})
     await hass.async_block_till_done()
-    coord._apply("tempature", {"curr_nozzle_temp": 230})   # raw temp dict, not an info envelope
+    coord._apply("tempature", {"taskid": "", "curr_nozzle_temp": 230,
+                               "target_nozzle_temp": 235, "curr_hotbed_temp": 60,
+                               "target_hotbed_temp": 60})
     await hass.async_block_till_done()
-    assert coord.data.printer.nozzle_temp == 210            # unchanged, NOT None
+    assert coord.data.printer.nozzle_temp == 230
+    assert coord.data.printer.nozzle_target == 235
+    assert coord.data.printer.bed_temp == 60
+    assert coord.data.printer.progress == 42                # job state untouched
+    assert coord.data.printer.printing is True
+
+
+async def test_tempature_without_a_chamber_keeps_the_known_chamber_temp(hass):
+    # A Kobra 3 omits the chamber keys entirely; a printer that has one reports them
+    # in `info`. Folding an omitted key in as None would blank a live reading.
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    coord._apply("info", {"state": "free",
+                          "temp": {"curr_nozzle_temp": 30, "curr_chamber_temp": 41}})
+    await hass.async_block_till_done()
+    coord._apply("tempature", {"curr_nozzle_temp": 31})
+    await hass.async_block_till_done()
+    assert coord.data.printer.nozzle_temp == 31
+    assert coord.data.printer.chamber_temp == 41
+
+
+async def test_fan_push_updates_fan_speeds(hass):
+    # Same defect as `tempature`: polled every cycle, answered, then discarded.
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    coord._apply("info", {"state": "busy", "fan_speed_pct": 100, "aux_fan_speed_pct": 0,
+                          "project": {"state": "printing", "progress": 42, "pause": 0}})
+    await hass.async_block_till_done()
+    coord._apply("fan", {"taskid": "-1", "fan_speed_pct": 40, "box_fan_level": 2})
+    await hass.async_block_till_done()
+    assert coord.data.printer.fan_speed_pct == 40
+    assert coord.data.printer.box_fan_level == 2
+    assert coord.data.printer.aux_fan_speed_pct == 0        # omitted, keeps its value
     assert coord.data.printer.progress == 42
 
 
+async def test_a_tempature_arriving_before_any_info_is_kept(hass):
+    # Reports are applied in arrival order; nothing guarantees `info` lands first.
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    coord._apply("tempature", {"curr_nozzle_temp": 27, "curr_hotbed_temp": 24})
+    await hass.async_block_till_done()
+    assert coord.data.printer.nozzle_temp == 27
+    assert coord.data.printer.bed_temp == 24
+
+
 async def test_on_report_applies_on_the_event_loop_thread(hass):
-    # Reports arrive on the paho network thread. _apply calls async_set_updated_data,
-    # which HA only allows on the event loop — running it anywhere else (e.g. an
-    # executor thread) raises RuntimeError on every report and floods the log.
+    # Reports arrive on the paho network thread. _apply notifies listeners, which drives
+    # entity state writes — and HA only allows those on the event loop. Running it
+    # anywhere else (e.g. an executor thread) raises RuntimeError on every report and
+    # floods the log.
     coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
     await coord.async_start()
     loop_thread = threading.current_thread()
@@ -257,3 +305,68 @@ async def test_video_report_url_is_captured(hass):
     coord._on_report("info", {"state": "free", "model": "AnyCubic Kobra 4"})
     await hass.async_block_till_done()
     assert coord.video_stream_url == "http://1.2.3.4:18088/live/k5DawnaQ"
+
+
+async def test_print_progress_push_updates_the_job_without_touching_lifecycle(hass):
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    coord._apply("info", {"state": "busy", "temp": {"curr_nozzle_temp": 210},
+                          "project": {"state": "printing", "progress": 5,
+                                      "curr_layer": 1, "pause": 0}})
+    await hass.async_block_till_done()
+    coord._apply("print", {"taskid": "-1", "progress": 42, "curr_layer": 120,
+                           "total_layers": 900, "remain_time": 31})
+    await hass.async_block_till_done()
+    assert coord.data.printer.progress == 42
+    assert coord.data.printer.current_layer == 120
+    assert coord.data.printer.remain_time == 31
+    assert coord.data.printer.printing is True
+    assert coord.data.printer.nozzle_temp == 210
+
+
+async def test_a_print_command_ack_does_not_wipe_progress(hass):
+    # Acks for pause/resume/settings arrive on the same `print` topic as progress.
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    coord._apply("print", {"taskid": "-1", "progress": 42, "curr_layer": 120})
+    await hass.async_block_till_done()
+    coord._apply("print", {"taskid": "-1", "settings": {"target_nozzle_temp": 210}})
+    await hass.async_block_till_done()
+    assert coord.data.printer.progress == 42
+    assert coord.data.printer.current_layer == 120
+
+
+async def test_a_report_does_not_push_out_the_next_poll(hass):
+    # multiColorBox is poll-ONLY (the printer never pushes it during a steady print), so
+    # the 30s poll must keep its cadence no matter how chatty the pushed types are.
+    # async_set_updated_data re-arms the refresh timer on every call, which starved the
+    # poll completely while info/tempature/fan were arriving every few seconds.
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    coord.async_add_listener(lambda: None)      # scheduling only happens with listeners
+    await coord.async_start()
+    await coord.async_refresh()
+    # HA stores the poll timer as TimerHandle.cancel, so __self__ is the handle itself.
+    # A reschedule replaces the handle; keeping the same one is the assertion.
+    handle = coord._unsub_refresh.__self__
+    scheduled_at = handle.when()
+    for _ in range(5):
+        coord._apply("tempature", {"curr_nozzle_temp": 210})
+        coord._apply("fan", {"fan_speed_pct": 100})
+        coord._apply("info", {"state": "free", "temp": {"curr_nozzle_temp": 210}})
+    await hass.async_block_till_done()
+    assert coord._unsub_refresh.__self__ is handle
+    assert coord._unsub_refresh.__self__.when() == scheduled_at
+
+
+async def test_a_report_still_brings_entities_back_from_unavailable(hass):
+    # The watchdog marks the coordinator failed; the next report must clear that, which
+    # is what async_set_updated_data used to do via last_update_success.
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    coord.last_update_success = False
+    updated = []
+    coord.async_add_listener(lambda: updated.append(1))
+    coord._apply("tempature", {"curr_nozzle_temp": 210})
+    await hass.async_block_till_done()
+    assert coord.last_update_success is True
+    assert updated                                # listeners were notified

@@ -21,6 +21,9 @@ from .anycubic_local.models import (
     AceBox,
     LightState,
     PrinterState,
+    apply_fan,
+    apply_progress,
+    apply_temperature,
     merge_boxes,
     parse_info,
     parse_light,
@@ -39,6 +42,9 @@ _LOGGER = logging.getLogger(__name__)
 
 # Printer status (info/tempature/fan/light) is pushed by the printer during activity, but the ACE
 # box (multiColorBox) is NOT pushed — it only answers an on-demand getInfo — so we re-poll on an interval.
+# The push rates differ by orders of magnitude: `tempature` lands within a second of a reading
+# changing, while `info` can go minutes between arrivals when no other client (the AnyCubic Slicer)
+# is talking to the printer. Every type here must therefore be applied, not just `info` (issue #9).
 _QUERY_TYPES = ("info", "tempature", "fan", "light", "multiColorBox")
 
 # `peripherie` is a static capability inventory ({camera, multiColorBox, udisk} presence flags) — it
@@ -273,6 +279,19 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             features = data.get("features")
             if isinstance(features, dict):
                 self.raw_features = features
+        elif msg_type == "tempature":
+            # Not a typo — the firmware's wire string. Folded rather than parsed into a
+            # fresh state: it carries only temperatures, and is the fastest-moving source
+            # of them by far. Reports are applied in arrival order, so whichever of
+            # `tempature` and `info` lands last is the newest reading.
+            apply_temperature(self.data.printer, data)
+        elif msg_type == "fan":
+            apply_fan(self.data.printer, data)
+        elif msg_type == "print":
+            # Pushed on every change during a job (and never polled), so it beats `info`
+            # to progress/layer/remaining-time by the same margin `tempature` beats it to
+            # temperatures. Command acks share this topic and are ignored by the fold.
+            apply_progress(self.data.printer, data)
         elif msg_type == "multiColorBox":
             self.raw_multicolorbox = data
             self.data.ace = merge_boxes(self.data.ace, parse_multicolorbox(data))
@@ -287,7 +306,14 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
                 self.video_stream_url = url
             if self._video_report is not None:
                 self._video_report.set()
-        self.async_set_updated_data(self.data)
+        # Deliberately NOT async_set_updated_data: that helper resets the refresh
+        # interval ("Manually update data, notify listeners and reset refresh interval"),
+        # so every inbound report pushed the next poll a full 30s out. A printer pushing
+        # info/tempature/fan every few seconds mid-print therefore never got polled at
+        # all — and multiColorBox is poll-ONLY, so ACE humidity, temperature and drying
+        # froze for the whole job. Notify listeners without touching the schedule.
+        self.last_update_success = True
+        self.async_update_listeners()
 
     def drying_temp(self, box_id: int) -> int:
         return self._drying_temps.get(box_id, ACE_DRYING_DEFAULT_TEMP)
