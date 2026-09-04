@@ -52,6 +52,22 @@ features : { auto_leveling_support, drying_first_support, camera_timelapse_suppo
 ```
 `tempature` and `fan` reports mirror the temp/fan sub-objects (fan adds `taskid` during activity).
 
+**Push cadence differs by orders of magnitude** (validated on a Kobra 3 V2, fw 1.1.2.8, issue #9):
+`tempature` is pushed within ~1s of a reading changing, whereas `info` arrives roughly every 30s
+while the AnyCubic Slicer is attached and can stretch to **several minutes** once it is closed. A
+client that reads temperatures only from `info` therefore appears to freeze when the Slicer is
+closed and to "revive" when it is reopened. **Consume every report type you subscribe to, not just
+`info`** — the pushed types are the fresh ones, and `info` is the slow one.
+
+**Progress rides `print`, not `status`.** `print` (pushed on every change during a job, never
+answered by a query) mirrors info's `project` sub-object un-nested: `progress, curr_layer,
+total_layers, remain_time, print_time, supplies_usage, filename`. Three payloads share the `print`
+topic — a command ack (`taskid` alone), a settings snapshot (`settings` + current temps), and the
+progress shape — so **discriminate on the presence of `progress`**. `status` (workReport) is a red
+herring: its `data` is **null in all 359 captured instances**, carrying only a top-level
+`state: busy|free`. Lifecycle (`project.state`, `pause`) is pushed by nothing — `info` is its only
+source.
+
 ## Status / lifecycle model — VALIDATED (live print + pause/resume/stop)
 - Top-level `info.data.state`: `free` / `busy`.
 - `info.data.project.state` machine: `preheating → auto_leveling → vibrating → flow_calibrating → printing → pausing → paused → resuming → resumed → stopping → stoped` (+ `updated`); idle job ends `finished` (via `last_project`). **Note `stoped` is the wire spelling (single-p).** Parse unknown states pass-through.
