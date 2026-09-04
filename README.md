@@ -6,10 +6,14 @@ cloud account, no rooting**.
 
 [![hacs](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz)
 [![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chrisfore&repository=anycubic_ha_local&category=integration)
+[![Stars](https://img.shields.io/github/stars/chrisfore/anycubic_ha_local?style=flat&color=f5c518&label=stars)](https://github.com/chrisfore/anycubic_ha_local/stargazers)
 
 > **Status:** v1.2.6 — validated end-to-end on a Kobra S1 Max and user-validated on a Kobra 4,
 > Kobra 3 and Kobra X; the rest of the family shares the identical protocol. Entities adapt to each
 > model (see **Supported printers**).
+
+⭐ **If this is useful to you, please star the repo.** It is how other AnyCubic owners find it —
+and the more printers and firmware versions in use, the faster problems get spotted and fixed.
 
 ## Features
 
@@ -158,6 +162,10 @@ Everything runs through **[GitHub Issues](../../issues/new/choose)**:
 - **Bug report** — include redacted diagnostics (device page → ⋮ → *Download diagnostics*).
 - **Feature request / feedback** — ideas and suggestions are welcome.
 - **Request support for my printer** — see *[My printer isn't listed](#my-printer-isnt-listed--help-me-add-it)* above.
+
+The most useful thing you can do costs nothing: **[star the repo](https://github.com/chrisfore/anycubic_ha_local/stargazers)**
+so more AnyCubic owners find it, and tell us which printer and firmware you are running. Every
+model someone confirms makes the integration better for everyone on that machine.
 
 ## 🍺 Buy me a beer
 
