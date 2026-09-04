@@ -147,13 +147,34 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         except TimeoutError:
             _LOGGER.debug("no video report within %ss of startCapture", VIDEO_REPORT_TIMEOUT)
 
+    @property
+    def job_active(self) -> bool:
+        """Is there a print task for a `print`/`update` settings command to apply to?
+
+        Confirmed on a Kobra 3 (issue #10): mid-print the printer answers a settings
+        update with `code=200 state=updated msg=done`; idle it discards the message
+        without acking at all. `taskid: "-1"` means "the current job", so with no job
+        there is nothing to update. Paused counts — the task still exists.
+        """
+        printer = self.data.printer
+        return printer.printing or printer.paused
+
+    def _redact(self, topic: str) -> str:
+        """Topics embed the device id, and these log lines get pasted into bug reports."""
+        return topic.replace(self.hs.device_id, "**REDACTED**") if self.hs.device_id else topic
+
     async def async_send_command(self, command: str, **kwargs) -> None:
         """Build a control command and publish it (executor — paho publish is blocking-ish)."""
         if self._transport is None:
+            _LOGGER.debug("dropping command %s: no transport", command)
             return
         topic, payload = build_command(self.hs.model_id, self.hs.device_id, command, **kwargs)
-        await self.hass.async_add_executor_job(
-            self._transport.publish, topic, json.dumps(payload))
+        body = json.dumps(payload)
+        # The only record of what we actually put on the wire. A report is easy to observe
+        # (it moves an entity); a command the printer silently discards left no trace at
+        # all, which is what made issue #10 unfalsifiable from a user's debug log.
+        _LOGGER.debug("publish %s -> %s %s", command, self._redact(topic), body)
+        await self.hass.async_add_executor_job(self._transport.publish, topic, body)
 
     @callback
     def _apply(self, msg_type: str, data: dict) -> None:

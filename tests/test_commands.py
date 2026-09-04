@@ -22,6 +22,15 @@ def test_set_settings():
     assert p["data"] == {"taskid": "-1", "settings": {"target_nozzle_temp": 210}}
 
 
+def test_control_commands_carry_a_real_timestamp():
+    """Queries always sent a real clock; control commands sent 0 (issue #10)."""
+    for cmd, kw in (("set_nozzle_temp", {"value": 210}), ("pause", {}),
+                    ("light", {"on": True}), ("camera_start", {})):
+        assert commands.build(M, D, cmd, **kw)[1]["timestamp"] > 1_700_000_000_000, cmd
+    # still pinnable, which is the only reason the parameter exists
+    assert commands.build(M, D, "pause", ts=123)[1]["timestamp"] == 123
+
+
 def test_light():
     t, p = commands.build(M, D, "light", on=True, brightness=100)
     assert t == f"{BASE}/light"
