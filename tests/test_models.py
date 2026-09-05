@@ -111,3 +111,24 @@ def test_apply_progress_lands_a_genuine_zero():
     assert models.apply_progress(state, {"progress": 0, "curr_layer": 0}) is True
     assert state.progress == 0
     assert state.current_layer == 0
+
+
+def test_parse_extfilbox_reads_the_external_spool():
+    # Issue #12: with the ACE unplugged the printer reports the bare spool on its own
+    # topic. Payload verbatim from the reporter's debug log.
+    spool = models.parse_extfilbox({"type": "PETG", "color": [117, 120, 123],
+                                    "loaded": 1, "status_type": 3, "current_status": 10})
+    assert spool.material == "PETG"
+    assert spool.color_hex == "#75787B"
+    assert spool.loaded is True
+    assert spool.status_type == 3
+    assert spool.current_status == 10
+
+
+def test_parse_extfilbox_reports_an_empty_holder():
+    # No filament loaded: the printer still reports, with the material blank and loaded 0.
+    spool = models.parse_extfilbox({"type": "", "color": [], "loaded": 0,
+                                    "status_type": 0, "current_status": 0})
+    assert spool.material is None
+    assert spool.color_hex is None
+    assert spool.loaded is False

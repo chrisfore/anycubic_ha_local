@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ACE_SLOT_COUNT, ENCLOSED_MODELS, box_has_dryer
@@ -30,6 +30,28 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEnt
             AnycubicAceSlotSensor(coord, i, box_id) for i in range(1, ACE_SLOT_COUNT + 1)]
 
     async_setup_ace_entities(entry, coord, add, ace_sensors)
+    _async_setup_external_spool(entry, coord, add)
+
+
+@callback
+def _async_setup_external_spool(entry: ConfigEntry, coord: AnycubicCoordinator,
+                                add: AddEntitiesCallback) -> None:
+    """Create the external-spool sensor the first time the printer reports one (issue #12).
+
+    The printer sends `extfilbox` only while no ACE unit is attached, so creating this
+    up front would leave every ACE owner with an entity that never has a value. Created
+    on first report instead, which also covers unplugging the ACE mid-session.
+    """
+    created: set[bool] = set()
+
+    @callback
+    def _scan() -> None:
+        if coord.data.external_spool is not None and not created:
+            created.add(True)
+            add([AnycubicExternalSpoolSensor(coord)])
+
+    _scan()
+    entry.async_on_unload(coord.async_add_listener(_scan))
 
 
 class AnycubicSensor(AnycubicEntity, SensorEntity):
@@ -78,3 +100,34 @@ class AnycubicAceSlotSensor(AnycubicAceEntity, SensorEntity):
     @property
     def extra_state_attributes(self):
         return slot_attributes(self._slot)
+
+
+class AnycubicExternalSpoolSensor(AnycubicEntity, SensorEntity):
+    """The bare spool holder used in place of an ACE unit.
+
+    State is the material, matching the ACE slot sensors so the two read the same way
+    on a dashboard; the colour the reporter asked for rides along as an attribute.
+    """
+
+    _attr_translation_key = "external_spool"
+    _attr_icon = "mdi:printer-3d-nozzle"
+
+    def __init__(self, coordinator: AnycubicCoordinator) -> None:
+        super().__init__(coordinator, "external_spool")
+
+    @property
+    def _spool(self):
+        return self.coordinator.data.external_spool
+
+    @property
+    def native_value(self):
+        spool = self._spool
+        return None if spool is None else (spool.material or "Empty")
+
+    @property
+    def extra_state_attributes(self):
+        spool = self._spool
+        if spool is None:
+            return {}
+        return {"material": spool.material, "color": spool.color_hex,
+                "loaded": spool.loaded, "status": spool.current_status}
