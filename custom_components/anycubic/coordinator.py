@@ -19,12 +19,14 @@ from .anycubic_local.exceptions import CloudModeError
 from .anycubic_local.handshake import HandshakeResult, do_handshake
 from .anycubic_local.models import (
     AceBox,
+    ExternalSpool,
     LightState,
     PrinterState,
     apply_fan,
     apply_progress,
     apply_temperature,
     merge_boxes,
+    parse_extfilbox,
     parse_info,
     parse_light,
     parse_multicolorbox,
@@ -45,7 +47,10 @@ _LOGGER = logging.getLogger(__name__)
 # The push rates differ by orders of magnitude: `tempature` lands within a second of a reading
 # changing, while `info` can go minutes between arrivals when no other client (the AnyCubic Slicer)
 # is talking to the printer. Every type here must therefore be applied, not just `info` (issue #9).
-_QUERY_TYPES = ("info", "tempature", "fan", "light", "multiColorBox")
+# `extfilbox` is polled as well as pushed: a spool already sitting in the holder when Home
+# Assistant restarts generates no event of its own, so without a poll the entity would not
+# appear until the user next loaded or unloaded filament (issue #12).
+_QUERY_TYPES = ("info", "tempature", "fan", "light", "multiColorBox", "extfilbox")
 
 # `peripherie` is a static capability inventory ({camera, multiColorBox, udisk} presence flags) — it
 # doesn't change, so we ask for it once at connect (for diagnostics / model onboarding) and never poll it.
@@ -73,6 +78,9 @@ class AnycubicData:
     printer: PrinterState = field(default_factory=PrinterState)
     ace: list[AceBox] = field(default_factory=list)
     light: LightState = field(default_factory=LightState)
+    # None until the printer reports one. It only reports `extfilbox` while no ACE unit is
+    # attached, so None means "no bare spool in use", not "not read yet".
+    external_spool: ExternalSpool | None = None
 
 
 class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
@@ -296,6 +304,9 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             self.raw_multicolorbox = data
             self.data.ace = merge_boxes(self.data.ace, parse_multicolorbox(data))
             self._sync_ace_device_model()
+        elif msg_type == "extfilbox":
+            # The bare spool holder, reported only when no ACE unit is attached (issue #12).
+            self.data.external_spool = parse_extfilbox(data)
         elif msg_type == "light":
             self.data.light = parse_light(data)
         elif msg_type == "peripherie" and isinstance(data, dict):

@@ -266,3 +266,28 @@ def parse_light(data: dict) -> LightState:
         return LightState()
     first = lights[0]
     return LightState(on=first.get("status") == 1, brightness=first.get("brightness", 0))
+
+
+@dataclass
+class ExternalSpool:
+    """The bare spool holder, used when no ACE unit is attached (issue #12).
+
+    The printer reports this on its own `extfilbox` topic and stops sending it entirely
+    once an ACE is connected, so absence — not a field inside it — is what says "not in use".
+    """
+    material: str | None = None       # "" -> None
+    color_hex: str | None = None
+    loaded: bool = False
+    status_type: int | None = None
+    current_status: int | None = None
+
+
+def parse_extfilbox(data: dict) -> ExternalSpool:
+    """Parse an `extfilbox` report `.data` object."""
+    return ExternalSpool(
+        material=_opt(data.get("type")),
+        color_hex=_rgb_hex(data.get("color")),
+        loaded=bool(data.get("loaded")),
+        status_type=data.get("status_type"),
+        current_status=data.get("current_status"),
+    )
