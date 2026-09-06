@@ -1,4 +1,4 @@
-# AnyCubic 3D Printer - Local
+# AnyCubic 3D Printer - Local Control - NO Cloud
 
 A Home Assistant custom integration for the **AnyCubic Kobra 3 / 4 / X / S1 series** (and ACE /
 ACE 2), talking to the printer's **stock LAN Mode** over its local MQTT broker — **no AnyCubic
@@ -103,9 +103,9 @@ This integration is in the **HACS default store** — no custom-repository step 
 **Quickest:** click the **"Add to HACS"** badge at the top — it opens the repository page in your
 Home Assistant. Or find it manually:
 
-1. HACS → search for **AnyCubic 3D Printer - Local** and **Download**.
+1. HACS → search for **AnyCubic 3D Printer - Local Control - NO Cloud** and **Download**.
 2. **Restart Home Assistant.**
-3. **Settings → Devices & Services → Add Integration → AnyCubic 3D Printer - Local**.
+3. **Settings → Devices & Services → Add Integration → AnyCubic 3D Printer - Local Control - NO Cloud**.
 4. Enter the printer's **IP address or hostname** (e.g. `192.168.1.50` or `printer.local`).
    Host names are resolved with whatever DNS/mDNS your HA host has.
 
