@@ -17,7 +17,7 @@ def _box(payload: dict, box_id: int = 0) -> dict:
 
 def build(model_id: str, device_id: str, command: str, *, value=None, on=None,
           brightness=None, target_temp=None, duration=None, box_id: int = 0,
-          ts=None, msgid=None):
+          filename=None, ts=None, msgid=None):
     """Return (topic, payload_dict) for a control command.
 
     ts/msgid default to a real epoch-ms clock and a fresh uuid; they are parameters only
@@ -45,6 +45,14 @@ def build(model_id: str, device_id: str, command: str, *, value=None, on=None,
         data = _box({"drying_status": {"status": 1, "target_temp": target_temp, "duration": duration}}, box_id)
     elif command == "drying_stop":
         mtype, action, data = "multiColorBox", "setDry", _box({"drying_status": {"status": 0}}, box_id)
+    elif command == "file_details":
+        # UNVERIFIED SHAPE. The printer never pushes `file` on its own — it only answers the
+        # AnyCubic Slicer (issue #13) — so the integration has to ask. No capture of the
+        # REQUEST exists, and neither cloud fork ever builds one, so these keys are inferred
+        # from the fields the response echoes back: root, filename, plate_index. A wrong guess
+        # is ignored the same way a polled `extfilbox` query is, so this is safe to try.
+        mtype, action = "file", "fileDetails"
+        data = {"root": "local", "filename": filename, "plate_index": 1}
     elif command == "camera_start":
         mtype, action, data = "video", "startCapture", None
     elif command == "camera_stop":

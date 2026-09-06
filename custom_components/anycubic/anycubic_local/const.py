@@ -10,13 +10,23 @@ SENSITIVE_KEYS: frozenset[str] = frozenset({
     "serial", "broker_host", "deviceId", "mac"})
 
 
+# Longest string kept whole in a redacted payload. A `file`/fileDetails report carries
+# base64 thumbnail, png_image and svg_image blobs (issue #13) — hundreds of KB per print.
+# Logged verbatim they bury the line that matters and are unpastable into an issue; the
+# reporter had to strip them by hand. Keep enough of the head to recognise the field.
+MAX_LOGGED_STR = 120
+_KEEP_HEAD = 32
+
+
 def redacted(value):
-    """Deep-copy `value` with every SENSITIVE_KEYS entry masked."""
+    """Deep-copy `value` with every SENSITIVE_KEYS entry masked and huge blobs truncated."""
     if isinstance(value, dict):
         return {k: ("**REDACTED**" if k in SENSITIVE_KEYS and v is not None else redacted(v))
                 for k, v in value.items()}
     if isinstance(value, list):
         return [redacted(v) for v in value]
+    if isinstance(value, str) and len(value) > MAX_LOGGED_STR:
+        return f"{value[:_KEEP_HEAD]}...<{len(value)} chars truncated>"
     return value
 
 QUERY_TYPES = ["info", "tempature", "fan", "light", "multiColorBox", "print"]

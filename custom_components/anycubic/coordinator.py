@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -15,6 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .anycubic_local import mqtt as mqtt_mod
 from .anycubic_local.commands import build as build_command
+from .anycubic_local.const import query_topic
 from .anycubic_local.exceptions import CloudModeError
 from .anycubic_local.handshake import HandshakeResult, do_handshake
 from .anycubic_local.models import (
@@ -47,10 +49,16 @@ _LOGGER = logging.getLogger(__name__)
 # The push rates differ by orders of magnitude: `tempature` lands within a second of a reading
 # changing, while `info` can go minutes between arrivals when no other client (the Anycubic Slicer)
 # is talking to the printer. Every type here must therefore be applied, not just `info` (issue #9).
-# `extfilbox` is polled as well as pushed: a spool already sitting in the holder when Home
-# Assistant restarts generates no event of its own, so without a poll the entity would not
-# appear until the user next loaded or unloaded filament (issue #12).
-_QUERY_TYPES = ("info", "tempature", "fan", "light", "multiColorBox", "extfilbox")
+_QUERY_TYPES = ("info", "tempature", "fan", "light", "multiColorBox")
+
+# `extfilbox` is NOT here. Polling it with action "query" is answered by nothing at all —
+# confirmed on a Kobra 3 V2 whose holder had a spool loaded and no ACE attached, where a
+# full connect + poll cycle answered every other type and never once sent `extfilbox`
+# (issue #12). It arrives only when the Slicer connects or the ACE is unplugged. These are
+# the two remaining candidate actions: "getInfo" is what multiColorBox needs, "reportInfo"
+# is what the push itself carries. Tried once at connect rather than every poll, because
+# this is a probe for the one case pushes miss — a spool already loaded at startup.
+_EXTFILBOX_PROBE_ACTIONS = ("getInfo", "reportInfo")
 
 # `peripherie` is a static capability inventory ({camera, multiColorBox, udisk} presence flags) — it
 # doesn't change, so we ask for it once at connect (for diagnostics / model onboarding) and never poll it.
@@ -120,6 +128,8 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # a system clock jump must not read as hours of silence.
         self._last_report: float | None = None
         self._recoveries = 0
+        # Filename we have already asked fileDetails about, so one job asks once.
+        self._file_details_asked: str | None = None
 
     def _build_and_connect(self):
         """Construct the transport (paho client + blocking tls_set) and connect.
@@ -131,7 +141,17 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         transport.connect()
         for t in (*_QUERY_TYPES, *_CONNECT_ONLY_QUERY_TYPES):
             transport.query(t)
+        self._probe_extfilbox(transport)
         return transport
+
+    def _probe_extfilbox(self, transport) -> None:
+        """Ask for the external spool with each action the firmware might accept (issue #12)."""
+        topic = query_topic(self.hs.model_id, self.hs.device_id, "extfilbox")
+        for action in _EXTFILBOX_PROBE_ACTIONS:
+            transport.publish(topic, json.dumps({
+                "type": "extfilbox", "action": action,
+                "timestamp": int(time.time() * 1000),
+                "msgid": uuid.uuid4().hex, "data": None}))
 
     async def async_start(self) -> None:
         self._transport = await self.hass.async_add_executor_job(self._build_and_connect)
@@ -299,9 +319,17 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             # Pushed on every change during a job (and never polled), so it beats `info`
             # to progress/layer/remaining-time by the same margin `tempature` beats it to
             # temperatures. Command acks share this topic and are ignored by the fold.
-            apply_progress(self.data.printer, data)
+            if apply_progress(self.data.printer, data):
+                self._request_file_details()
         elif msg_type == "multiColorBox":
             self.raw_multicolorbox = data
+            if data.get("multi_color_box"):
+                # An ACE unit is attached, so the bare spool holder is not in use. Reconnecting
+                # the ACE sends no closing `extfilbox` — the reports simply stop (confirmed on a
+                # Kobra 3 V2, issue #12) — so without this the sensor would hold the last spool
+                # forever. Read from the RAW report, not self.data.ace: merge_boxes deliberately
+                # keeps previously-seen boxes, so data.ace never empties when a unit is unplugged.
+                self.data.external_spool = None
             self.data.ace = merge_boxes(self.data.ace, parse_multicolorbox(data))
             self._sync_ace_device_model()
         elif msg_type == "extfilbox":
@@ -325,6 +353,21 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # froze for the whole job. Notify listeners without touching the schedule.
         self.last_update_success = True
         self.async_update_listeners()
+
+    @callback
+    def _request_file_details(self) -> None:
+        """Ask the printer for the current job's thumbnail and top view (issue #13).
+
+        Driven off `print` rather than a poll because the printer never volunteers `file` —
+        it only answers the Slicer — and because a job names its file exactly once. Asking
+        per poll would re-fetch several hundred KB of base64 every 30 seconds.
+        """
+        name = self.data.printer.filename
+        if not name or name == self._file_details_asked:
+            return
+        self._file_details_asked = name
+        self.hass.async_create_task(
+            self.async_send_command("file_details", filename=name))
 
     def drying_temp(self, box_id: int) -> int:
         return self._drying_temps.get(box_id, ACE_DRYING_DEFAULT_TEMP)
