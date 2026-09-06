@@ -1,6 +1,6 @@
 {
   "domain": "anycubic",
-  "name": "AnyCubic 3D Printer - Local",
+  "name": "AnyCubic 3D Printer - Local Control - NO Cloud",
   "codeowners": ["@chrisfore"],
   "config_flow": true,
   "dependencies": ["ffmpeg"],
