@@ -1,4 +1,4 @@
-"""AnyCubic 3D Printer (local) integration setup."""
+"""Anycubic 3D Printer (local) integration setup."""
 from __future__ import annotations
 
 from homeassistant.config_entries import ConfigEntry

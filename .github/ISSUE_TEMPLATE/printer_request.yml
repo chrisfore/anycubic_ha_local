@@ -1,12 +1,12 @@
 name: Request support for my printer
-description: Help add support for an AnyCubic printer that isn't listed yet.
+description: Help add support for an Anycubic printer that isn't listed yet.
 title: "[Printer]: "
 labels: ["printer-support"]
 body:
   - type: markdown
     attributes:
       value: |
-        Help me add your AnyCubic printer! The integration does the detective work — just attach its
+        Help me add your Anycubic printer! The integration does the detective work — just attach its
         diagnostics. Nothing to install or run by hand:
 
         1. Install the integration and add your printer. It connects for **any** printer in the

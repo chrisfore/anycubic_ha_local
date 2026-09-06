@@ -30,7 +30,7 @@ class AnycubicConfigFlow(ConfigFlow, domain=DOMAIN):
                 else:
                     await self.async_set_unique_id(hs.serial)
                     self._abort_if_unique_id_configured()
-                    title = MODEL_NAMES.get(hs.model_id, "AnyCubic printer")
+                    title = MODEL_NAMES.get(hs.model_id, "Anycubic printer")
                     return self.async_create_entry(title=title, data={CONF_HOST: host})
         return self.async_show_form(
             step_id="user", data_schema=vol.Schema({vol.Required(CONF_HOST): str}), errors=errors)

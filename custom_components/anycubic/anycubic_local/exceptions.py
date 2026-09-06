@@ -1,4 +1,4 @@
-"""Exception hierarchy for the AnyCubic local client."""
+"""Exception hierarchy for the Anycubic local client."""
 
 
 class AnycubicError(Exception):

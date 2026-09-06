@@ -1,5 +1,5 @@
 name: Bug report
-description: Something isn't working with the AnyCubic 3D Printer - Local integration.
+description: Something isn't working with the Anycubic 3D Printer - Local integration.
 title: "[Bug]: "
 labels: ["bug"]
 body:

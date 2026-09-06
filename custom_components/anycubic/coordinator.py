@@ -45,7 +45,7 @@ _LOGGER = logging.getLogger(__name__)
 # Printer status (info/tempature/fan/light) is pushed by the printer during activity, but the ACE
 # box (multiColorBox) is NOT pushed — it only answers an on-demand getInfo — so we re-poll on an interval.
 # The push rates differ by orders of magnitude: `tempature` lands within a second of a reading
-# changing, while `info` can go minutes between arrivals when no other client (the AnyCubic Slicer)
+# changing, while `info` can go minutes between arrivals when no other client (the Anycubic Slicer)
 # is talking to the printer. Every type here must therefore be applied, not just `info` (issue #9).
 # `extfilbox` is polled as well as pushed: a spool already sitting in the holder when Home
 # Assistant restarts generates no event of its own, so without a poll the entity would not

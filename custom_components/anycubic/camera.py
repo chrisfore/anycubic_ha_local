@@ -37,7 +37,7 @@ class AnycubicCamera(Camera):
         return DeviceInfo(
             identifiers={(DOMAIN, self.coordinator.hs.serial)},
             manufacturer=MANUFACTURER,
-            name=MODEL_NAMES.get(self.coordinator.hs.model_id) or "AnyCubic printer",
+            name=MODEL_NAMES.get(self.coordinator.hs.model_id) or "Anycubic printer",
         )
 
     async def async_refresh_providers(self, *args, **kwargs) -> None:
