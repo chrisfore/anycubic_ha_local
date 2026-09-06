@@ -1,7 +1,7 @@
-# AnyCubic 3D Printer - Local Control - NO Cloud
+# Anycubic 3D Printer - Local Control - NO Cloud
 
-A Home Assistant custom integration for the **AnyCubic Kobra 3 / 4 / X / S1 series** (and ACE /
-ACE 2), talking to the printer's **stock LAN Mode** over its local MQTT broker — **no AnyCubic
+A Home Assistant custom integration for the **Anycubic Kobra 3 / 4 / X / S1 series** (and ACE /
+ACE 2), talking to the printer's **stock LAN Mode** over its local MQTT broker — **no Anycubic
 cloud account, no rooting**.
 
 [![hacs](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz)
@@ -12,7 +12,7 @@ cloud account, no rooting**.
 > Kobra 3 and Kobra X; the rest of the family shares the identical protocol. Entities adapt to each
 > model (see **Supported printers**).
 
-⭐ **If this is useful to you, please star the repo.** It is how other AnyCubic owners find it —
+⭐ **If this is useful to you, please star the repo.** It is how other Anycubic owners find it —
 and the more printers and firmware versions in use, the faster problems get spotted and fixed.
 
 ## Features
@@ -33,7 +33,7 @@ and the more printers and firmware versions in use, the faster problems get spot
 > **Temperatures, fans and print speed can only be changed while a print is running.** They are
 > print-*job* settings: the printer applies them to the current job and ignores them when idle
 > (confirmed on hardware — it does not even acknowledge the command). The values stay readable
-> when idle; only writing is refused. There is no preheat command in AnyCubic's LAN protocol.
+> when idle; only writing is refused. There is no preheat command in Anycubic's LAN protocol.
 - **Chamber light:** on / off.
 - **ACE 2:** drying on/off (with adjustable temperature & time), auto-feed.
 
@@ -55,7 +55,7 @@ model actually has.
 | --- | --- | --- |
 | Kobra S1 Max | `20029` | ✅ Validated on hardware (enclosed: chamber temp/light, box fan, camera, ACE 2) |
 | Kobra S1 | `20025` | ✅ Same enclosed feature set, identical protocol |
-| Kobra 3 / 3 V2 / 3 Max | `20024` / `20027` / `20026` | ✅ Kobra 3 validated on hardware by a user (incl. ACE) — open-frame, no chamber temp/light or box fan; camera is the AnyCubic add-on |
+| Kobra 3 / 3 V2 / 3 Max | `20024` / `20027` / `20026` | ✅ Kobra 3 validated on hardware by a user (incl. ACE) — open-frame, no chamber temp/light or box fan; camera is the Anycubic add-on |
 | Kobra 4 | `20028` | ✅ Validated on hardware by a user — open-frame, built-in camera (newer tokenized stream, v1.2.4+), ACE supported |
 | Kobra 2 Pro / Plus / Max | `20021` / `20022` / `20023` | ⚠️ Experimental — older *unsigned* handshake, not yet validated (you'll get a clear "unsupported handshake" message if it can't connect) |
 | Kobra X | `20030` | ✅ Validated on hardware by a user — open-frame, built-in camera (tokenized stream, v1.2.4+), built-in 4-colour changer (feeder, no dryer) shown as **Multi-color unit** (v1.2.5+) |
@@ -92,7 +92,7 @@ older Kobra 2 on the unsigned protocol), say so in the issue with your model + f
 
 ## Requirements
 
-- An AnyCubic printer from the table above with **LAN Mode enabled**
+- An Anycubic printer from the table above with **LAN Mode enabled**
   (printer screen → *Settings → Network → LAN Mode*).
 - Home Assistant 2024.9 or newer, with HACS.
 - The `ffmpeg` add-on / dependency (bundled with most HA installs) for the camera.
@@ -103,9 +103,9 @@ This integration is in the **HACS default store** — no custom-repository step 
 **Quickest:** click the **"Add to HACS"** badge at the top — it opens the repository page in your
 Home Assistant. Or find it manually:
 
-1. HACS → search for **AnyCubic 3D Printer - Local Control - NO Cloud** and **Download**.
+1. HACS → search for **Anycubic 3D Printer - Local Control - NO Cloud** and **Download**.
 2. **Restart Home Assistant.**
-3. **Settings → Devices & Services → Add Integration → AnyCubic 3D Printer - Local Control - NO Cloud**.
+3. **Settings → Devices & Services → Add Integration → Anycubic 3D Printer - Local Control - NO Cloud**.
 4. Enter the printer's **IP address or hostname** (e.g. `192.168.1.50` or `printer.local`).
    Host names are resolved with whatever DNS/mDNS your HA host has.
 
@@ -169,7 +169,7 @@ Everything runs through **[GitHub Issues](../../issues/new/choose)**:
 - **Request support for my printer** — see *[My printer isn't listed](#my-printer-isnt-listed--help-me-add-it)* above.
 
 The most useful thing you can do costs nothing: **[star the repo](https://github.com/chrisfore/anycubic_ha_local/stargazers)**
-so more AnyCubic owners find it, and tell us which printer and firmware you are running. Every
+so more Anycubic owners find it, and tell us which printer and firmware you are running. Every
 model someone confirms makes the integration better for everyone on that machine.
 
 ## 🍺 Buy me a beer

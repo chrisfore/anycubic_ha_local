@@ -1,6 +1,6 @@
 # LAN-Mode Protocol — VALIDATED on real hardware (2026-06-15)
 
-> Captured live from the user's **AnyCubic Kobra S1 Max**, firmware **2.6.9.6**, at `<printer-ip>`.
+> Captured live from the user's **Anycubic Kobra S1 Max**, firmware **2.6.9.6**, at `<printer-ip>`.
 > Read-only (GET /info, signed POST /ctrl, MQTT subscribe + `action:"query"` status requests). No printer state changed.
 > Fixtures: `research/probe/*.json`. Capture tools: `research/probe/capture_*.py`, `probe_peripherie.py`.
 >
@@ -54,7 +54,7 @@ features : { auto_leveling_support, drying_first_support, camera_timelapse_suppo
 
 **Push cadence differs by orders of magnitude** (validated on a Kobra 3 V2, fw 1.1.2.8, issue #9):
 `tempature` is pushed within ~1s of a reading changing, whereas `info` arrives roughly every 30s
-while the AnyCubic Slicer is attached and can stretch to **several minutes** once it is closed. A
+while the Anycubic Slicer is attached and can stretch to **several minutes** once it is closed. A
 client that reads temperatures only from `info` therefore appears to freeze when the Slicer is
 closed and to "revive" when it is reopened. **Consume every report type you subscribe to, not just
 `info`** — the pushed types are the fresh ones, and `info` is the slow one.

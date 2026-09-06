@@ -20,7 +20,7 @@ async def test_user_flow_success(hass):
     with patch("custom_components.anycubic.config_flow.do_handshake", return_value=HS):
         result = await hass.config_entries.flow.async_configure(result["flow_id"], {"host": "1.2.3.4"})
     assert result["type"] == FlowResultType.CREATE_ENTRY
-    assert result["title"] == "AnyCubic Kobra S1 Max" or result["data"]["host"] == "1.2.3.4"
+    assert result["title"] == "Anycubic Kobra S1 Max" or result["data"]["host"] == "1.2.3.4"
     assert result["result"].unique_id == "SER-1"
 
 

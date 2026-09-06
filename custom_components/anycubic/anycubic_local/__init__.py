@@ -1,4 +1,4 @@
-"""AnyCubic Kobra S1 LAN-Mode client (standalone, no Home Assistant dependency)."""
+"""Anycubic Kobra S1 LAN-Mode client (standalone, no Home Assistant dependency)."""
 from .commands import build as build_command
 from .const import QUERY_TYPES
 from .exceptions import AnycubicError, HandshakeError, ParseError

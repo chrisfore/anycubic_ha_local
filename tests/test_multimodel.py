@@ -28,7 +28,7 @@ async def _setup(hass, model_id, serial):
 
 
 async def test_open_frame_kobra3_gates_enclosure_hardware(hass):
-    await _setup(hass, "20024", "SER-K3")  # AnyCubic Kobra 3 (open frame)
+    await _setup(hass, "20024", "SER-K3")  # Anycubic Kobra 3 (open frame)
     g = hass.states.get
     # Core printer entities + the FLV camera (built-in/add-on) are present.
     assert g("sensor.anycubic_kobra_3_nozzle_temperature") is not None

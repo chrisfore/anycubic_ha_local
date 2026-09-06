@@ -1,4 +1,4 @@
-"""Typed state models + pure parsers for AnyCubic LAN reports (no HA imports)."""
+"""Typed state models + pure parsers for Anycubic LAN reports (no HA imports)."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field

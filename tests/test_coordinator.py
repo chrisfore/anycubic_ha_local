@@ -24,7 +24,7 @@ class FakeTransport:
 async def test_coordinator_applies_info_report(hass):
     coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
     await coord.async_start()
-    coord._on_report("info", {"state": "busy", "model": "AnyCubic Kobra S1 Max",
+    coord._on_report("info", {"state": "busy", "model": "Anycubic Kobra S1 Max",
                               "temp": {"curr_nozzle_temp": 210},
                               "project": {"state": "printing", "progress": 42, "pause": 0}})
     await hass.async_block_till_done()
@@ -136,7 +136,7 @@ async def test_coordinator_queries_peripherie_once_at_connect(hass):
 async def test_coordinator_captures_capabilities(hass):
     coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
     await coord.async_start()
-    coord._on_report("info", {"state": "free", "model": "AnyCubic Kobra S1 Max",
+    coord._on_report("info", {"state": "free", "model": "Anycubic Kobra S1 Max",
                               "temp": {"curr_chamber_temp": 36},
                               "features": {"camera_timelapse_support": True, "fod_support": True}})
     coord._on_report("peripherie", {"camera": 1, "multiColorBox": 1, "udisk": 0})
@@ -302,7 +302,7 @@ async def test_video_report_url_is_captured(hass):
     coord._on_report("video", {"urls": {"rtspUrl": "http://1.2.3.4:18088/live/k5DawnaQ"}})
     await hass.async_block_till_done()
     assert coord.video_stream_url == "http://1.2.3.4:18088/live/k5DawnaQ"
-    coord._on_report("info", {"state": "free", "model": "AnyCubic Kobra 4"})
+    coord._on_report("info", {"state": "free", "model": "Anycubic Kobra 4"})
     await hass.async_block_till_done()
     assert coord.video_stream_url == "http://1.2.3.4:18088/live/k5DawnaQ"
 

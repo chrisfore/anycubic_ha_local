@@ -1,4 +1,4 @@
-# AnyCubic Kobra S1 Max + ACE 2 — example dashboard
+# Anycubic Kobra S1 Max + ACE 2 — example dashboard
 # =================================================================================
 # Layout: ACE 2 on top, the printer in the middle, all the information/controls below.
 #
@@ -11,11 +11,11 @@
 # "Edit dashboard" -> three-dot menu -> "Raw configuration editor", then paste this as a
 # view's cards, OR paste a single card via "Add card -> Manual" using the vertical-stack below.
 #
-# Entity IDs assume the default device names "AnyCubic Kobra S1 Max" and "ACE 2". If you
+# Entity IDs assume the default device names "Anycubic Kobra S1 Max" and "ACE 2". If you
 # renamed either device, do a find/replace on the prefixes "anycubic_kobra_s1_max" / "ace_2".
 
 
-title: AnyCubic
+title: Anycubic
 views:
   - title: Printer
     path: anycubic

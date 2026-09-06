@@ -1,4 +1,4 @@
-# Icon Design Brief — AnyCubic Kobra S1 Max + ACE 2 (HA brand icon)
+# Icon Design Brief — Anycubic Kobra S1 Max + ACE 2 (HA brand icon)
 
 > Synthesized from form-factor + design-language research (2026-06-15). Drives `generate_icons_v2.py`.
 
@@ -19,7 +19,7 @@ Everything else (gantry, belts, nozzle, knobs, text) is noise — drop it.
 - **Filled, never line-art.** Outlines only as 1–2px seam/frame accents.
 - **3 values per surface** (base / light / dark) + glass tone + ONE accent. ≤4 hues on art.
 - Depth = flat: 3-face iso tone-step OR slight gradient + one ground shadow. No bevels/reflections.
-- **One accent only:** AnyCubic-leaning teal `#00B5A5` (pushed away from Bambu green). Used for at most one thing per icon.
+- **One accent only:** Anycubic-leaning teal `#00B5A5` (pushed away from Bambu green). Used for at most one thing per icon.
 - Product is intentionally **monochrome dark grey** — let glass + ACE carry recognition.
 - Must read at 48–72px thumbnail. Ship a light `icon.png` + a dark variant.
 

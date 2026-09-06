@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""v2 brand icons: filled, depth-shaded, product-recognizable AnyCubic Kobra S1 Max + ACE 2.
+"""v2 brand icons: filled, depth-shaded, product-recognizable Anycubic Kobra S1 Max + ACE 2.
 
 Implements the ICON-DESIGN-BRIEF: dark enclosed cube + glassy front door + wide low ACE
 loaf on the roof + clean tube arcs. Filled shapes (no thin line-art), 3-value depth, one

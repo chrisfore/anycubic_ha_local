@@ -81,7 +81,7 @@ contact_links:
 
 ```yaml
 name: Bug report
-description: Something isn't working with the AnyCubic 3D Printer - Local integration.
+description: Something isn't working with the Anycubic 3D Printer - Local integration.
 title: "[Bug]: "
 labels: ["bug"]
 body:
@@ -210,14 +210,14 @@ git commit -m "feat: add issue chooser config + bug and feature/feedback forms"
 
 ```yaml
 name: Request support for my printer
-description: Help add support for an AnyCubic printer that isn't listed yet.
+description: Help add support for an Anycubic printer that isn't listed yet.
 title: "[Printer]: "
 labels: ["printer-support"]
 body:
   - type: markdown
     attributes:
       value: |
-        Help me add your AnyCubic printer! Two quick browser steps below — no software to install.
+        Help me add your Anycubic printer! Two quick browser steps below — no software to install.
 
         > The `token` value in `/info` is **temporary** and safe to share. You can redact your IP
         > address if you prefer; the key field the maintainer needs is `modelId`.

@@ -49,7 +49,7 @@ Add `.github/ISSUE_TEMPLATE/` with three YAML issue forms plus a config:
 
 #### `printer_request.yml` — "Request support for my printer"
 This is the model-onboarding form. No script — pure browser + paste.
-- `markdown`: "Help me add your AnyCubic printer. Two quick browser steps below; the `token`
+- `markdown`: "Help me add your Anycubic printer. Two quick browser steps below; the `token`
   field is a temporary value and is safe to share. Redact your IP if you prefer."
 - `input` (required): Printer model — marketing name, e.g. "Kobra 3 Max".
 - `input` (required): Firmware version (printer screen → Settings → about/version).

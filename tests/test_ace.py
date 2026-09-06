@@ -267,7 +267,7 @@ async def test_ace_device_user_rename_respected(hass):
 
 HS_KX = HandshakeResult("1.2.3.4", 9883, "u", "p", "DEV", "20030", "SER-KX")
 
-# The Kobra X's 4-color changer is built into the toolhead (AnyCubic's "ACE Gen 2"), not an
+# The Kobra X's 4-color changer is built into the toolhead (Anycubic's "ACE Gen 2"), not an
 # attached box: it reports id -1 with head_tools_model 1, where an external ACE reports id 0.
 KX_BUILTIN = {"head_tools_model": 1, "multi_color_box": [{
     "id": -1, "model_id": 40002, "status": 1, "temp": 0, "humidity": 0, "loaded_slot": -1,

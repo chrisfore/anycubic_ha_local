@@ -1,4 +1,4 @@
-"""Base entity for AnyCubic — links every entity to the printer device."""
+"""Base entity for Anycubic — links every entity to the printer device."""
 from __future__ import annotations
 
 from collections.abc import Callable
@@ -38,7 +38,7 @@ class AnycubicEntity(CoordinatorEntity[AnycubicCoordinator]):
         info = DeviceInfo(
             identifiers={(DOMAIN, self.coordinator.hs.serial)},
             manufacturer=MANUFACTURER,
-            name=MODEL_NAMES.get(self.coordinator.hs.model_id) or p.model or "AnyCubic printer",
+            name=MODEL_NAMES.get(self.coordinator.hs.model_id) or p.model or "Anycubic printer",
             model=MODEL_NAMES.get(self.coordinator.hs.model_id),
             sw_version=p.firmware,
             configuration_url=f"http://{self.coordinator.host}",
@@ -69,7 +69,7 @@ def ace_device_model(box_id: int, model_id) -> str:
     """Hardware model shown on the device page.
 
     The built-in changer reports the ACE 2 model id because it speaks the same protocol
-    (AnyCubic ships it as "ACE Gen 2" tech), but it is part of the printer.
+    (Anycubic ships it as "ACE Gen 2" tech), but it is part of the printer.
     """
     model = ACE_MODEL_NAMES.get(str(model_id)) if model_id is not None else None
     if box_id < 0:
