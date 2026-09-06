@@ -15,6 +15,7 @@ class FakeTransport:
 async def test_send_command_publishes_built_payload(hass):
     coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
     await coord.async_start()
+    coord._transport.published.clear()   # drop the connect-time extfilbox probe (issue #12)
     await coord.async_send_command("camera_start")
     topic, payload = coord._transport.published[0]
     assert topic == "anycubic/anycubicCloud/v1/web/printer/20029/DEV/video"

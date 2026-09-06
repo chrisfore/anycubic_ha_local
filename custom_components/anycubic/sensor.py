@@ -120,6 +120,12 @@ class AnycubicExternalSpoolSensor(AnycubicEntity, SensorEntity):
         return self.coordinator.data.external_spool
 
     @property
+    def available(self) -> bool:
+        # Cleared once an ACE takes over. Unavailable is the honest reading — "unknown"
+        # would suggest we are still watching a holder that is no longer in the filament path.
+        return super().available and self._spool is not None
+
+    @property
     def native_value(self):
         spool = self._spool
         return None if spool is None else (spool.material or "Empty")

@@ -370,3 +370,48 @@ async def test_a_report_still_brings_entities_back_from_unavailable(hass):
     await hass.async_block_till_done()
     assert coord.last_update_success is True
     assert updated                                # listeners were notified
+
+
+class RecordingTransport(FakeTransport):
+    """Captures publishes as well as queries, so probes can be asserted on."""
+    def __init__(self, hs, on_report, **k):
+        super().__init__(hs, on_report, **k)
+        self.published = []
+    def publish(self, topic, payload):
+        import json
+        self.published.append((topic.rsplit("/", 1)[-1], json.loads(payload)))
+
+
+async def test_extfilbox_is_probed_at_connect_not_polled(hass):
+    # Issue #12: a polled extfilbox with action "query" is answered by nothing at all
+    # (confirmed on a Kobra 3 V2 with a spool loaded and no ACE). multiColorBox needs
+    # "getInfo", and the push carries "reportInfo" — so try both, once, at connect.
+    coord = AnycubicCoordinator(hass, HS, transport_factory=RecordingTransport)
+    await coord.async_start()
+
+    assert "extfilbox" not in coord._transport.queries    # no longer wasted per poll
+    actions = [p["action"] for t, p in coord._transport.published if t == "extfilbox"]
+    assert actions == ["getInfo", "reportInfo"]
+
+
+async def test_file_details_is_requested_once_per_job(hass):
+    # Issue #13: the printer never pushes `file` on its own — it only answers the Slicer.
+    # So ask for it ourselves, when a print report first names a file, and only once.
+    coord = AnycubicCoordinator(hass, HS, transport_factory=RecordingTransport)
+    await coord.async_start()
+    coord._transport.published.clear()
+
+    coord._on_report("print", {"taskid": "-1", "progress": 5, "filename": "boat.gcode"})
+    await hass.async_block_till_done()
+    coord._on_report("print", {"taskid": "-1", "progress": 6, "filename": "boat.gcode"})
+    await hass.async_block_till_done()
+
+    asks = [p for t, p in coord._transport.published if t == "file"]
+    assert len(asks) == 1
+    assert asks[0]["action"] == "fileDetails"
+    assert asks[0]["data"]["filename"] == "boat.gcode"
+
+    # A new job asks again.
+    coord._on_report("print", {"taskid": "-1", "progress": 1, "filename": "benchy.gcode"})
+    await hass.async_block_till_done()
+    assert len([p for t, p in coord._transport.published if t == "file"]) == 2

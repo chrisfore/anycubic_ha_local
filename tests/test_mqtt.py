@@ -167,3 +167,18 @@ def test_redacted_leaves_absent_values_alone():
     from custom_components.anycubic.anycubic_local.const import redacted
     assert redacted({"ip": None, "slots": [{"filename": "x", "index": 1}]}) == {
         "ip": None, "slots": [{"filename": "**REDACTED**", "index": 1}]}
+
+
+def test_redacted_truncates_huge_base64_blobs():
+    # Issue #13: a `file`/fileDetails report carries base64 thumbnail + png_image + svg_image.
+    # Logged verbatim that is hundreds of KB per print, and the reporter had to strip them by
+    # hand before pasting. Keep enough to identify the field, drop the payload.
+    from custom_components.anycubic.anycubic_local.const import redacted
+
+    out = redacted({"type": "file", "data": {"file_details": {
+        "thumbnail": "A" * 40000, "png_image": "B" * 9000, "root": "local"}}})
+    thumb = out["data"]["file_details"]["thumbnail"]
+    assert len(thumb) < 200
+    assert thumb.startswith("AAAA")
+    assert "40000" in thumb                      # says how much was dropped
+    assert out["data"]["file_details"]["root"] == "local"   # short values untouched
