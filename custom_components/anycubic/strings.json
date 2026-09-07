@@ -34,6 +34,10 @@
       "ace_slot": { "name": "Slot {n}" },
       "external_spool": { "name": "External spool" }
     },
+    "image": {
+      "object_thumbnail": { "name": "Object thumbnail" },
+      "object_top_view": { "name": "Object top view" }
+    },
     "binary_sensor": {
       "printing": { "name": "Printing" },
       "paused": { "name": "Paused" }
