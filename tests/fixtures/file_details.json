@@ -1,0 +1,26 @@
+{
+  "root": "local",
+  "filename": "0907-2001-Plant wall clip_plate(01)_PLA_0.28_5m39s.gcode",
+  "plate_name": "/useremain/app/gk/gcodes/0907-2001-Plant wall clip_plate(01).gcode",
+  "plate_index": 1,
+  "file_details": {
+    "thumbnail": "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGNQVFcEIgYIBQALigGl+j9XDgAAAABJRU5ErkJggg==",
+    "png_image": "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAIAAAAmkwkpAAAAEElEQVR4nGMoraiGIwbiOABI8haB2asx4QAAAABJRU5ErkJggg==",
+    "svg_image": "PHN2Zy8+",
+    "paint_infos": [
+      {
+        "paint_index": 0,
+        "paint_color": [
+          0,
+          0,
+          0
+        ],
+        "material_type": "PETG",
+        "filament_used": 8.13
+      }
+    ],
+    "objects_skip_parts": [
+      "Plant_wall_clip.stl_id_0_copy_0"
+    ]
+  }
+}

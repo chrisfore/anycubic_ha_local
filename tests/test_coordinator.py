@@ -431,3 +431,52 @@ async def test_file_details_asks_with_the_raw_prefixed_filename(hass):
     asks = [p for t, p in coord._transport.published if t == "file"]
     assert len(asks) == 1
     assert asks[0]["data"]["filename"] == raw
+
+
+def _details(filename="boat.gcode"):
+    import json
+    import pathlib
+    d = json.loads((pathlib.Path(__file__).parent / "fixtures" / "file_details.json").read_text())
+    d["filename"] = filename
+    return d
+
+
+async def test_file_details_response_populates_object_images(hass):
+    coord = AnycubicCoordinator(hass, HS, transport_factory=RecordingTransport)
+    await coord.async_start()
+    coord._on_report("print", {"taskid": "-1", "progress": 5, "filename": "boat.gcode"})
+    await hass.async_block_till_done()
+
+    coord._on_report("file", _details("boat.gcode"))
+    await hass.async_block_till_done()
+
+    assert coord.data.object_images.thumbnail.startswith(b"\x89PNG")
+    assert coord.data.object_images.top_view.startswith(b"\x89PNG")
+
+
+async def test_file_report_that_is_not_details_is_ignored(hass):
+    # listLocal shares the `file` topic and carries no renders.
+    coord = AnycubicCoordinator(hass, HS, transport_factory=RecordingTransport)
+    await coord.async_start()
+    coord._on_report("file", {"root": "local", "records": [{"name": "a.gcode"}]})
+    await hass.async_block_till_done()
+    assert coord.data.object_images is None
+
+
+async def test_late_answer_for_the_previous_job_is_discarded(hass):
+    # A slow fileDetails answer must not paint the last print's object over the new one.
+    coord = AnycubicCoordinator(hass, HS, transport_factory=RecordingTransport)
+    await coord.async_start()
+    coord._on_report("print", {"taskid": "-1", "progress": 5, "filename": "boat.gcode"})
+    await hass.async_block_till_done()
+    coord._on_report("file", _details("boat.gcode"))
+    await hass.async_block_till_done()
+
+    coord._on_report("print", {"taskid": "-1", "progress": 1, "filename": "benchy.gcode"})
+    coord._on_report("file", _details("benchy.gcode"))
+    await hass.async_block_till_done()
+    assert coord.data.object_images.filename == "benchy.gcode"
+
+    coord._on_report("file", _details("boat.gcode"))     # stale answer arrives late
+    await hass.async_block_till_done()
+    assert coord.data.object_images.filename == "benchy.gcode"   # must not be painted over

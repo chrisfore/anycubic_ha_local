@@ -178,3 +178,38 @@ def test_merge_external_spool_accepts_a_real_change():
     assert merged.material == "PLA"
     assert merged.loaded is False          # a real 0 alongside real statuses must land
     assert merged.current_status == 4
+
+
+def test_parse_file_details_decodes_both_images(load_fixture):
+    # Issue #13: the printer answers a fileDetails request with base64 renders of the job.
+    images = models.parse_file_details(load_fixture("file_details.json"))
+    assert images.thumbnail.startswith(b"\x89PNG")
+    assert images.top_view.startswith(b"\x89PNG")
+    assert images.filename.endswith("_5m39s.gcode")
+    assert images.paint_infos[0]["material_type"] == "PETG"
+    assert images.skip_parts == ["Plant_wall_clip.stl_id_0_copy_0"]
+
+
+def test_parse_file_details_tolerates_missing_images(load_fixture):
+    # A firmware that omits a render must give None, not raise — the other image
+    # and the metadata are still worth having.
+    data = load_fixture("file_details.json")
+    del data["file_details"]["png_image"]
+    images = models.parse_file_details(data)
+    assert images.thumbnail is not None
+    assert images.top_view is None
+
+
+def test_parse_file_details_rejects_an_oversized_blob(load_fixture):
+    # The payload comes from a device we do not control; a runaway blob must not be
+    # held in memory just because it decoded.
+    data = load_fixture("file_details.json")
+    data["file_details"]["thumbnail"] = "QUFB" * (models.MAX_IMAGE_BYTES // 2)
+    images = models.parse_file_details(data)
+    assert images.thumbnail is None
+    assert images.top_view is not None      # the sane one still lands
+
+
+def test_parse_file_details_ignores_a_non_details_file_report(load_fixture):
+    # listLocal / deleteLocal / listUdisk share the `file` topic and carry no renders.
+    assert models.parse_file_details({"root": "local", "records": [{"name": "a.gcode"}]}) is None

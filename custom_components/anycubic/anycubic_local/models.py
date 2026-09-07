@@ -1,9 +1,14 @@
 """Typed state models + pure parsers for Anycubic LAN reports (no HA imports)."""
 from __future__ import annotations
 
+import base64
+import binascii
+import logging
 from dataclasses import dataclass, field
 
 from .const import PAUSE_PAUSED, STATE_FREE
+
+_LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
@@ -331,3 +336,59 @@ def merge_external_spool(prev: ExternalSpool | None, new: ExternalSpool) -> Exte
         if value is not None:
             setattr(prev, field_name, value)
     return prev
+
+
+# Ceiling on a single decoded render. The payload comes from a device we do not control,
+# and these are held in memory for the life of a job; a 512x512 PNG is a small fraction
+# of this, so anything larger is a malfunction rather than a detailed picture.
+MAX_IMAGE_BYTES = 2 * 1024 * 1024
+
+
+@dataclass
+class ObjectImages:
+    """The printer's own renders of the job it is running (issue #13)."""
+    filename: str | None = None       # which job these belong to
+    thumbnail: bytes | None = None    # slicer preview
+    top_view: bytes | None = None     # 512x512 plate render
+    paint_infos: list = field(default_factory=list)
+    skip_parts: list = field(default_factory=list)
+
+
+def _decode_image(value, label: str) -> bytes | None:
+    """base64 -> bytes, or None if it is absent, malformed or absurd."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        raw = base64.b64decode(value, validate=True)
+    except (binascii.Error, ValueError):
+        _LOGGER.debug("file report: %s is not valid base64", label)
+        return None
+    if len(raw) > MAX_IMAGE_BYTES:
+        _LOGGER.warning("file report: ignoring %s, %s bytes exceeds the %s byte limit",
+                        label, len(raw), MAX_IMAGE_BYTES)
+        return None
+    return raw
+
+
+def parse_file_details(data: dict) -> ObjectImages | None:
+    """Parse a `file` report carrying fileDetails; None if it is a different `file` report.
+
+    The `file` topic also carries listLocal, deleteLocal, listUdisk and
+    cloudRecommendList. Those have no renders in them, so the presence of `file_details`
+    is the discriminator — the same shape test `apply_progress` uses to tell the three
+    `print` payloads apart, and the only one available here because the report `action`
+    is not passed through to the coordinator.
+
+    `svg_image` is deliberately not read: it does not render, and serving SVG from an
+    image entity buys a third view of something two working PNGs already cover.
+    """
+    details = data.get("file_details")
+    if not isinstance(details, dict):
+        return None
+    return ObjectImages(
+        filename=data.get("filename"),
+        thumbnail=_decode_image(details.get("thumbnail"), "thumbnail"),
+        top_view=_decode_image(details.get("png_image"), "png_image"),
+        paint_infos=details.get("paint_infos") or [],
+        skip_parts=details.get("objects_skip_parts") or [],
+    )

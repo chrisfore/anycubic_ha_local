@@ -23,6 +23,7 @@ from .anycubic_local.models import (
     AceBox,
     ExternalSpool,
     LightState,
+    ObjectImages,
     PrinterState,
     apply_fan,
     apply_progress,
@@ -30,6 +31,7 @@ from .anycubic_local.models import (
     merge_boxes,
     merge_external_spool,
     parse_extfilbox,
+    parse_file_details,
     parse_info,
     parse_light,
     parse_multicolorbox,
@@ -92,6 +94,8 @@ class AnycubicData:
     # None until the printer reports one. It only reports `extfilbox` while no ACE unit is
     # attached, so None means "no bare spool in use", not "not read yet".
     external_spool: ExternalSpool | None = None
+    # The printer's renders of the running job. None until a fileDetails answer lands.
+    object_images: ObjectImages | None = None
 
 
 class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
@@ -342,6 +346,18 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
                 self.data.external_spool = None
             self.data.ace = merge_boxes(self.data.ace, parse_multicolorbox(data))
             self._sync_ace_device_model()
+        elif msg_type == "file":
+            # Answer to the fileDetails request we send at the start of a job (issue #13).
+            # parse_file_details returns None for the other payloads that share this topic.
+            images = parse_file_details(data)
+            if images is not None:
+                current = self.data.printer.filename
+                if images.filename and current and images.filename != current:
+                    # A late answer for the previous print. Applying it would show the
+                    # last object while a different one is on the plate.
+                    _LOGGER.debug("file report: ignoring details for a finished job")
+                else:
+                    self.data.object_images = images
         elif msg_type == "extfilbox":
             # The bare spool holder, reported only when no ACE unit is attached (issue #12).
             # Merged rather than replaced: the answer to our connect query omits the load
