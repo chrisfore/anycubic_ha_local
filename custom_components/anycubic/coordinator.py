@@ -28,6 +28,7 @@ from .anycubic_local.models import (
     apply_progress,
     apply_temperature,
     merge_boxes,
+    merge_external_spool,
     parse_extfilbox,
     parse_info,
     parse_light,
@@ -55,10 +56,12 @@ _QUERY_TYPES = ("info", "tempature", "fan", "light", "multiColorBox")
 # confirmed on a Kobra 3 V2 whose holder had a spool loaded and no ACE attached, where a
 # full connect + poll cycle answered every other type and never once sent `extfilbox`
 # (issue #12). It arrives only when the Slicer connects or the ACE is unplugged. These are
-# the two remaining candidate actions: "getInfo" is what multiColorBox needs, "reportInfo"
-# is what the push itself carries. Tried once at connect rather than every poll, because
-# this is a probe for the one case pushes miss — a spool already loaded at startup.
-_EXTFILBOX_PROBE_ACTIONS = ("getInfo", "reportInfo")
+# "reportInfo" is the one it answers: a reload with the ACE off returned a report three
+# timestamp units after the connect multiColorBox, with nothing touched physically, and
+# only one report came back for the two actions tried. Asked once at connect rather than
+# every poll, because this covers the one case pushes miss — a spool already loaded at
+# startup. Note the ANSWER is partial; see parse_extfilbox.
+_EXTFILBOX_PROBE_ACTIONS = ("reportInfo",)
 
 # `peripherie` is a static capability inventory ({camera, multiColorBox, udisk} presence flags) — it
 # doesn't change, so we ask for it once at connect (for diagnostics / model onboarding) and never poll it.
@@ -115,6 +118,8 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # differences across printer/ACE firmwares (unknown or renamed slot keys) can be
         # triaged from a diagnostics attachment alone.
         self.raw_multicolorbox: dict | None = None
+        # Is a multi-material unit attached right now? None until one report arrives.
+        self.ace_present: bool | None = None
         self.seen_report_types: set[str] = set()
         # Stream URL from the latest video report. New-generation firmware (Kobra 4 / X)
         # answers startCapture with a per-session tokenized URL (:18088/live/<token>);
@@ -323,6 +328,11 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
                 self._request_file_details()
         elif msg_type == "multiColorBox":
             self.raw_multicolorbox = data
+            # Attached units answer getInfo with a full box list; with nothing attached the
+            # list comes back empty. Tracked separately from data.ace because merge_boxes
+            # keeps every box it has ever seen — deliberately, so devices and their entity
+            # IDs survive — which means data.ace can never report a unit going away (#12).
+            self.ace_present = bool(data.get("multi_color_box"))
             if data.get("multi_color_box"):
                 # An ACE unit is attached, so the bare spool holder is not in use. Reconnecting
                 # the ACE sends no closing `extfilbox` — the reports simply stop (confirmed on a
@@ -334,7 +344,10 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             self._sync_ace_device_model()
         elif msg_type == "extfilbox":
             # The bare spool holder, reported only when no ACE unit is attached (issue #12).
-            self.data.external_spool = parse_extfilbox(data)
+            # Merged rather than replaced: the answer to our connect query omits the load
+            # state that a pushed report carries.
+            self.data.external_spool = merge_external_spool(
+                self.data.external_spool, parse_extfilbox(data))
         elif msg_type == "light":
             self.data.light = parse_light(data)
         elif msg_type == "peripherie" and isinstance(data, dict):

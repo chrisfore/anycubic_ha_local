@@ -145,3 +145,36 @@ def test_display_filename_strips_the_printer_side_directory_prefix():
         "0907-2001-Plant wall clip_plate(01)_PLA_0.28_5m39s.gcode"
     ) == "0907-2001-Plant wall clip_plate(01)_PLA_0.28_5m39s.gcode"
     assert models.display_filename(None) is None
+
+
+def test_queried_extfilbox_marks_unknown_fields_rather_than_claiming_empty():
+    # The QUERIED answer is partial: same physical spool that pushes
+    # loaded=1/status_type=3/current_status=10 comes back as loaded=0 with -1 sentinels
+    # (issue #12). Reading that 0 as "no filament" would blank a loaded spool on reload.
+    spool = models.parse_extfilbox({"type": "PETG", "color": [117, 120, 123],
+                                    "loaded": 0, "status_type": -1, "current_status": -1})
+    assert spool.material == "PETG"
+    assert spool.loaded is None            # unknown, not False
+    assert spool.status_type is None
+    assert spool.current_status is None
+
+
+def test_merge_external_spool_keeps_known_values_over_unknown():
+    known = models.ExternalSpool(material="PETG", color_hex="#75787B", loaded=True,
+                                 status_type=3, current_status=10)
+    partial = models.parse_extfilbox({"type": "PETG", "color": [117, 120, 123],
+                                      "loaded": 0, "status_type": -1, "current_status": -1})
+    merged = models.merge_external_spool(known, partial)
+    assert merged.loaded is True           # a partial answer must not clobber this
+    assert merged.current_status == 10
+    assert merged.material == "PETG"
+
+
+def test_merge_external_spool_accepts_a_real_change():
+    known = models.ExternalSpool(material="PETG", loaded=True, current_status=10)
+    pushed = models.parse_extfilbox({"type": "PLA", "color": [255, 0, 0], "loaded": 0,
+                                     "status_type": 3, "current_status": 4})
+    merged = models.merge_external_spool(known, pushed)
+    assert merged.material == "PLA"
+    assert merged.loaded is False          # a real 0 alongside real statuses must land
+    assert merged.current_status == 4
