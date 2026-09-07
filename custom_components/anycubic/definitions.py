@@ -9,7 +9,7 @@ from homeassistant.components.number import NumberDeviceClass, NumberEntityDescr
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntityDescription, SensorStateClass
 from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTemperature, UnitOfTime
 
-from .anycubic_local.models import AceBox, PrinterState, Slot
+from .anycubic_local.models import AceBox, PrinterState, Slot, display_filename
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -48,7 +48,7 @@ PRINTER_SENSORS: tuple[AnycubicSensorEntityDescription, ...] = (
         suggested_unit_of_measurement=UnitOfTime.HOURS, suggested_display_precision=1,
         value_fn=lambda p: p.remain_time),
     AnycubicSensorEntityDescription(key="filename", translation_key="filename", icon="mdi:file",
-        value_fn=lambda p: p.filename),
+        value_fn=lambda p: display_filename(p.filename)),
     AnycubicSensorEntityDescription(key="firmware", translation_key="firmware", icon="mdi:chip",
         entity_category=EntityCategory.DIAGNOSTIC, value_fn=lambda p: p.firmware),
 )

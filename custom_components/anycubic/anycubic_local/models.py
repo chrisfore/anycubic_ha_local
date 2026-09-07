@@ -254,6 +254,17 @@ def apply_progress(state: PrinterState, data: dict) -> bool:
     return True
 
 
+def display_filename(name: str | None) -> str | None:
+    """The job name as a user should read it.
+
+    A print started from the printer's own screen arrives as ".3mf_temp/<name>.gcode";
+    the same job sent from the Slicer is just "<name>.gcode" (issue #12). The prefix is
+    the printer's staging directory, not part of what the user named the file. Only the
+    DISPLAY is tidied — the raw value is what a fileDetails request has to quote back.
+    """
+    return name.rsplit("/", 1)[-1] if name else name
+
+
 @dataclass
 class LightState:
     on: bool = False

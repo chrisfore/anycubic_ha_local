@@ -5,8 +5,13 @@ PREFIX = "anycubic/anycubicCloud/v1"
 # Identifiers / addresses that must never leave the user's machine in something they
 # share. Diagnostics redacts these, and so does the inbound-report debug log — users
 # paste those straight into issues. filename can embed the user's own name.
+#
+# `plate_name` carries the same text as `filename` — a `file` report puts the full
+# /useremain/app/gk/gcodes/... path in it. Masking only `filename` was decorative: the
+# path sat in the clear beside a **REDACTED** filename in the very report that revealed
+# it (issue #12). Any key that can hold a print's name belongs here or none of them do.
 SENSITIVE_KEYS: frozenset[str] = frozenset({
-    "host", "ip", "filename", "username", "password", "device_id",
+    "host", "ip", "filename", "plate_name", "username", "password", "device_id",
     "serial", "broker_host", "deviceId", "mac"})
 
 

@@ -132,3 +132,16 @@ def test_parse_extfilbox_reports_an_empty_holder():
     assert spool.material is None
     assert spool.color_hex is None
     assert spool.loaded is False
+
+
+def test_display_filename_strips_the_printer_side_directory_prefix():
+    # Reported on #12: a job started from the printer's own screen names the file
+    # ".3mf_temp/<name>.gcode", while the same job from the Slicer is just "<name>.gcode".
+    # Users should see one name, not two spellings of it.
+    assert models.display_filename(
+        ".3mf_temp/0907-2001-Plant wall clip_plate(01)_PLA_0.28_5m39s.gcode"
+    ) == "0907-2001-Plant wall clip_plate(01)_PLA_0.28_5m39s.gcode"
+    assert models.display_filename(
+        "0907-2001-Plant wall clip_plate(01)_PLA_0.28_5m39s.gcode"
+    ) == "0907-2001-Plant wall clip_plate(01)_PLA_0.28_5m39s.gcode"
+    assert models.display_filename(None) is None
