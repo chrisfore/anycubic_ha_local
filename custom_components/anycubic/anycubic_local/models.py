@@ -288,17 +288,46 @@ class ExternalSpool:
     """
     material: str | None = None       # "" -> None
     color_hex: str | None = None
-    loaded: bool = False
+    loaded: bool | None = None        # None = the printer did not say
     status_type: int | None = None
     current_status: int | None = None
 
 
+# The printer's "I am not telling you" value, same convention as the ACE feed_status.
+_UNKNOWN = -1
+
+
 def parse_extfilbox(data: dict) -> ExternalSpool:
-    """Parse an `extfilbox` report `.data` object."""
+    """Parse an `extfilbox` report `.data` object.
+
+    A pushed report is complete. The answer to a query is PARTIAL: the same spool that
+    pushes loaded=1/status_type=3/current_status=10 answers a query with loaded=0 and
+    -1 in both status fields (issue #12). Reading that 0 as "no filament" would blank a
+    loaded spool every time Home Assistant restarted, so when the statuses say unknown,
+    `loaded` is unknown too.
+    """
+    status_type = data.get("status_type")
+    current_status = data.get("current_status")
+    partial = status_type == _UNKNOWN and current_status == _UNKNOWN
     return ExternalSpool(
         material=_opt(data.get("type")),
         color_hex=_rgb_hex(data.get("color")),
-        loaded=bool(data.get("loaded")),
-        status_type=data.get("status_type"),
-        current_status=data.get("current_status"),
+        loaded=None if partial else bool(data.get("loaded")),
+        status_type=None if status_type == _UNKNOWN else status_type,
+        current_status=None if current_status == _UNKNOWN else current_status,
     )
+
+
+def merge_external_spool(prev: ExternalSpool | None, new: ExternalSpool) -> ExternalSpool:
+    """Fold a new reading in without letting an unknown overwrite something known.
+
+    Same rule as merge_boxes: a field the printer declined to report must not erase the
+    answer it gave us earlier.
+    """
+    if prev is None:
+        return new
+    for field_name in ("material", "color_hex", "loaded", "status_type", "current_status"):
+        value = getattr(new, field_name)
+        if value is not None:
+            setattr(prev, field_name, value)
+    return prev

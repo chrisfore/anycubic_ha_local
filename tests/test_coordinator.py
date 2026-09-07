@@ -391,7 +391,7 @@ async def test_extfilbox_is_probed_at_connect_not_polled(hass):
 
     assert "extfilbox" not in coord._transport.queries    # no longer wasted per poll
     actions = [p["action"] for t, p in coord._transport.published if t == "extfilbox"]
-    assert actions == ["getInfo", "reportInfo"]
+    assert actions == ["reportInfo"]   # the one the printer actually answers
 
 
 async def test_file_details_is_requested_once_per_job(hass):

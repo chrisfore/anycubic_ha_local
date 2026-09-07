@@ -409,3 +409,30 @@ async def test_external_box_on_builtin_printer_keeps_its_dryer(hass):
     assert g("number.ace_2_drying_temperature") is not None
     assert g("sensor.ace_2_humidity").state == "20"
     assert g("sensor.ace_2_box_temperature").state == "30"
+
+
+async def test_ace_sensors_go_unavailable_when_the_unit_is_detached(hass):
+    # Reported on #12: switching the ACE off left its sensors sitting on stale values.
+    # merge_boxes deliberately keeps boxes it has seen, so data.ace never empties and
+    # `self._box is not None` stayed true — the mirror of the external-spool staleness.
+    # With the unit attached, getInfo answers with a full box list; detached, an empty
+    # one. So an empty list means absent, and availability must follow it.
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "1.2.3.4"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coord = entry.runtime_data
+        coord._apply("multiColorBox", {"multi_color_box": [
+            {"id": 0, "model_id": 40001, "humidity": 24, "temp": 35, "slots": []}]})
+        await hass.async_block_till_done()
+        assert hass.states.get("sensor.ace_2_humidity").state == "24"
+
+        coord._apply("multiColorBox", {"multi_color_box": []})
+        await hass.async_block_till_done()
+
+    assert hass.states.get("sensor.ace_2_humidity").state == "unavailable"
+    # The device itself must survive — dropping the box would destroy its entity IDs.
+    from homeassistant.helpers import device_registry as dr
+    assert dr.async_get(hass).async_get_device(identifiers={(DOMAIN, "SER-1_ace0")}) is not None

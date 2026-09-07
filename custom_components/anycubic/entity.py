@@ -94,7 +94,10 @@ class AnycubicAceEntity(CoordinatorEntity[AnycubicCoordinator]):
 
     @property
     def available(self) -> bool:
-        return super().available and self._box is not None
+        # ace_present is None until the first report — absence of news is not absence of
+        # hardware, so only an explicit False hides these.
+        return (super().available and self._box is not None
+                and self.coordinator.ace_present is not False)
 
     @property
     def device_info(self) -> DeviceInfo:
