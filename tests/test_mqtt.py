@@ -182,3 +182,16 @@ def test_redacted_truncates_huge_base64_blobs():
     assert thumb.startswith("AAAA")
     assert "40000" in thumb                      # says how much was dropped
     assert out["data"]["file_details"]["root"] == "local"   # short values untouched
+
+
+def test_redaction_covers_plate_name_not_just_filename():
+    # Reported on #12: masking `filename` while leaving `plate_name` in the clear was
+    # decorative — they carry the same text, and the full path sat next to a **REDACTED**
+    # filename in the reporter's own paste. Either both go or neither does.
+    from custom_components.anycubic.anycubic_local.const import redacted
+
+    out = redacted({"data": {
+        "filename": "0907-2001-Plant wall clip.gcode",
+        "plate_name": "/useremain/app/gk/gcodes/0907-2001-Plant wall clip_plate(01).gcode"}})
+    assert out["data"]["filename"] == "**REDACTED**"
+    assert out["data"]["plate_name"] == "**REDACTED**"

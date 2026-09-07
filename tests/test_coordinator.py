@@ -415,3 +415,19 @@ async def test_file_details_is_requested_once_per_job(hass):
     coord._on_report("print", {"taskid": "-1", "progress": 1, "filename": "benchy.gcode"})
     await hass.async_block_till_done()
     assert len([p for t, p in coord._transport.published if t == "file"]) == 2
+
+
+async def test_file_details_asks_with_the_raw_prefixed_filename(hass):
+    # The display name is tidied, but the request must carry what the printer called it:
+    # printer-started jobs confirmed working on the wire with the ".3mf_temp/" prefix intact.
+    coord = AnycubicCoordinator(hass, HS, transport_factory=RecordingTransport)
+    await coord.async_start()
+    coord._transport.published.clear()
+
+    raw = ".3mf_temp/0907-2001-Plant wall clip_plate(01)_PLA_0.28_5m39s.gcode"
+    coord._on_report("print", {"taskid": "-1", "progress": 3, "filename": raw})
+    await hass.async_block_till_done()
+
+    asks = [p for t, p in coord._transport.published if t == "file"]
+    assert len(asks) == 1
+    assert asks[0]["data"]["filename"] == raw
