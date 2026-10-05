@@ -18,13 +18,23 @@ PREFIX = "anycubic/anycubicCloud/v1"
 # plate under names built from the model file's name. `printerName` is whatever the owner
 # typed into the printer.
 #
+# A `print` progress report says the name four more times beside `filename`: under
+# `display_filename`, in the paths of the stored job and of the gcode unpacked from it
+# (`origin3mf`, `temp_gcode`), and as `name` in each entry of source_info.models, the
+# model's own name, which the file name is built from. `name` is as broad as a key gets.
+# It is here bare because a key list cannot say "only under models", and masking `models`
+# whole would also hide the fields beside it, which name nothing; no report seen so far
+# has another `name`. `temp_dir` sits with these, is a staging directory rather than a
+# name, and is deliberately NOT here.
+#
 # `urls` is deliberately NOT here. Its values hold the printer's address, and fileUploadurl
 # an `s=` token besides, but masking the key would also throw away the scheme, port and
 # path that make a camera debuggable (issue #6). redacted() masks the parts of a URL that
 # identify, under any key, and keeps the rest.
 SENSITIVE_KEYS: frozenset[str] = frozenset({
     "host", "ip", "filename", "plate_name", "username", "password", "device_id",
-    "serial", "broker_host", "deviceId", "mac", "objects_skip_parts", "printerName"})
+    "serial", "broker_host", "deviceId", "mac", "objects_skip_parts", "printerName",
+    "display_filename", "origin3mf", "temp_gcode", "name"})
 
 REDACTED = "**REDACTED**"
 

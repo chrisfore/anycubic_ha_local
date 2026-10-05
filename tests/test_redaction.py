@@ -208,6 +208,25 @@ def test_a_file_report_keeps_root_and_plate_index(load_fixture):
     assert const.redacted(data, IDS) == expected
 
 
+def test_a_print_report_loses_the_prints_name_and_nothing_else(load_fixture):
+    # A `print` progress report says what is printing five times: under filename, under
+    # display_filename, in the paths of the stored job and of the gcode unpacked from it,
+    # and as the model's own name in source_info, which the file name is built from. Only
+    # `filename` was masked, so the name went out beside it in every `report print:` line.
+    data = load_fixture("print_progress.json")
+    out = const.redacted(data, IDS)
+    for part in ("alice", "bracket"):
+        assert part not in str(out).lower(), part
+    expected = copy.deepcopy(data)
+    for key in ("filename", "display_filename", "origin3mf", "temp_gcode"):
+        expected[key] = MASK
+    expected["source_info"]["models"][0]["name"] = MASK
+    # Everything else is untouched: task id, progress, layers, times, filament used, the
+    # slicer and its version, the plate, the rest of the model entry, and temp_dir, which is
+    # a staging directory and names nothing.
+    assert out == expected
+
+
 def test_an_ack_envelope_stays_readable_in_full():
     ack = {"type": "print", "action": "update", "timestamp": 1700000000000,
            "msgid": "made-by-the-printer", "state": "updated", "code": 200, "msg": "done",

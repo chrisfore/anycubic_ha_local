@@ -297,6 +297,27 @@ def test_a_print_ack_with_no_msg_does_not_log_the_file_name(caplog):
     assert "alice-bracket" not in log
 
 
+def test_a_logged_print_report_does_not_name_the_print(caplog, load_fixture):
+    # A progress report carries the job's name under filename and, beside it, under
+    # display_filename, in the paths of the stored job and of the gcode unpacked from it,
+    # and as the model's name in source_info. With only `filename` on the key list, every
+    # `report print:` line of a job still named the job.
+    client = _logging_client(caplog)
+    client._c.on_message(client._c, None, _msg(f"{REPORTS}/print/report", {
+        "type": "print", "action": "start", "timestamp": 1700000000000,
+        "msgid": "made-by-the-printer", "state": "printing", "code": 200, "msg": "",
+        "data": load_fixture("print_progress.json")}))
+    log = _logged(caplog)
+    assert "report print:" in log
+    for part in ("alice", "bracket"):
+        assert part not in log.lower(), part
+    # What a stalled job is debugged from is still on the line.
+    for kept in ("'state': 'printing'", "'taskid': '-1'", "'progress': 42", "'curr_layer': 120",
+                 "'total_layers': 900", "'print_time': 600", "'remain_time': 1800",
+                 "'supplies_usage': 39832", "'software_version': '1.3.7'"):
+        assert kept in log, kept
+
+
 def test_a_print_ack_still_says_what_the_printer_answered(caplog):
     # The ack line is the instrument for issue #10: accepted or not, in one greppable line.
     client = _logging_client(caplog)
