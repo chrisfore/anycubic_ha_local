@@ -50,6 +50,46 @@ def test_parse_light(load_fixture):
     assert light.brightness == 100
 
 
+def test_parse_light_reads_the_answer_to_a_control_command():
+    # Issue #14: a light `control` is answered with the bare light object carrying the NEW
+    # state, not a `lights` list. Read as "no lights", every answer said off, so a light
+    # just switched on looked like the command had not taken. `data` verbatim from a
+    # Kobra S1 Max capture.
+    light = models.parse_light({"type": 2, "status": 1, "brightness": 100})
+    assert light.on is True
+    assert light.brightness == 100
+
+
+def test_parse_light_reads_a_control_answer_that_switched_the_light_off():
+    # This one was right before the fix, but only because "not understood" and "off" were
+    # the same value. It has to stay a real reading now that they are not.
+    light = models.parse_light({"type": 2, "status": 0, "brightness": 0})
+    assert light is not None
+    assert light.on is False
+    assert light.brightness == 0
+
+
+def test_parse_light_still_reads_the_lights_list_when_it_says_off():
+    # The answer to a query is the shape this parser always understood. test_parse_light
+    # pins it on; this pins it off, so both readings come through the fix untouched.
+    light = models.parse_light({"lights": [{"type": 2, "status": 0, "brightness": 0}]})
+    assert light.on is False
+    assert light.brightness == 0
+
+
+def test_parse_light_does_not_read_an_unrecognised_payload_as_off():
+    # Unknown is not "off" (issue #14), the same rule parse_extfilbox applies to a partial
+    # answer. None tells the coordinator to keep the state it already has.
+    for payload in ({}, {"lights": None}, {"type": 2}, {"status": 1, "brightness": 100}, []):
+        assert models.parse_light(payload) is None, payload
+
+
+def test_parse_light_ignores_a_bare_object_for_another_light():
+    # A bare object names the lamp it is about. Only the chamber light's own type, the one
+    # the command builder sends, may move the chamber light.
+    assert models.parse_light({"type": 1, "status": 1, "brightness": 100}) is None
+
+
 def test_apply_temperature_folds_a_tempature_report():
     state = models.PrinterState(nozzle_temp=210, nozzle_target=210, bed_temp=60,
                                 chamber_temp=41, progress=42, printing=True)

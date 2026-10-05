@@ -42,7 +42,11 @@ class AnycubicLight(AnycubicEntity, LightEntity):
         self._set_optimistic(False)
 
     def _set_optimistic(self, on: bool) -> None:
-        """The printer only echoes light state on the next poll; reflect the change now so the
-        toggle holds and the icon updates immediately. The next poll reconciles to real state."""
+        """Reflect the change now, so the toggle holds and the icon updates immediately.
+
+        The printer confirms a light command about 0.2s later with a `light` report of its
+        own, carrying the state the light took (issue #14). That report replaces this guess,
+        and every poll answer after it reconciles to real state the same way.
+        """
         self.coordinator.data.light = LightState(on=on)
         self.coordinator.async_set_updated_data(self.coordinator.data)

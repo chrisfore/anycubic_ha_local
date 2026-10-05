@@ -6,7 +6,7 @@ All commands are validated against real hardware, including `stop`: the app send
 import time
 import uuid
 
-from .const import query_topic
+from .const import LIGHT_TYPE_CHAMBER, query_topic
 
 _TASKID = "-1"
 
@@ -36,7 +36,7 @@ def build(model_id: str, device_id: str, command: str, *, value=None, on=None,
     elif command == "light":
         mtype, action = "light", "control"
         # On/off light: when no brightness is given, turn fully on (100). status 0 -> off.
-        data = {"type": 2, "status": 1 if on else 0,
+        data = {"type": LIGHT_TYPE_CHAMBER, "status": 1 if on else 0,
                 "brightness": (100 if brightness is None else brightness) if on else 0}
     elif command == "auto_feed":
         mtype, action, data = "multiColorBox", "setAutoFeed", _box({"auto_feed": 1 if on else 0}, box_id)

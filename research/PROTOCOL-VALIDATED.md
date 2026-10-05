@@ -120,6 +120,30 @@ Printer acks on `…/{type}/report` with `code:200`. `taskid` observed as `"-1"`
 ## Chamber light — both states captured
 `light.data.lights[]` = `[{type:2, status, brightness}]`. Off `{status:0,brightness:0}`, On `{status:1,brightness:100}` → v1.0 light *state*; v1.1 light *control*.
 
+**A `light` report's `data` comes in two shapes** (validated on a Kobra S1 Max, fw 2.7.1.4,
+issue #14). The answer to a `query` is the `lights` list above. The answer to a `control` is the
+**bare light object**: the same three keys with no `lights` wrapper.
+```
+query answer   : { type:"light", action:"query",   timestamp, msgid, state:"done", code:200,
+                   msg:"done", data:{ lights:[ {type:2, status:1, brightness:100} ] } }
+control answer : { type:"light", action:"control", timestamp, msgid, state:"done", code:200,
+                   msg:"done", data:{ type:2, status:1, brightness:100 } }
+```
+- **The control answer carries the NEW state:** `status:1, brightness:100` after switching on,
+  `status:0, brightness:0` after switching off. A parser that only knows `lights[]` finds no list
+  in it; reading that as "no light on" turns every light command into an apparent "off" that
+  lasts until the next query answer.
+- **Timing of one `control`, measured from the publish:** the `{msgid}` ack on `…/response` at
+  ~12 ms, the control answer on `…/light/report` at 180–260 ms.
+- **Report `msgid`s are printer-generated**, for query and control answers alike. Only
+  `…/response` echoes the sender's `msgid`, so a report cannot be matched by `msgid` to the
+  command that caused it.
+- **Report topics are shared between clients.** The control answer goes to every subscriber,
+  whoever sent the command: a light switched from the Slicer or the phone app arrives as the
+  same bare object.
+- **A `query` sent immediately after the control answer already returns the new state** in
+  `lights[]`, so the control answer can be taken as the light's state as it stands.
+
 ## Camera — VALIDATED (live stream is HA-compatible)
 On-demand. **Start/stop are benign commands** (camera only; no print impact) — captured live:
 - **Start:** publish `…/web/printer/{modelId}/{deviceId}/video` `{type:"video", action:"startCapture", timestamp, msgid, data:null}` → printer reports `…/video/report` `state:"initSuccess", code:200`.

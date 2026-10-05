@@ -365,7 +365,14 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             self.data.external_spool = merge_external_spool(
                 self.data.external_spool, parse_extfilbox(data))
         elif msg_type == "light":
-            self.data.light = parse_light(data)
+            # None means the report did not say how the chamber light is (a shape we do not
+            # know, or another lamp), so keep the state we have. The answer to a light
+            # command used to be such a shape, and installing a default for it switched the
+            # entity off after every command, ours or another client's, until the next poll
+            # put it right (issue #14).
+            light = parse_light(data)
+            if light is not None:
+                self.data.light = light
         elif msg_type == "peripherie" and isinstance(data, dict):
             self.peripherie = data
         elif msg_type == "video":
