@@ -133,14 +133,15 @@ control answer : { type:"light", action:"control", timestamp, msgid, state:"done
   `status:0, brightness:0` after switching off. A parser that only knows `lights[]` finds no list
   in it; reading that as "no light on" turns every light command into an apparent "off" that
   lasts until the next query answer.
-- **Timing of one `control`, measured from the publish:** the `{msgid}` ack on `…/response` at
-  ~12 ms, the control answer on `…/light/report` at 180–260 ms.
+- **Timing of a `control`, measured from the publish:** the `{msgid}` ack on `…/response` at
+  ~12 ms, the control answer on `…/light/report` at roughly 0.2 s (182 and 190 ms in Home
+  Assistant's log, 202 and 260 ms in a direct capture).
 - **Report `msgid`s are printer-generated**, for query and control answers alike. Only
   `…/response` echoes the sender's `msgid`, so a report cannot be matched by `msgid` to the
   command that caused it.
-- **Report topics are shared between clients.** The control answer goes to every subscriber,
-  whoever sent the command: a light switched from the Slicer or the phone app arrives as the
-  same bare object.
+- **Report topics are shared between clients.** A `control` sent by a second client produced the
+  same bare-object answer on `…/light/report`. By inference from the shared topic (not captured),
+  a light switched from the Slicer or the phone app arrives the same way.
 - **A `query` sent immediately after the control answer already returns the new state** in
   `lights[]`, so the control answer can be taken as the light's state as it stands.
 

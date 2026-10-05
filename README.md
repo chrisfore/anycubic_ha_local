@@ -8,7 +8,7 @@ cloud account, no rooting**.
 [![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chrisfore&repository=anycubic_ha_local&category=integration)
 [![Stars](https://img.shields.io/github/stars/chrisfore/anycubic_ha_local?style=flat&color=f5c518&label=stars)](https://github.com/chrisfore/anycubic_ha_local/stargazers)
 
-> **Status:** v1.2.8 — validated end-to-end on a Kobra S1 Max and user-validated on a Kobra 4,
+> **Status:** v1.2.12 — validated end-to-end on a Kobra S1 Max and user-validated on a Kobra 4,
 > Kobra 3 and Kobra X; the rest of the family shares the identical protocol. Entities adapt to each
 > model (see **Supported printers**).
 
@@ -149,6 +149,9 @@ and assumes the default device names — adjust the entity-ID prefixes if you re
 
 - **"Re-enable LAN Mode" notification / reauth:** the printer fell back to cloud mode. Turn LAN Mode
   back on at the printer and submit the prompt.
+- **Printer unavailable after its IP address changed:** in **Settings → Devices & Services**, open
+  the integration, choose ⋮ → **Reconfigure** and enter the new address — no need to delete the
+  integration. To stop it changing again, reserve the printer's address in your router.
 - **Loaded slot shows nothing / "None":** no filament is loaded into the toolhead (the printer's
   `-1` sentinel is shown as *None*).
 - **Camera won't play:** make sure `ffmpeg` is available and the printer is reachable on its stream
