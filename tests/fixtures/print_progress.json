@@ -1,0 +1,18 @@
+{
+  "taskid": "-1",
+  "localtask": "",
+  "filename": "Alice_Desk_Bracket_PLA_0.2_1h12m.gcode.3mf",
+  "display_filename": "Alice_Desk_Bracket_PLA_0.2_1h12m.gcode.3mf",
+  "origin3mf": "/useremain/app/gk/gcodes/Alice_Desk_Bracket_PLA_0.2_1h12m.gcode.3mf",
+  "temp_gcode": "/useremain/app/gk/gcodes/.3mf_temp/Alice_Desk_Bracket_PLA_0.2_1h12m.gcode",
+  "temp_dir": "/useremain/app/gk/gcodes/.3mf_temp",
+  "resume_needs_unpack": false,
+  "slicer": "ExampleSlicer",
+  "source_type": "local",
+  "source_info": {
+    "models": [{"file_source": 0, "mo_file_id": -1, "name": "Alice Desk Bracket"}],
+    "models_from": 0, "plate_index": 1, "slice_paras_process": 1, "software_version": "1.3.7"
+  },
+  "progress": 42, "curr_layer": 120, "total_layers": 900,
+  "print_time": 600, "remain_time": 1800, "supplies_usage": 39832
+}
