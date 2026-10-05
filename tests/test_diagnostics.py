@@ -116,3 +116,52 @@ async def test_diagnostics_camera_url_absent_stays_none(hass):
         diag = await async_get_config_entry_diagnostics(hass, entry)
 
     assert diag["printer"]["camera_url"] is None
+
+
+async def test_diagnostics_hides_identifiers_under_keys_nobody_has_seen(hass):
+    """features, peripherie and raw_multicolorbox go out verbatim on purpose, so a firmware
+    key the parser does not know can be triaged from the attachment. That also meant a new
+    key carrying a URL or an id went straight out. Every identifier here is made up."""
+    import json
+
+    device = "0123456789abcdef0123456789abcdef"
+    serial = "SERIAL-TEST-0001"
+    token = "feedfacefeedfacefeedfacefeedface"
+    hs = HandshakeResult("192.168.1.50", 9883, "u", "secretpw", device, "20029", serial,
+                         mac="AA-BB-CC-DD-EE-FF", model_name="Anycubic Kobra S1 Max",
+                         device_type="fdm")
+    # The user typed a name, so the entered address and the broker address differ.
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=serial, data={"host": "kobra-s1.local"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=hs), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coord = entry.runtime_data
+        coord._apply("info", {"state": "free", "version": "2.7.1.4", "features": {
+            "fod_support": True, "bound_serial": serial,
+            "cloud_bind": f"https://cloud.example.com/bind?device={device}&s={token}"}})
+        coord._apply("peripherie", {"camera": 1, "multiColorBox": 1, "udisk": 0,
+                                    "camera_host": "kobra-s1.local"})
+        coord._apply("multiColorBox", {
+            "owner_device": device, "upload": f"http://192.168.1.50:18910/gcode_upload?s={token}",
+            "multi_color_box": [{"id": 0, "temp": 30, "slots": [{
+                "index": 0, "sku": "AHPEFG-102", "type": "PETG", "color": [67, 82, 59],
+                "status": 5, "consumables_percent": 95, "reader_mac": "aa:bb:cc:dd:ee:ff"}]}]})
+        await hass.async_block_till_done()
+
+        diag = await async_get_config_entry_diagnostics(hass, entry)
+
+    blob = json.dumps(diag).lower()
+    for secret in (device, serial, "aa:bb:cc:dd:ee:ff", "aa-bb-cc-dd-ee-ff", "192.168.1.50",
+                   "kobra-s1.local", token, "secretpw"):
+        assert secret.lower() not in blob, secret
+    # What the attachment is for is still there, unknown keys included.
+    assert diag["capabilities"]["firmware"] == "2.7.1.4"
+    assert diag["capabilities"]["features"]["fod_support"] is True
+    assert diag["capabilities"]["peripherie"]["camera"] == 1
+    slot = diag["raw_multicolorbox"]["multi_color_box"][0]["slots"][0]
+    assert (slot["sku"], slot["type"], slot["color"], slot["status"],
+            slot["consumables_percent"]) == ("AHPEFG-102", "PETG", [67, 82, 59], 5, 95)
+    assert diag["raw_multicolorbox"]["upload"] == \
+        "http://**REDACTED**:18910/gcode_upload?**REDACTED**"

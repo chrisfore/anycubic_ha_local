@@ -293,6 +293,25 @@ async def test_recovery_refuses_to_adopt_a_different_printer(hass, monkeypatch):
     assert coord.hs.serial == "SER-1", "entities were repointed at another printer"
 
 
+async def test_the_different_printer_error_names_neither_address_nor_serial(hass, monkeypatch):
+    """An UpdateFailed lands in Home Assistant's ordinary ERROR log, which gets pasted into
+    issues with no debug logging switched on at all. The serial in it would not even be the
+    reporter's own printer."""
+    mine = HandshakeResult("192.168.1.50", 9883, "u", "p", "DEV", "20029", "SERIAL-TEST-0001")
+    other = HandshakeResult("192.168.1.50", 9883, "u", "p", "DEV2", "20029", "SERIAL-TEST-0002")
+    _handshakes(monkeypatch, result=other)
+    coord = AnycubicCoordinator(hass, mine, host="192.168.1.50", transport_factory=FakeTransport)
+    await coord.async_start()
+    _go_silent(coord)
+    with pytest.raises(UpdateFailed) as err:
+        await coord._async_update_data()
+    text = str(err.value)
+    assert "different printer" in text          # still says what happened
+    assert "192.168.1.50" not in text
+    assert "SERIAL-TEST-0002" not in text
+    assert "SERIAL-TEST-0001" not in text
+
+
 async def test_video_report_url_is_captured(hass):
     """New-generation firmware (Kobra 4 / X) answers startCapture with a video report
     whose data carries the tokenized stream URL. It must be kept in its own field —

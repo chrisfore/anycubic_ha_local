@@ -16,7 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .anycubic_local import mqtt as mqtt_mod
 from .anycubic_local.commands import build as build_command
-from .anycubic_local.const import query_topic
+from .anycubic_local.const import query_topic, redacted, runtime_identifiers
 from .anycubic_local.exceptions import CloudModeError
 from .anycubic_local.handshake import HandshakeResult, do_handshake
 from .anycubic_local.models import (
@@ -146,7 +146,8 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         Runs in an executor — `tls_set()` loads CA certs from disk, which must not
         happen on the event loop.
         """
-        transport = self._factory(self.hs, on_report=self._on_report)
+        transport = self._factory(self.hs, on_report=self._on_report,
+                                  identifiers=self.redaction_identifiers)
         transport.connect()
         for t in (*_QUERY_TYPES, *_CONNECT_ONLY_QUERY_TYPES):
             transport.query(t)
@@ -183,8 +184,12 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         if self.hs.serial and hs.serial and hs.serial != self.hs.serial:
             # The address now answers for a DIFFERENT printer (DHCP reuse). Rebuilding
             # would silently repoint every entity at someone else's machine.
+            #
+            # Named by neither address nor serial: an UpdateFailed lands in Home Assistant's
+            # ordinary ERROR log, which gets pasted into issues with no debug logging on at
+            # all, and the serial here is not even the reporter's own printer.
             raise UpdateFailed(
-                f"{self.host} now answers for a different printer ({hs.serial})")
+                "the configured address now answers for a different printer")
         self.hs = hs
         self._transport = self._build_and_connect()
 
@@ -287,9 +292,16 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         printer = self.data.printer
         return printer.printing or printer.paused
 
-    def _redact(self, topic: str) -> str:
-        """Topics embed the device id, and these log lines get pasted into bug reports."""
-        return topic.replace(self.hs.device_id, "**REDACTED**") if self.hs.device_id else topic
+    @property
+    def redaction_identifiers(self) -> tuple[str, ...]:
+        """What redacted() has to scrub for this printer, wherever it turns up.
+
+        The handshake's identifiers plus the address the user entered, which no handshake
+        reports. Read from the live handshake on every use rather than kept, so a
+        re-handshake cannot leave the list describing a session that is gone. (Not the
+        device registry's "identifiers": these are strings to keep out of anything shared.)
+        """
+        return runtime_identifiers(self.hs, self.host)
 
     async def async_send_command(self, command: str, **kwargs) -> None:
         """Build a control command and publish it (executor — paho publish is blocking-ish)."""
@@ -301,7 +313,14 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # The only record of what we actually put on the wire. A report is easy to observe
         # (it moves an entity); a command the printer silently discards left no trace at
         # all, which is what made issue #10 unfalsifiable from a user's debug log.
-        _LOGGER.debug("publish %s -> %s %s", command, self._redact(topic), body)
+        #
+        # Logged as a redacted COPY: the topic embeds the device id, and a file_details
+        # request names the file being printed. What is published below is the original
+        # body, or the printer could not act on it.
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            ids = self.redaction_identifiers
+            _LOGGER.debug("publish %s -> %s %s", command, redacted(topic, ids),
+                          json.dumps(redacted(payload, ids)))
         await self.hass.async_add_executor_job(self._transport.publish, topic, body)
 
     @callback
