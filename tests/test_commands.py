@@ -40,6 +40,18 @@ def test_light():
     assert p_off["data"] == {"type": 2, "status": 0, "brightness": 0}
 
 
+def test_light_command_names_the_lamp_the_parser_accepts():
+    # Issue #14: the printer answers a light command with the same bare light object the
+    # command carried. The builder and the parser therefore have to agree on which lamp
+    # `type` names: one shared value, not two literals that can drift apart.
+    from custom_components.anycubic.anycubic_local.models import LightState, parse_light
+
+    _, p_on = commands.build(M, D, "light", on=True)
+    assert parse_light(p_on["data"]) == LightState(on=True, brightness=100)
+    _, p_off = commands.build(M, D, "light", on=False)
+    assert parse_light(p_off["data"]) == LightState(on=False, brightness=0)
+
+
 def test_ace_drying_and_autofeed():
     _, p = commands.build(M, D, "drying_start", target_temp=45, duration=240)
     assert p["type"] == "multiColorBox" and p["action"] == "setDry"

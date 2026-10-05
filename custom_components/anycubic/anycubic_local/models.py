@@ -6,7 +6,7 @@ import binascii
 import logging
 from dataclasses import dataclass, field
 
-from .const import PAUSE_PAUSED, STATE_FREE
+from .const import LIGHT_TYPE_CHAMBER, PAUSE_PAUSED, STATE_FREE
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -276,12 +276,32 @@ class LightState:
     brightness: int = 0
 
 
-def parse_light(data: dict) -> LightState:
-    lights = data.get("lights") or []
-    if not lights:
-        return LightState()
-    first = lights[0]
-    return LightState(on=first.get("status") == 1, brightness=first.get("brightness", 0))
+def parse_light(data: dict) -> LightState | None:
+    """Parse a `light` report `.data` object; None if it does not say how the chamber light is.
+
+    Two shapes carry the state. A query is answered with a `lights` list, read here as it
+    always was (an empty list still gives the default). A control command is answered with
+    the bare light object, holding the state the light took. Report topics are shared between
+    clients, so that answer also arrives for commands the Slicer or the phone app sent. Only
+    the list used to be understood, so every control answer parsed as the default and a light
+    just switched on read as off until the next poll (issue #14).
+
+    Anything else is unknown, which is not the same as off: the rule parse_extfilbox applies
+    to a partial answer. A bare object counts only when it names the chamber light, since
+    nothing else in it says which lamp it describes.
+    """
+    if not isinstance(data, dict):
+        return None
+    lights = data.get("lights")
+    if isinstance(lights, list):
+        if not lights:
+            return LightState()
+        first = lights[0]
+        return LightState(on=first.get("status") == 1, brightness=first.get("brightness", 0))
+    # No `status`, no reading: defaulting it would turn an unknown back into "off".
+    if data.get("type") == LIGHT_TYPE_CHAMBER and "status" in data:
+        return LightState(on=data["status"] == 1, brightness=data.get("brightness", 0))
+    return None
 
 
 @dataclass

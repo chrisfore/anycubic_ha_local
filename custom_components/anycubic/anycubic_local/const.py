@@ -46,6 +46,11 @@ PAUSE_PAUSED = 1  # project.pause int for the paused state
 STATE_FREE = "free"
 STATE_BUSY = "busy"
 
+# `type` of the chamber light inside a `light` object. Shared by the command builder and the
+# report parser on purpose: the printer answers a light command with a bare light object,
+# and the parser believes one only for the lamp the builder commands (issue #14).
+LIGHT_TYPE_CHAMBER = 2
+
 
 def query_topic(model_id: str, device_id: str, msg_type: str) -> str:
     return f"{PREFIX}/web/printer/{model_id}/{device_id}/{msg_type}"
