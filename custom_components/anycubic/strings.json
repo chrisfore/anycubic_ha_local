@@ -8,12 +8,20 @@
       "reauth_confirm": {
         "title": "Re-enable LAN Mode",
         "description": "Home Assistant can no longer reach {host} over LAN Mode — the printer may have switched back to cloud mode. Turn LAN Mode back on at the printer, then submit."
+      },
+      "reconfigure_confirm": {
+        "title": "Change printer address",
+        "data": { "host": "Printer IP address or hostname" }
       }
     },
-    "error": { "cannot_connect": "Could not reach the printer. Check the IP and that LAN Mode is on." },
+    "error": {
+      "cannot_connect": "Could not reach the printer. Check the IP and that LAN Mode is on.",
+      "wrong_printer": "That address belongs to a different printer."
+    },
     "abort": {
       "already_configured": "This printer is already configured.",
-      "reauth_successful": "LAN Mode reconnected."
+      "reauth_successful": "LAN Mode reconnected.",
+      "reconfigure_successful": "Printer address updated."
     }
   },
   "entity": {
