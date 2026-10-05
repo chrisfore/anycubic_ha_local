@@ -195,3 +195,143 @@ def test_redaction_covers_plate_name_not_just_filename():
         "plate_name": "/useremain/app/gk/gcodes/0907-2001-Plant wall clip_plate(01).gcode"}})
     assert out["data"]["filename"] == "**REDACTED**"
     assert out["data"]["plate_name"] == "**REDACTED**"
+
+
+# ------------------------------------------- what the transport writes to the debug log
+#
+# The tests above call the redactor directly. These read the log lines themselves, because
+# a redactor that works is no use to a line that does not go through it: the print-ack
+# line logged its payload raw, and the connect line printed the address outright.
+# Every identifier here is made up.
+
+LAN = "192.168.1.50"
+DEVICE = "0123456789abcdef0123456789abcdef"
+SERIAL = "SERIAL-TEST-0001"
+TOKEN = "feedfacefeedfacefeedfacefeedface"
+SECRET_HS = HandshakeResult(LAN, 9883, "u", "p", DEVICE, "20029", SERIAL, mac="AA-BB-CC-DD-EE-FF")
+REPORTS = f"anycubic/anycubicCloud/v1/printer/public/20029/{DEVICE}"
+
+
+def _logging_client(caplog, **kwargs):
+    import logging
+    caplog.set_level(logging.DEBUG, logger=m.__name__)
+    return m.AnycubicMqtt(SECRET_HS, on_report=lambda t, d: None, client_factory=FakeClient,
+                          **kwargs)
+
+
+def _logged(caplog):
+    """Everything the transport logged, as a user would paste it."""
+    return "\n".join(r.getMessage() for r in caplog.records if r.name == m.__name__)
+
+
+def test_a_logged_info_report_carries_neither_the_address_nor_the_upload_token(caplog):
+    # The `urls` block is not on the key list and must not be: its port and path are how a
+    # camera gets debugged. So the address in rtspUrl and the `s=` token in fileUploadurl
+    # went out in every `info` report line.
+    client = _logging_client(caplog)
+    client._c.on_message(client._c, None, _msg(f"{REPORTS}/info/report", {
+        "type": "info", "action": "report", "timestamp": 1700000000000,
+        "msgid": "made-by-the-printer", "state": "done", "code": 200, "msg": "done",
+        "data": {"printerName": "Alice's Kobra", "model": "Anycubic Kobra S1 Max",
+                 "version": "2.7.1.4", "ip": LAN, "state": "free",
+                 "temp": {"curr_nozzle_temp": 27, "target_nozzle_temp": 0},
+                 "urls": {"rtspUrl": f"http://{LAN}:18088/flv",
+                          "fileUploadurl": f"http://{LAN}:18910/gcode_upload?s={TOKEN}"},
+                 "features": {"fod_support": True}}}))
+    log = _logged(caplog)
+    assert "report info:" in log
+    assert LAN not in log
+    assert TOKEN not in log
+    assert "Alice" not in log
+    # What triage needs is still there. The version looks exactly like an IPv4 address.
+    assert "'version': '2.7.1.4'" in log
+    assert "'model': 'Anycubic Kobra S1 Max'" in log
+    assert "'curr_nozzle_temp': 27" in log
+    assert "http://**REDACTED**:18088/flv" in log
+    assert "http://**REDACTED**:18910/gcode_upload?**REDACTED**" in log
+
+
+def test_a_logged_report_hides_this_printers_identifiers_under_unknown_keys(caplog):
+    # A key nobody has seen cannot be on the list. The transport knows its own handshake,
+    # so those values are scrubbed wherever a new firmware puts them.
+    client = _logging_client(caplog)
+    client._c.on_message(client._c, None, _msg(f"{REPORTS}/info/report", {
+        "type": "info", "action": "report", "data": {
+            "state": "free", "cn": SERIAL, "bind": f"bound to {DEVICE}",
+            "usn": "uuid:fdm:aa:bb:cc:dd:ee:ff", "note": f"ssh root@{LAN}"}}))
+    log = _logged(caplog).lower()
+    for secret in (SERIAL, DEVICE, "aa:bb:cc:dd:ee:ff", LAN):
+        assert secret.lower() not in log, secret
+    assert "'state': 'free'" in log
+
+
+def test_a_report_labelled_from_its_topic_does_not_log_the_device_id(caplog):
+    # A message with no `type` is labelled with the last piece of its topic, and every
+    # topic has the device id in it. The label goes through the redactor like the payload.
+    client = _logging_client(caplog)
+    client._c.on_message(client._c, None, _msg(REPORTS, {"state": "free"}))
+    log = _logged(caplog)
+    assert "report **REDACTED**:" in log
+    assert DEVICE not in log
+
+
+def test_the_transport_scrubs_extra_identifiers_it_is_handed(caplog):
+    # The address the user typed is known to the coordinator, not to the handshake.
+    client = _logging_client(caplog, identifiers=(DEVICE, "kobra-s1.local"))
+    client._c.on_message(client._c, None, _msg(f"{REPORTS}/info/report", {
+        "type": "info", "action": "report", "data": {"seen_as": "kobra-s1.local:18910"}}))
+    assert "kobra-s1.local" not in _logged(caplog)
+
+
+def test_a_print_ack_with_no_msg_does_not_log_the_file_name(caplog):
+    # The ack line printed `msg`, or the whole of `data` when `msg` was empty, without
+    # passing either through the redactor. A progress report has an empty msg and a
+    # filename in its data.
+    client = _logging_client(caplog)
+    client._c.on_message(client._c, None, _msg(f"{REPORTS}/print/report", {
+        "type": "print", "action": "start", "timestamp": 1700000000000,
+        "msgid": "made-by-the-printer", "state": "printing", "code": 200, "msg": "",
+        "data": {"taskid": "-1", "progress": 5, "filename": "alice-bracket.gcode"}}))
+    log = _logged(caplog)
+    assert "print ack: action=start code=200 state=printing" in log
+    assert "alice-bracket" not in log
+
+
+def test_a_print_ack_still_says_what_the_printer_answered(caplog):
+    # The ack line is the instrument for issue #10: accepted or not, in one greppable line.
+    client = _logging_client(caplog)
+    client._c.on_message(client._c, None, _msg(f"{REPORTS}/print/report", {
+        "type": "print", "action": "update", "state": "updated", "code": 200, "msg": "done",
+        "data": {"taskid": "-1"}}))
+    assert "print ack: action=update code=200 state=updated msg=done" in _logged(caplog)
+
+
+def test_the_connect_line_does_not_name_the_host(caplog):
+    client = _logging_client(caplog)
+    client.connect()
+    log = _logged(caplog)
+    assert "connected" in log and "9883" in log
+    assert LAN not in log
+
+
+async def test_the_coordinator_hands_the_transport_the_entered_address(hass, caplog):
+    # End to end across the seam: coordinator -> transport factory -> report line. The
+    # user typed a name; the printer's handshake only ever reports an address.
+    import logging
+    from functools import partial
+
+    from custom_components.anycubic.coordinator import AnycubicCoordinator
+
+    caplog.set_level(logging.DEBUG, logger=m.__name__)
+    coord = AnycubicCoordinator(
+        hass, SECRET_HS, host="kobra-s1.local",
+        transport_factory=partial(m.AnycubicMqtt, client_factory=FakeClient))
+    await coord.async_start()
+    paho = coord._transport._c
+    paho.on_message(paho, None, _msg(f"{REPORTS}/info/report", {
+        "type": "info", "action": "report", "data": {"state": "free",
+                                                     "seen_as": "kobra-s1.local:18910"}}))
+    await hass.async_block_till_done()
+    log = _logged(caplog)
+    assert "report info:" in log
+    assert "kobra-s1.local" not in log

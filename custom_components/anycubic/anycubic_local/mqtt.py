@@ -10,7 +10,7 @@ from collections.abc import Callable
 
 import paho.mqtt.client as mqtt
 
-from .const import query_topic, redacted, report_prefix
+from .const import query_topic, redacted, report_prefix, runtime_identifiers
 from .handshake import HandshakeResult
 
 _LOGGER = logging.getLogger(__name__)
@@ -35,9 +35,13 @@ def _connack_refused(code) -> bool:
 
 class AnycubicMqtt:
     def __init__(self, hs: HandshakeResult, on_report: Callable[[str, dict], None],
-                 client_factory=mqtt.Client) -> None:
+                 client_factory=mqtt.Client, identifiers: tuple[str, ...] | None = None) -> None:
         self._hs = hs
         self._on_report = on_report
+        # What must not reach the log from this session (see runtime_identifiers). The
+        # coordinator hands over its own list, which adds the address the user entered.
+        # Handed nothing, the transport still scrubs everything its own handshake told it.
+        self._identifiers = runtime_identifiers(hs) if identifiers is None else tuple(identifiers)
         # Whether the broker currently has us. Read by the coordinator, which is the
         # only thing able to do anything about a dead session (re-handshake + rebuild).
         self._connected = False
@@ -69,8 +73,10 @@ class AnycubicMqtt:
             return
         self._connected = True
         self._c.subscribe(f"{report_prefix(self._hs.model_id, self._hs.device_id)}/#")
-        _LOGGER.debug("connected to %s:%s, subscribed to reports",
-                      self._hs.broker_host, self._hs.broker_port)
+        # Port only. The host is the printer's LAN address, and this line is written on
+        # every connect of every debug log a user shares.
+        _LOGGER.debug("connected to the printer's broker on port %s, subscribed to reports",
+                      self._hs.broker_port)
 
     def _on_disconnect(self, *args) -> None:
         self._connected = False
@@ -124,17 +130,26 @@ class AnycubicMqtt:
         # answering every poll with frozen values (issue #9) looks identical to one
         # answering properly — the coordinator logs "updated" either way, and a report
         # type that quietly stops arriving leaves no trace at all. Redacted because these
-        # lines get pasted into issues verbatim.
-        _LOGGER.debug("report %s: %s", msg_type, redacted(obj))
-        if msg_type == "print":
-            # The printer's answer to a control command (code 200 = accepted). Logged here
-            # rather than in the coordinator because an ack carries code/state at the TOP
-            # level with data usually null — the data-is-None drop below would swallow it.
-            # Without this, a command the firmware rejected looked exactly like one that was
-            # never sent (issue #10). `print` is never polled, so this is not a per-cycle line.
-            _LOGGER.debug("print ack: action=%s code=%s state=%s msg=%s",
-                          obj.get("action"), obj.get("code"), obj.get("state"),
-                          obj.get("msg") or obj.get("data"))
+        # lines get pasted into issues verbatim. Both lines below read from ONE redacted
+        # copy, so neither can show something the redactor did not see. The level check is
+        # there because redacting walks the whole payload; no point when nobody is listening.
+        if _LOGGER.isEnabledFor(logging.DEBUG):
+            safe = redacted(obj, self._identifiers)
+            _LOGGER.debug("report %s: %s", redacted(msg_type, self._identifiers), safe)
+            if msg_type == "print":
+                # The printer's answer to a control command (code 200 = accepted). Logged
+                # here rather than in the coordinator because an ack carries code/state at
+                # the TOP level with data usually null — the data-is-None drop below would
+                # swallow it. Without this, a command the firmware rejected looked exactly
+                # like one that was never sent (issue #10). `print` is never polled, so
+                # this is not a per-cycle line.
+                #
+                # `msg` only. This line used to fall back to the whole of `data` when `msg`
+                # was empty, and to log it raw: a progress report has an empty msg and the
+                # file name in its data. The report line above already carries `data`.
+                _LOGGER.debug("print ack: action=%s code=%s state=%s msg=%s",
+                              safe.get("action"), safe.get("code"), safe.get("state"),
+                              safe.get("msg"))
         data = obj.get("data")
         if data is not None:
             self._on_report(msg_type, data)
