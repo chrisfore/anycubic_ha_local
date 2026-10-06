@@ -40,6 +40,7 @@ from .const import (
     ACE_DRYING_DEFAULT_DURATION_MIN,
     ACE_DRYING_DEFAULT_TEMP,
     ACE_MODEL_NAMES,
+    BUILTIN_ACE_MODELS,
     DEFAULT_QUERY_INTERVAL,
     DOMAIN,
     ace_suffix,
@@ -378,19 +379,29 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
                 self._request_file_details()
         elif msg_type == "multiColorBox":
             self.raw_multicolorbox = data
+            # Everything below reads the boxes this printer can really have, not the list
+            # as sent (see _real_boxes). The raw report above is kept as it came.
+            boxes = self._real_boxes(data)
             # Attached units answer getInfo with a full box list; with nothing attached the
             # list comes back empty. Tracked separately from data.ace because merge_boxes
             # keeps every box it has ever seen — deliberately, so devices and their entity
             # IDs survive — which means data.ace can never report a unit going away (#12).
-            self.ace_present = bool(data.get("multi_color_box"))
-            if data.get("multi_color_box"):
+            #
+            # A list that had entries and none of them a box says neither: it is the "no
+            # box" entry a finished feed sends, on a printer whose box is still attached.
+            # Reading it as "nothing attached" would take that box's entities away until
+            # the next poll, so what was known is kept.
+            if boxes or not data.get("multi_color_box"):
+                self.ace_present = bool(boxes)
+            if boxes:
                 # An ACE unit is attached, so the bare spool holder is not in use. Reconnecting
                 # the ACE sends no closing `extfilbox` — the reports simply stop (confirmed on a
                 # Kobra 3 V2, issue #12) — so without this the sensor would hold the last spool
                 # forever. Read from the RAW report, not self.data.ace: merge_boxes deliberately
                 # keeps previously-seen boxes, so data.ace never empties when a unit is unplugged.
                 self.data.external_spool = None
-            self.data.ace = merge_boxes(self.data.ace, parse_multicolorbox(data))
+            self.data.ace = merge_boxes(
+                self.data.ace, parse_multicolorbox({"multi_color_box": boxes}))
             self._sync_ace_device_model()
         elif msg_type == "file":
             # Answer to the fileDetails request we send at the start of a job (issue #13).
@@ -435,6 +446,28 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # froze for the whole job. Notify listeners without touching the schedule.
         self.last_update_success = True
         self.async_update_listeners()
+
+    def _real_boxes(self, data: dict) -> list[dict]:
+        """The entries of a multiColorBox report that are boxes this printer can have.
+
+        A negative id is a real unit only on a printer whose changer is built into the
+        toolhead (BUILTIN_ACE_MODELS), which reports it as -1. Every other printer uses -1
+        to say "no box": when a feed or an unload finishes it sends one entry with id -1 and
+        loaded_slot -1. Taken for a box, that was merged, and the entity scan registered it
+        as a built-in unit the printer does not have, with six entities. It is dropped here,
+        where the model is known, before anything can be made of it.
+
+        An entry with no id, or one that is not a whole number, names no box either. It is
+        skipped so the boxes beside it are still applied, where it used to raise in the
+        report handler. (bool is an int to Python, and not an id.)
+        """
+        entries = data.get("multi_color_box")
+        if not isinstance(entries, list):
+            return []
+        builtin = self.hs.model_id in BUILTIN_ACE_MODELS
+        return [entry for entry in entries
+                if isinstance(entry, dict) and type(entry.get("id")) is int
+                and (entry["id"] >= 0 or builtin)]
 
     @callback
     def _request_file_details(self) -> None:

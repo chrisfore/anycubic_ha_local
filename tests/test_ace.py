@@ -527,3 +527,119 @@ def test_the_way_to_link_a_box_is_read_from_home_assistant_itself():
     from custom_components.anycubic import entity as entity_mod
 
     assert entity_mod._VIA_BY_ID is ("via_device_id" in DeviceInfo.__annotations__)
+
+
+# ------------------------------------------------- "no box" is not a box (id -1 as a sentinel)
+#
+# When a filament feed or unload finishes, a printer with an external box reports
+# multiColorBox once with a single entry whose id is -1: no box, nothing loaded. Read as a
+# box, it was merged and registered, and because negative ids are how the Kobra X reports
+# the changer built into its toolhead, a printer that has no such thing grew a "Multi-color
+# unit" device with six entities. The shape below is that report's `data`, as captured.
+
+FEED_DONE = {"multi_color_box": [{
+    "id": -1, "loaded_slot": -1,
+    "feed_status": {"type": 2, "current_status": 1, "slot_index": -1}}]}
+BOX_0 = {"multi_color_box": [{
+    "id": 0, "model_id": 40002, "status": 1, "temp": 30, "humidity": 24, "loaded_slot": 1,
+    "slots": [{"index": 0, "type": "PETG", "color": [67, 82, 59],
+               "status": 5, "consumables_percent": 95}]}]}
+
+
+async def _setup_s1_max(hass):
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "1.2.3.4"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    return entry.runtime_data
+
+
+async def test_the_no_box_sentinel_does_not_become_a_device(hass):
+    import copy
+
+    from homeassistant.helpers import device_registry as dr, entity_registry as er
+
+    coord = await _setup_s1_max(hass)
+    coord._apply("multiColorBox", BOX_0)
+    await hass.async_block_till_done()
+    box_before = copy.deepcopy(coord.data.ace)
+    devices = set(dr.async_get(hass).devices)
+    entities = set(er.async_get(hass).entities)
+    states = {s.entity_id: s.state for s in hass.states.async_all()}
+
+    coord._apply("multiColorBox", FEED_DONE)
+    await hass.async_block_till_done()
+
+    assert [box.id for box in coord.data.ace] == [0]
+    assert coord.data.ace == box_before                 # loaded slot 1 is still loaded slot 1
+    assert set(dr.async_get(hass).devices) == devices
+    assert set(er.async_get(hass).entities) == entities
+    assert len(_ace_devices(hass, "SER-1")) == 1
+    assert {s.entity_id: s.state for s in hass.states.async_all()} == states
+    # Kept as it came, for the diagnostics download: that is how this was found.
+    assert coord.raw_multicolorbox == FEED_DONE
+
+
+async def test_the_same_report_from_a_built_in_changer_is_that_changer(hass):
+    # On a Kobra X, -1 is a real unit: the one in the toolhead.
+    coord = await _setup_kobra_x(hass)
+    coord._apply("multiColorBox", KX_BUILTIN)
+    await hass.async_block_till_done()
+    coord._apply("multiColorBox", FEED_DONE)
+    await hass.async_block_till_done()
+    assert [box.id for box in coord.data.ace] == [-1]
+    assert coord.data.ace[0].feed_current_status == 1
+    assert coord.ace_present is True
+    assert len(_ace_devices(hass, "SER-KX")) == 1
+    # And first heard of this way, it is still accepted.
+    fresh = await _setup_kobra_x_again(hass)
+    fresh._apply("multiColorBox", FEED_DONE)
+    await hass.async_block_till_done()
+    assert [box.id for box in fresh.data.ace] == [-1] and fresh.ace_present is True
+
+
+async def _setup_kobra_x_again(hass):
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-KX2", data={"host": "1.2.3.5"})
+    entry.add_to_hass(hass)
+    other = HandshakeResult("1.2.3.5", 9883, "u", "p", "DEV2", "20030", "SER-KX2")
+    with patch("custom_components.anycubic.do_handshake", return_value=other), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    return entry.runtime_data
+
+
+async def test_a_report_of_only_the_sentinel_says_nothing_is_attached(hass):
+    # With no box attached the bare spool holder is in use, and a report that names no box
+    # must neither announce one nor wipe the spool the holder reported.
+    coord = await _setup_s1_max(hass)
+    coord._apply("extfilbox", {"type": "PETG", "color": [117, 120, 123], "loaded": 1})
+    await hass.async_block_till_done()
+    spool = coord.data.external_spool
+    assert spool is not None and spool.material == "PETG"
+
+    coord._apply("multiColorBox", FEED_DONE)
+    await hass.async_block_till_done()
+
+    assert coord.ace_present is not True
+    assert coord.data.external_spool is spool
+    assert coord.data.ace == []
+    assert len(_ace_devices(hass, "SER-1")) == 1        # the one pre-registered for box 0
+
+
+async def test_a_box_entry_without_a_usable_id_is_skipped_and_the_rest_applied(hass):
+    coord = await _setup_s1_max(hass)
+    real = BOX_0["multi_color_box"][0]
+    for junk in ({"temp": 99}, {"id": None, "temp": 99}, {"id": "0", "temp": 99},
+                 {"id": True, "temp": 99}, {"id": 1.0, "temp": 99}, None, "box", 7):
+        coord._apply("multiColorBox", {"multi_color_box": [junk, real]})
+        await hass.async_block_till_done()
+        assert [box.id for box in coord.data.ace] == [0], junk
+        assert coord.data.ace[0].temp == 30 and coord.ace_present is True, junk
+    # A report that is not shaped like one at all applies nothing and raises nothing.
+    for data in ({"multi_color_box": None}, {"multi_color_box": {"id": 0}}, {}):
+        coord._apply("multiColorBox", data)
+    assert [box.id for box in coord.data.ace] == [0]
+    assert len(_ace_devices(hass, "SER-1")) == 1
