@@ -25,6 +25,9 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
     # an id under one would have gone straight out. That same function is what keeps
     # camera_url's scheme, port and path (how an unvalidated model's camera gets debugged —
     # issue #6) while masking its host. Home Assistant's own key redaction stays on top.
+    #
+    # The running job's name is scrubbed by value too, out of those same verbatim blocks.
+    # The redactor finds it for itself, under `printer` below.
     return async_redact_data(redacted(
         {
             "entry_data": dict(entry.data),

@@ -499,3 +499,85 @@ async def test_late_answer_for_the_previous_job_is_discarded(hass):
     coord._on_report("file", _details("boat.gcode"))     # stale answer arrives late
     await hass.async_block_till_done()
     assert coord.data.object_images.filename == "benchy.gcode"   # must not be painted over
+
+
+# ------------------------------------------------- what an error says in the ordinary log
+#
+# UpdateFailed and ConfigEntryNotReady are logged by Home Assistant at its normal level, with
+# no debug logging on. Their text used to be the exception's own, and an exception says
+# whatever the library, or the device that answered, put in it.
+
+async def test_a_failed_reconnect_does_not_put_the_address_in_the_error(hass, monkeypatch):
+    mine = HandshakeResult("192.168.1.50", 9883, "u", "p", "0123456789abcdef0123456789abcdef",
+                           "20029", "SERIAL-TEST-0001", mac="AA-BB-CC-DD-EE-FF")
+    _handshakes(monkeypatch, error=OSError(
+        "192.168.1.50 unreachable (kobra-s1.local, SERIAL-TEST-0001, aa:bb:cc:dd:ee:ff, "
+        "0123456789abcdef0123456789abcdef)"))
+    coord = AnycubicCoordinator(hass, mine, host="kobra-s1.local", transport_factory=FakeTransport)
+    await coord.async_start()
+    _go_silent(coord)
+    with pytest.raises(UpdateFailed) as err:
+        await coord._async_update_data()
+    text = str(err.value)
+    assert text.startswith("reconnect failed: ") and "unreachable" in text   # still says what
+    for secret in ("192.168.1.50", "kobra-s1.local", "0123456789abcdef0123456789abcdef",
+                   "SERIAL-TEST-0001", "aa:bb:cc:dd:ee:ff"):
+        assert secret not in text, secret
+
+
+async def test_a_short_hostname_the_redactor_leaves_alone_still_stays_out_of_the_error(hass, monkeypatch):
+    # A one-word name is not scrubbed out of printer payloads (it is an ordinary word, and
+    # under seven characters nothing is). An error is not a payload: there the word is the
+    # address, and it is masked wherever it stands on its own.
+    mine = HandshakeResult("192.168.1.50", 9883, "u", "p", "0123456789abcdef0123456789abcdef",
+                           "20029", "SERIAL-TEST-0001")
+    for host, said, logged in (
+        ("kobra", "cannot resolve kobra: Name or service not known",
+         "reconnect failed: cannot resolve **REDACTED**: Name or service not known"),
+        ("anycubic", "<urlopen error http://Anycubic:18910 refused>",
+         "reconnect failed: <urlopen error http://**REDACTED**:18910 refused>"),
+        # Inside another word it is not the address, and it cannot be cut out of one. The
+        # text would still hold it, so the kind of error is all that is said.
+        ("pi", "session expired", "reconnect failed: OSError"),
+        ("pi", "", "reconnect failed: OSError"),
+    ):
+        _handshakes(monkeypatch, error=OSError(said))
+        coord = AnycubicCoordinator(hass, mine, host=host, transport_factory=FakeTransport)
+        await coord.async_start()
+        _go_silent(coord)
+        with pytest.raises(UpdateFailed) as err:
+            await coord._async_update_data()
+        assert str(err.value) == logged, host
+
+
+async def test_an_ordinary_reconnect_error_keeps_its_text(hass, monkeypatch):
+    # "Connection refused" against "timed out" is most of what a log is read for.
+    _handshakes(monkeypatch, error=OSError(111, "Connection refused"))
+    coord = AnycubicCoordinator(hass, HS, host="192.168.1.50", transport_factory=FakeTransport)
+    await coord.async_start()
+    _go_silent(coord)
+    with pytest.raises(UpdateFailed) as err:
+        await coord._async_update_data()
+    assert str(err.value) == "reconnect failed: [Errno 111] Connection refused"
+
+
+async def test_a_failed_setup_does_not_put_the_address_in_the_log(hass, caplog):
+    from unittest.mock import patch
+
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.anycubic.anycubic_local.exceptions import HandshakeError
+    from custom_components.anycubic.const import DOMAIN
+
+    for error in (OSError("<urlopen error connect to 192.168.1.50:18910 failed: No route to host>"),
+                  HandshakeError("/ctrl failed: device 192.168.1.50 is busy")):
+        entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "192.168.1.50"})
+        entry.add_to_hass(hass)
+        with patch("custom_components.anycubic.do_handshake", side_effect=error):
+            assert not await hass.config_entries.async_setup(entry.entry_id)
+            await hass.async_block_till_done()
+        assert entry.reason and "192.168.1.50" not in entry.reason
+        assert "No route to host" in entry.reason or "is busy" in entry.reason
+        await hass.config_entries.async_remove(entry.entry_id)
+    assert "192.168.1.50" not in caplog.text
+    assert "not ready yet" in caplog.text           # the line this is about was written

@@ -6,7 +6,7 @@ import logging
 import ssl
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 import paho.mqtt.client as mqtt
 
@@ -35,13 +35,19 @@ def _connack_refused(code) -> bool:
 
 class AnycubicMqtt:
     def __init__(self, hs: HandshakeResult, on_report: Callable[[str, dict], None],
-                 client_factory=mqtt.Client, identifiers: tuple[str, ...] | None = None) -> None:
+                 client_factory=mqtt.Client, identifiers: tuple[str, ...] | None = None,
+                 job_names: Callable[[], Iterable[str | None]] | None = None) -> None:
         self._hs = hs
         self._on_report = on_report
         # What must not reach the log from this session (see runtime_identifiers). The
         # coordinator hands over its own list, which adds the address the user entered.
         # Handed nothing, the transport still scrubs everything its own handshake told it.
         self._identifiers = runtime_identifiers(hs) if identifiers is None else tuple(identifiers)
+        # What is printing, asked each time a report is logged because it changes with every
+        # job. A report that names the job is scrubbed of the name on its own evidence; this
+        # is for the ones that do not, and only the coordinator knows it. Handed nothing,
+        # there is nothing more to scrub.
+        self._job_names = job_names
         # Whether the broker currently has us. Read by the coordinator, which is the
         # only thing able to do anything about a dead session (re-handshake + rebuild).
         self._connected = False
@@ -134,22 +140,45 @@ class AnycubicMqtt:
         # copy, so neither can show something the redactor did not see. The level check is
         # there because redacting walks the whole payload; no point when nobody is listening.
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            safe = redacted(obj, self._identifiers)
-            _LOGGER.debug("report %s: %s", redacted(msg_type, self._identifiers), safe)
-            if msg_type == "print":
-                # The printer's answer to a control command (code 200 = accepted). Logged
-                # here rather than in the coordinator because an ack carries code/state at
-                # the TOP level with data usually null — the data-is-None drop below would
-                # swallow it. Without this, a command the firmware rejected looked exactly
-                # like one that was never sent (issue #10). `print` is never polled, so
-                # this is not a per-cycle line.
-                #
-                # `msg` only. This line used to fall back to the whole of `data` when `msg`
-                # was empty, and to log it raw: a progress report has an empty msg and the
-                # file name in its data. The report line above already carries `data`.
-                _LOGGER.debug("print ack: action=%s code=%s state=%s msg=%s",
-                              safe.get("action"), safe.get("code"), safe.get("state"),
-                              safe.get("msg"))
+            # Nothing in here may cost the report. This runs on paho's network thread, and an
+            # exception that leaves this method ends that thread: no report is applied again
+            # until the watchdog notices the silence. JSON nested deeper than the redactor
+            # can walk did exactly that, and only with debug logging on. So whatever goes
+            # wrong while a line is being made, one fixed line is written in its place, with
+            # nothing of the payload in it and nothing of the error, whose text can quote
+            # the payload.
+            try:
+                names = self._job_names() if self._job_names is not None else ()
+                safe = redacted(obj, self._identifiers, names)
+                _LOGGER.debug("report %s: %s", redacted(msg_type, self._identifiers, names), safe)
+                if msg_type == "print":
+                    # The printer's answer to a control command (code 200 = accepted). Logged
+                    # here rather than in the coordinator because an ack carries code/state at
+                    # the TOP level with data usually null — the data-is-None drop below would
+                    # swallow it. Without this, a command the firmware rejected looked exactly
+                    # like one that was never sent (issue #10). `print` is never polled, so
+                    # this is not a per-cycle line.
+                    #
+                    # `msg` only. This line used to fall back to the whole of `data` when `msg`
+                    # was empty, and to log it raw: a progress report has an empty msg and the
+                    # file name in its data. The report line above already carries `data`.
+                    _LOGGER.debug("print ack: action=%s code=%s state=%s msg=%s",
+                                  safe.get("action"), safe.get("code"), safe.get("state"),
+                                  safe.get("msg"))
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("a report could not be logged; it is applied as usual")
+        if (msg_type == "light" and obj.get("action") == "control"
+                and obj.get("code") not in (None, 200)):
+            # The answer to a light command carries the light object, and the coordinator
+            # reads that as the state the light took (issue #14). It is handed `data` alone,
+            # so it could not see the envelope saying the command failed, and a refused
+            # command would have been believed. Not passed on, so the state stays what the
+            # last real reading said. Only this one answer is judged by its code: every
+            # other report reaches the coordinator as it always did. No failed answer has
+            # been captured. 200 is what every answer seen carries, and one with no code at
+            # all is passed on as before.
+            _LOGGER.debug("the printer says a light command was not accepted; state left as it was")
+            return
         data = obj.get("data")
         if data is not None:
             self._on_report(msg_type, data)

@@ -165,3 +165,37 @@ async def test_diagnostics_hides_identifiers_under_keys_nobody_has_seen(hass):
             slot["consumables_percent"]) == ("AHPEFG-102", "PETG", [67, 82, 59], 5, 95)
     assert diag["raw_multicolorbox"]["upload"] == \
         "http://**REDACTED**:18910/gcode_upload?**REDACTED**"
+
+
+async def test_diagnostics_hides_the_running_job_under_keys_nobody_has_seen(hass):
+    """The verbatim blocks again: a firmware that names the job, or an object on the plate,
+    under a new key. The printer state in the same download says what is printing, so the
+    name is recognised by its value wherever it is. Every name here is made up."""
+    import json
+
+    job = "0907-2001-Alice desk bracket _plate(01)_PLA_0.2_1h12m.gcode.3mf"
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "192.168.1.50"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coord = entry.runtime_data
+        coord._apply("info", {"state": "busy", "version": "2.7.1.4",
+                              "project": {"filename": job, "progress": 42}})
+        coord._apply("peripherie", {"camera": 1, "last_job": "Alice desk bracket, plate 1"})
+        coord._apply("multiColorBox", {
+            "feeding_for": "Alice_desk_bracket_.stl_id_0_copy_0",
+            "multi_color_box": [{"id": 0, "temp": 30, "slots": [{
+                "index": 0, "sku": "AHPEFG-102", "type": "PLA", "color": [67, 82, 59],
+                "status": 5, "consumables_percent": 95}]}]})
+        await hass.async_block_till_done()
+
+        diag = await async_get_config_entry_diagnostics(hass, entry)
+
+    blob = json.dumps(diag).lower()
+    for part in ("alice", "bracket", "0907-2001"):
+        assert part not in blob, part
+    assert diag["printer"]["progress"] == 42
+    assert diag["capabilities"]["peripherie"]["camera"] == 1
+    assert diag["raw_multicolorbox"]["multi_color_box"][0]["slots"][0]["type"] == "PLA"

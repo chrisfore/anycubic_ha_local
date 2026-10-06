@@ -166,3 +166,22 @@ async def test_an_unrecognised_light_report_leaves_the_state_alone(hass):
         _printer_sends(paho, "light/report", _light_report("report", data))
         await hass.async_block_till_done()
         assert hass.states.get(ENTITY).state == "on", data
+
+
+async def test_a_light_command_the_printer_refused_does_not_move_the_light(hass):
+    # The answer to a control command carries the light object, and nothing but the
+    # envelope's code says whether the printer did what was asked. No failure has ever been
+    # captured, so this is the shape a success has, with a code that is not 200.
+    paho = await _setup(hass)
+    _printer_sends(paho, "light/report", _light_report("query", {"lights": [ON]}))
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).state == "on"
+
+    refused = {**_light_report("control", OFF), "state": "failed", "code": 500, "msg": "busy"}
+    _printer_sends(paho, "light/report", refused)       # sent by another client, say
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).state == "on"
+
+    _printer_sends(paho, "light/report", _light_report("control", OFF))
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).state == "off"
