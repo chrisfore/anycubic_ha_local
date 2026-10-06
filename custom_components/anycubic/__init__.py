@@ -7,6 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
 from homeassistant.helpers.device_registry import DeviceEntry
 
+from .anycubic_local.const import redacted_error
 from .anycubic_local.exceptions import CloudModeError, HandshakeError
 from .anycubic_local.handshake import do_handshake
 from .const import DOMAIN, PLATFORMS, ace_suffix
@@ -16,13 +17,16 @@ type AnycubicConfigEntry = ConfigEntry[AnycubicCoordinator]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: AnycubicConfigEntry) -> bool:
+    # Home Assistant logs both of these messages at its normal level, so the exception's text
+    # goes through the redactor first. No handshake has succeeded here, which leaves the
+    # entered address as the one thing known that it could name.
     try:
         hs = await hass.async_add_executor_job(do_handshake, entry.data[CONF_HOST])
     except CloudModeError as err:
         # LAN Mode was turned off on the printer — guide the user to re-enable it via reauth.
-        raise ConfigEntryAuthFailed(str(err)) from err
+        raise ConfigEntryAuthFailed(redacted_error(err, (entry.data[CONF_HOST],))) from err
     except (HandshakeError, OSError) as err:
-        raise ConfigEntryNotReady(str(err)) from err
+        raise ConfigEntryNotReady(redacted_error(err, (entry.data[CONF_HOST],))) from err
     coordinator = AnycubicCoordinator(hass, hs, host=entry.data[CONF_HOST])
     await coordinator.async_start()
     entry.runtime_data = coordinator

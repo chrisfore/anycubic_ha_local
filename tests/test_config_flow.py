@@ -107,6 +107,9 @@ NEW = "192.168.1.60"
 BAD_ADDRESSES = ("http://192.168.1.60", "192.168.1.60:18910", "192.168.1 .60",
                  "192.168.1.60/info", "user@192.168.1.60", "192.168.1.60?x=1",
                  "192.168.1.60#x", "", "   ",
+                 # A bracketed literal, a zone id and a percent-escape. None is a bare IPv4
+                 # address or hostname, and each means something of its own inside a URL.
+                 "[fe80::1]", "[192.168.1.60]", "192.168.1.60]", "fe80--1%eth0", "192.168.1.60%25",
                  # Pasted along with an address and invisible in the field: a zero-width
                  # space, and a control character.
                  "192.168.\N{ZERO WIDTH SPACE}1.60", "192.168.1.60\x00")
@@ -385,3 +388,92 @@ def test_the_reconfigure_texts_are_the_approved_ones_in_both_files():
     assert config["error"]["cannot_connect"] == \
         "Could not reach the printer. Check the IP and that LAN Mode is on."
     assert config["abort"]["already_configured"] == "This printer is already configured."
+
+
+# ------------------------------------------- something answers there, and it is not a printer
+#
+# A mistyped address is as likely to reach a router or a NAS as nothing at all. Each of
+# these used to leave the handshake as an exception the flow did not expect, and Home
+# Assistant showed "Unknown error" and logged a traceback with the address in it. Here the
+# REAL handshake runs, against a faked network, so the whole path is the one a user takes.
+
+def _not_printers():
+    import http.client
+    import json
+
+    info = json.dumps({"token": "0123456789abcdefABCDEF0123456789", "cn": "SER-1",
+                       "modelId": "20029", "ctrlType": "lan",
+                       "ctrlInfoUrl": f"http://{NEW}:18910/ctrl"}).encode()
+    return {
+        "a web page": [b"<html><body>router login</body></html>"],
+        "bytes that are not text": [b"\xff\xfe\x00"],
+        "a JSON list": [b"[1, 2, 3]"],
+        "JSON null": [b"null"],
+        "no control data": [info, b'{"code": 200}'],
+        "control data that is null": [info, b'{"code": 200, "data": null}'],
+        "control data that is a list": [info, b'{"code": 200, "data": []}'],
+        "control data that cannot be unsealed": [info, b'{"code": 200, "data": {"info": "AAAA", "token": "t"}}'],
+        "a control answer that is a list": [info, b"[]"],
+        "not HTTP": [http.client.BadStatusLine("SSH-2.0-OpenSSH")],
+        "a connection dropped mid-answer": [http.client.IncompleteRead(b"")],
+        "a name that cannot be a hostname": [UnicodeError("encoding with 'idna' codec failed")],
+        "a refused connection": [ConnectionRefusedError(111, "Connection refused")],
+    }
+
+
+@contextmanager
+def _network(outcomes):
+    """Answer the handshake's requests in turn: bytes are a body, an exception is raised."""
+    import urllib.request
+
+    class Answer:
+        def __init__(self, body): self._body = body
+        def read(self): return self._body
+        def __enter__(self): return self
+        def __exit__(self, *exc): return False
+
+    left = list(outcomes)
+
+    def open_(self, request, *args, **kwargs):
+        outcome = left.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return Answer(outcome)
+
+    with patch.object(urllib.request.OpenerDirector, "open", open_):
+        yield
+
+
+async def test_a_device_that_is_not_a_printer_is_cannot_connect_when_adding(hass, caplog):
+    for what, outcomes in _not_printers().items():
+        with _network(outcomes):
+            result = await _submit(hass, await _start(hass), NEW)
+        assert result["type"] == FlowResultType.FORM, what
+        assert result["errors"] == {"base": "cannot_connect"}, what
+    assert not hass.config_entries.async_entries(DOMAIN)
+    assert NEW not in caplog.text
+    assert "Traceback" not in caplog.text
+
+
+async def test_a_device_that_is_not_a_printer_is_cannot_connect_when_reconfiguring(hass, caplog):
+    entry = _entry(hass)
+    result = await _start_reconfigure(hass, entry)
+    for what, outcomes in _not_printers().items():
+        with _network(outcomes):
+            result = await _submit(hass, result, NEW)
+        assert result["type"] == FlowResultType.FORM, what
+        assert result["errors"] == {"base": "cannot_connect"}, what
+    assert entry.data == {"host": "1.2.3.4"}
+    assert NEW not in caplog.text
+    assert "Traceback" not in caplog.text
+
+
+async def test_a_mistake_in_the_handshake_itself_is_not_passed_off_as_cannot_connect(hass):
+    # The line that was drawn: what a device can answer is a failed handshake, and a bug is
+    # still a bug. Catching every exception here would have hidden one behind a form error
+    # that tells the user to check their network.
+    import pytest
+
+    with _printers({NEW: TypeError("a bug")}):
+        with pytest.raises(TypeError):
+            await _submit(hass, await _start(hass), NEW)

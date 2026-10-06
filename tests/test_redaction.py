@@ -67,11 +67,36 @@ def test_the_urls_block_keeps_its_shape():
 
 def test_a_long_url_is_masked_before_it_is_cut_short():
     # Truncation keeps the head of a string, and the head of a URL is its host.
-    url = f"http://{HOST}:18088/live/{'a' * 200}?s={TOKEN}"
+    # The path is made of plain words, which are kept; one opaque segment would be masked
+    # and leave nothing long enough to cut.
+    url = f"http://{HOST}:18088/live{'/stream' * 30}?s={TOKEN}"
     out = const.redacted({"u": url})["u"]
     assert HOST not in out
     assert out.startswith(f"http://{MASK}:18088/live/")
     assert "truncated" in out
+
+
+def test_an_opaque_path_segment_is_masked_and_the_fixed_words_are_kept():
+    # Newer printers serve the camera at /live/<per-session token>. The token is what lets
+    # anyone on the network watch, and it is in the PATH, where only the host used to be
+    # looked at. Tokens are as short as eight characters, so length cannot be the test: a
+    # segment is kept only if it reads as a word (lower-case letters, "_" and "-", with an
+    # optional file extension) or as a short number, such as a channel.
+    for url, safe in (
+        (f"http://{HOST}:18088/live/k5DawnaQ", f"http://{MASK}:18088/live/{MASK}"),
+        (f"http://{HOST}:18088/live/abcd1234", f"http://{MASK}:18088/live/{MASK}"),
+        (f"http://{HOST}:18088/live/{TOKEN}", f"http://{MASK}:18088/live/{MASK}"),
+        (f"http://{HOST}:18088/live/QWERTYUI/index.m3u8",
+         f"http://{MASK}:18088/live/{MASK}/index.m3u8"),
+        (f"http://{HOST}:18088/live/12345678", f"http://{MASK}:18088/live/{MASK}"),
+        (f"http://{HOST}:18088/live/{'a' * 40}", f"http://{MASK}:18088/live/{MASK}"),
+        # The shapes every printer so far has sent stay exactly as they were.
+        (f"http://{HOST}:18088/flv", f"http://{MASK}:18088/flv"),
+        (f"http://{HOST}:18910/gcode_upload?s={TOKEN}", f"http://{MASK}:18910/gcode_upload?{MASK}"),
+        (f"rtsp://{HOST}:8554/streaming/live/1", f"rtsp://{MASK}:8554/streaming/live/1"),
+        (f"http://{HOST}:18088/", f"http://{MASK}:18088/"),
+    ):
+        assert const.redacted({"u": url}) == {"u": safe}, url
 
 
 # ------------------------------------------------------------------------------ key names
@@ -152,6 +177,100 @@ def test_runtime_identifiers_are_the_handshake_ids_and_the_entered_address():
 def test_runtime_identifiers_skip_what_the_handshake_did_not_give():
     bare = HandshakeResult(HOST, 9883, "u", "p", DEVICE, "20029", "")      # no serial, no MAC
     assert all(const.runtime_identifiers(bare, None))
+
+
+def test_an_entered_hostname_that_is_one_plain_word_is_not_an_identifier():
+    # Someone who names the printer "anycubic" on their network would have that word
+    # scrubbed out of every model name and every topic, and the entered address never
+    # appears in a printer payload anyway. A dotted name or an IP address is specific
+    # enough to be worth scrubbing; one bare label is an ordinary word.
+    ids = const.runtime_identifiers(HS, "anycubic")
+    assert "anycubic" not in ids
+    report = {"model": "Anycubic Kobra S1 Max", "topic": "anycubic/anycubicCloud/v1/printer"}
+    assert const.redacted(report, ids) == report
+    for kept in (ENTERED, "printer.example.com", "192.168.1.60", "fe80::1"):
+        assert kept in const.runtime_identifiers(HS, kept), kept
+    # What the handshake itself reports is never a hostname, and has no dot either.
+    assert {DEVICE, SERIAL} <= set(ids)
+
+
+# ------------------------------------------------------------- a print's name, by value
+#
+# The key list has been extended four times for the same text: a print's name, turning up
+# under one more key. These close the class. The names follow the shape the slicer gives a
+# job: <date>-<time>-<model name>_plate(NN)_<material>_<layer>_<duration>.gcode.3mf.
+
+JOB = "0907-2001-Alice desk bracket _plate(01)_PLA_0.2_1h12m.gcode.3mf"
+JOB_STEM = "0907-2001-Alice desk bracket _plate(01)_PLA_0.2_1h12m"
+
+
+def test_a_prints_name_is_scrubbed_under_keys_nobody_has_seen():
+    # The payload says what is printing under a key we know. The same text under a key we
+    # do not know is then recognised by its value.
+    out = const.redacted({"filename": JOB, "progress": 42, "material": "PLA",
+                          "job_title": JOB_STEM, "status_text": f"printing {JOB_STEM} now",
+                          "shouted": JOB_STEM.upper(),
+                          "history": [{"path": f"/useremain/app/gk/gcodes/{JOB}"}],
+                          JOB_STEM: {"layers": 900}})
+    assert out == {"filename": MASK, "progress": 42, "material": "PLA",
+                   "job_title": MASK, "status_text": f"printing {MASK} now",
+                   "shouted": MASK,
+                   "history": [{"path": f"/useremain/app/gk/gcodes/{MASK}.gcode.3mf"}],
+                   MASK: {"layers": 900}}
+
+
+def test_the_model_name_is_scrubbed_with_its_separators_changed():
+    # The printer names the objects on the plate after the model, with every space turned
+    # into an underscore. That is the model's name without the date in front of it or the
+    # plate, material and duration behind it, and with different separators.
+    out = const.redacted({"project": {"filename": JOB},
+                          "skipped": ["Alice_desk_bracket_.stl_id_0_copy_0"],
+                          "title": "alice-desk-bracket", "about": "Desk bracket for Alice"})
+    assert out == {"project": {"filename": MASK},
+                   "skipped": [f"{MASK}_.stl_id_0_copy_0"],
+                   "title": MASK, "about": "Desk bracket for Alice"}
+
+
+def test_every_key_that_holds_a_job_file_names_the_job():
+    # A path counts as its base name, and the printer's staging prefix is not the name.
+    for key, value in (("filename", f".3mf_temp/{JOB_STEM}.gcode"),
+                       ("display_filename", JOB),
+                       ("origin3mf", f"/useremain/app/gk/gcodes/{JOB}"),
+                       ("temp_gcode", f"/useremain/app/gk/gcodes/.3mf_temp/{JOB_STEM}.gcode"),
+                       ("plate_name", "/useremain/app/gk/gcodes/0907-2001-Alice desk bracket "
+                                      "_plate(01).gcode")):
+        out = const.redacted({key: value, "dir": "/useremain/app/gk/gcodes/.3mf_temp",
+                              "seen": "Alice desk bracket"})
+        assert out == {key: MASK, "dir": "/useremain/app/gk/gcodes/.3mf_temp", "seen": MASK}, key
+
+
+def test_a_job_named_by_the_caller_is_scrubbed_from_a_payload_that_does_not_name_it():
+    # A report of another type does not say what is printing. The coordinator knows.
+    report = {"type": "fan", "data": {"fan_speed_pct": 40, "for_job": f"{JOB_STEM}.gcode"}}
+    assert const.redacted(report, IDS, job_names=(JOB,)) == {
+        "type": "fan", "data": {"fan_speed_pct": 40, "for_job": f"{MASK}.gcode"}}
+    # Handed over bare, or with nothing printing, it must neither fail nor scrub at random.
+    assert const.redacted({"for_job": JOB_STEM}, job_names=JOB) == {"for_job": MASK}
+    assert const.redacted(report, IDS, job_names=(None, "")) == report
+
+
+def test_a_job_name_shorter_than_seven_characters_is_not_scrubbed_by_value():
+    # The floor the identifiers have, for the same reason: "cube" is a word. The keys that
+    # are known to hold the name still mask it.
+    out = const.redacted({"filename": "cube.gcode", "note": "a cube of 20 mm",
+                          "project": {"filename": "0907-2001-cube_plate(01)_PLA_0.2_9m.gcode"}})
+    assert out == {"filename": MASK, "note": "a cube of 20 mm", "project": {"filename": MASK}}
+
+
+def test_scrubbing_a_job_by_value_changes_nothing_else():
+    # Material, layer height and duration are in the file name too, and each of them is an
+    # ordinary value somewhere else in the same report.
+    out = const.redacted({"filename": JOB, "material_type": "PLA", "layer_height": "0.2",
+                          "duration": "1h12m", "plate": "plate(01)", "started": "0907-2001",
+                          "version": "2.7.1.4", "state": "printing"})
+    assert out == {"filename": MASK, "material_type": "PLA", "layer_height": "0.2",
+                   "duration": "1h12m", "plate": "plate(01)", "started": "0907-2001",
+                   "version": "2.7.1.4", "state": "printing"}
 
 
 # ------------------------------------------------------------------- copy, never mutation

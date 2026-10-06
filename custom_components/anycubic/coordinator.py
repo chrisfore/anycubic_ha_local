@@ -16,7 +16,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .anycubic_local import mqtt as mqtt_mod
 from .anycubic_local.commands import build as build_command
-from .anycubic_local.const import query_topic, redacted, runtime_identifiers
+from .anycubic_local.const import query_topic, redacted, redacted_error, runtime_identifiers
 from .anycubic_local.exceptions import CloudModeError
 from .anycubic_local.handshake import HandshakeResult, do_handshake
 from .anycubic_local.models import (
@@ -147,7 +147,8 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         happen on the event loop.
         """
         transport = self._factory(self.hs, on_report=self._on_report,
-                                  identifiers=self.redaction_identifiers)
+                                  identifiers=self.redaction_identifiers,
+                                  job_names=self._job_names)
         transport.connect()
         for t in (*_QUERY_TYPES, *_CONNECT_ONLY_QUERY_TYPES):
             transport.query(t)
@@ -207,11 +208,11 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             await self.hass.async_add_executor_job(self._rebuild)
         except CloudModeError as err:
             # LAN Mode was turned off on the printer — same reauth path as setup.
-            raise ConfigEntryAuthFailed(str(err)) from err
+            raise ConfigEntryAuthFailed(self._error_text(err)) from err
         except UpdateFailed:
             raise
         except Exception as err:  # noqa: BLE001
-            raise UpdateFailed(f"reconnect failed: {err}") from err
+            raise UpdateFailed(f"reconnect failed: {self._error_text(err)}") from err
         # Give the rebuilt session a full silence window before judging it again.
         self._last_report = time.monotonic()
         if self._recoveries > MAX_RECOVERIES_BEFORE_UNAVAILABLE:
@@ -303,6 +304,25 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         """
         return runtime_identifiers(self.hs, self.host)
 
+    def _job_names(self) -> tuple[str, ...]:
+        """What is printing, for redacted() to scrub by value (see its `job_names`).
+
+        A report that names the job is scrubbed on its own evidence. This covers what does
+        not: a report of another type, a command. Also called from the transport, on paho's
+        thread, each time it logs a report; it only reads one attribute.
+        """
+        name = self.data.printer.filename
+        return (name,) if name else ()
+
+    def _error_text(self, err: Exception) -> str:
+        """An exception's text for a message Home Assistant logs at its normal level.
+
+        The entered address is handed over as it stands, as well as through
+        redaction_identifiers, which leaves a one-word hostname out: in a payload that word
+        is ordinary text, in an error it is the address.
+        """
+        return redacted_error(err, (*self.redaction_identifiers, self.host))
+
     async def async_send_command(self, command: str, **kwargs) -> None:
         """Build a control command and publish it (executor — paho publish is blocking-ish)."""
         if self._transport is None:
@@ -317,10 +337,17 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # Logged as a redacted COPY: the topic embeds the device id, and a file_details
         # request names the file being printed. What is published below is the original
         # body, or the printer could not act on it.
+        #
+        # Making the line must not cost the command, which is published below whatever
+        # happens here. If it cannot be made, one fixed line says so: the command's name,
+        # which is ours, and nothing of the topic, the payload or the error.
         if _LOGGER.isEnabledFor(logging.DEBUG):
-            ids = self.redaction_identifiers
-            _LOGGER.debug("publish %s -> %s %s", command, redacted(topic, ids),
-                          json.dumps(redacted(payload, ids)))
+            try:
+                ids, names = self.redaction_identifiers, self._job_names()
+                _LOGGER.debug("publish %s -> %s %s", command, redacted(topic, ids, names),
+                              json.dumps(redacted(payload, ids, names)))
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("publish %s: the line could not be written; sent as usual", command)
         await self.hass.async_add_executor_job(self._transport.publish, topic, body)
 
     @callback

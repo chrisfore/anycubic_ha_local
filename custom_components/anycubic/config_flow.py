@@ -14,14 +14,17 @@ from .const import DOMAIN, MODEL_NAMES
 
 # Characters that are never part of a bare address and that would change what the handshake
 # URL means: the address is interpolated into "http://{host}:18910/info" exactly as typed.
-_NOT_IN_AN_ADDRESS = frozenset("/:@?#")
+# The brackets and the percent sign are the same kind: brackets mark an IP literal to a URL
+# parser, and "%" starts an escape or an IPv6 zone id. Neither is in an IPv4 address or a
+# hostname, which are the two things this field takes.
+_NOT_IN_AN_ADDRESS = frozenset("/:@?#[]%")
 
 
 def _clean_host(typed: str) -> str | None:
     """The address as typed, trimmed; None if it cannot be a bare IP address or hostname.
 
-    "a.b/c", "user@a.b", "a.b:81" and "a.b?x" would each send the handshake somewhere, or
-    ask it for something, other than the address the user believes they entered. Those are
+    "a.b/c", "user@a.b", "a.b:81", "a.b?x" and "[a.b]" would each send the handshake somewhere,
+    or ask it for something, other than the address the user believes they entered. Those are
     refused before any request is made and before anything is stored. Whitespace round the
     outside is only ever a paste artefact, so it is trimmed rather than refused; anywhere
     else, like any other unprintable character, it cannot be part of an address.
@@ -47,6 +50,9 @@ class AnycubicConfigFlow(ConfigFlow, domain=DOMAIN):
         host = _clean_host(typed)
         if host is None:
             return None
+        # These two are everything a device can do to fail the handshake: do_handshake turns
+        # an answer that is not a printer's into a HandshakeError itself. Nothing wider is
+        # caught here, so a mistake in this integration is not shown as a network problem.
         try:
             hs = await self.hass.async_add_executor_job(do_handshake, host)
         except (HandshakeError, OSError):

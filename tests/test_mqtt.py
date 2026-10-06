@@ -356,3 +356,159 @@ async def test_the_coordinator_hands_the_transport_the_entered_address(hass, cap
     log = _logged(caplog)
     assert "report info:" in log
     assert "kobra-s1.local" not in log
+
+
+# ------------------------------------------------------- the running job, known by value
+
+JOB = "0907-2001-Alice desk bracket _plate(01)_PLA_0.2_1h12m.gcode.3mf"
+JOB_STEM = "0907-2001-Alice desk bracket _plate(01)_PLA_0.2_1h12m"
+
+
+async def test_a_report_that_does_not_name_the_job_is_still_scrubbed_of_it(hass, caplog):
+    # A `print` report names the job, and its own line is scrubbed from what it says itself.
+    # A report of another type does not name it, so the line for one could only be scrubbed
+    # by key, and a key nobody had seen let the name through. The coordinator knows what is
+    # printing, and the transport asks it.
+    import logging
+    from functools import partial
+
+    from custom_components.anycubic.coordinator import AnycubicCoordinator
+
+    caplog.set_level(logging.DEBUG, logger=m.__name__)
+    coord = AnycubicCoordinator(
+        hass, SECRET_HS, transport_factory=partial(m.AnycubicMqtt, client_factory=FakeClient))
+    await coord.async_start()
+    paho = coord._transport._c
+    paho.on_message(paho, None, _msg(f"{REPORTS}/print/report", {
+        "type": "print", "action": "start", "state": "printing", "code": 200, "msg": "",
+        "data": {"taskid": "-1", "progress": 5, "filename": JOB,
+                 "job_label": "Alice_desk_bracket_.stl_id_0_copy_0"}}))
+    await hass.async_block_till_done()
+    assert coord.data.printer.filename == JOB
+    paho.on_message(paho, None, _msg(f"{REPORTS}/fan/report", {
+        "type": "fan", "action": "report", "data": {
+            "fan_speed_pct": 40, "for_job": f"{JOB_STEM}.gcode", "part": "alice-desk-bracket"}}))
+    await hass.async_block_till_done()
+    log = _logged(caplog)
+    assert "report print:" in log and "report fan:" in log
+    assert "'fan_speed_pct': 40" in log and "'progress': 5" in log
+    for part in ("alice", "bracket", "0907-2001"):
+        assert part not in log.lower(), part
+
+
+# ------------------------------------------ a line that cannot be written costs only itself
+#
+# The debug lines are written on paho's network thread, between a report arriving and its
+# being applied. An exception there ends the thread: no more reports until the watchdog
+# notices the silence and rebuilds the session.
+
+def _deepest_payload_the_redactor_cannot_walk():
+    """JSON that parses but nests deeper than the redactor can follow, or None."""
+    import json
+
+    from custom_components.anycubic.anycubic_local.const import redacted
+
+    for depth in range(300, 3000, 25):
+        text = '{"a":' * depth + "1" + "}" * depth
+        try:
+            nested = json.loads(text)
+        except RecursionError:
+            return None
+        try:
+            redacted(nested)
+        except RecursionError:
+            return nested
+    return None
+
+
+def test_a_report_nested_too_deep_to_redact_is_still_applied(caplog):
+    import pytest
+
+    nested = _deepest_payload_the_redactor_cannot_walk()
+    if nested is None:
+        pytest.skip("this interpreter parses no JSON deeper than the redactor can walk")
+    seen = []
+    client = _logging_client(caplog)
+    client._on_report = lambda t, d: seen.append((t, d))
+    client._c.on_message(client._c, None, _msg(f"{REPORTS}/info/report", {
+        "type": "info", "action": "report", "data": {"state": "free", "deep": nested}}))
+    # The report after it arrives too: the thread that delivers them is still running.
+    client._c.on_message(client._c, None, _msg(f"{REPORTS}/fan/report", {
+        "type": "fan", "action": "report", "data": {"fan_speed_pct": 40}}))
+    assert [t for t, _ in seen] == ["info", "fan"]
+    assert seen[0][1]["state"] == "free"
+    log = _logged(caplog)
+    assert "a report could not be logged" in log
+    assert "report fan:" in log
+
+
+def test_a_redactor_that_fails_logs_none_of_the_payload(caplog, monkeypatch):
+    # Whatever goes wrong while a line is being made, the fallback line is fixed text.
+    def broken(*args, **kwargs):
+        raise ValueError(f"cannot redact {args!r}")
+
+    monkeypatch.setattr(m, "redacted", broken)
+    seen = []
+    client = _logging_client(caplog)
+    client._on_report = lambda t, d: seen.append((t, d))
+    client._c.on_message(client._c, None, _msg(f"{REPORTS}/print/report", {
+        "type": "print", "action": "start", "state": "printing", "code": 200, "msg": "",
+        "data": {"taskid": "-1", "progress": 5, "filename": JOB, "ip": LAN}}))
+    assert seen == [("print", {"taskid": "-1", "progress": 5, "filename": JOB, "ip": LAN})]
+    log = _logged(caplog)
+    assert "a report could not be logged" in log
+    for secret in ("alice", LAN, DEVICE, "taskid", "print"):
+        assert secret not in log.lower().replace("a report could not be logged", ""), secret
+
+
+# ---------------------------------------------- a light command the printer did not carry out
+
+def _light_answer(action, code, data):
+    return {"type": "light", "action": action, "timestamp": 1700000000000,
+            "msgid": "made-by-the-printer", "state": "failed" if code != 200 else "done",
+            "code": code, "msg": "", "data": data}
+
+
+def test_a_light_control_answer_that_reports_failure_is_not_passed_on(caplog):
+    # A control answer carries the light object, and the coordinator reads that as the state
+    # the light took. It is only handed `data`, so it cannot see that the envelope said the
+    # command failed: a refused "off" would have been believed. No failure has been captured;
+    # every answer seen has code 200, which is what the other acks use for "accepted".
+    seen = []
+    client = _logging_client(caplog)
+    client._on_report = lambda t, d: seen.append((t, d))
+    off = {"type": 2, "status": 0, "brightness": 0}
+    for code in (500, 0, 400):
+        client._c.on_message(client._c, None, _msg(f"{REPORTS}/light/report",
+                                                   _light_answer("control", code, off)))
+    assert seen == []
+    assert "light command was not accepted" in _logged(caplog)
+    # The answer to a command that worked is passed on as it always was...
+    client._c.on_message(client._c, None, _msg(f"{REPORTS}/light/report",
+                                               _light_answer("control", 200, off)))
+    # ...and so is one that carries no code at all.
+    bare = _light_answer("control", 200, off)
+    del bare["code"]
+    client._c.on_message(client._c, None, _msg(f"{REPORTS}/light/report", bare))
+    assert seen == [("light", off), ("light", off)]
+
+
+def test_only_a_light_control_answer_is_judged_by_its_code():
+    # Every other report reaches the coordinator exactly as before, whatever its code: a
+    # light QUERY answer, a `print` ack the firmware rejected, an `info`.
+    seen = []
+    client = m.AnycubicMqtt(SECRET_HS, on_report=lambda t, d: seen.append((t, d)),
+                            client_factory=FakeClient)
+    lights = {"lights": [{"type": 2, "status": 1, "brightness": 100}]}
+    for tail, envelope in (
+        ("light/report", _light_answer("query", 500, lights)),
+        ("light/report", _light_answer("report", 0, lights)),
+        ("print/report", {"type": "print", "action": "update", "state": "failed", "code": 500,
+                          "msg": "", "data": {"taskid": "-1"}}),
+        ("info/report", {"type": "info", "action": "report", "code": 500,
+                         "data": {"state": "free"}}),
+        ("video/report", {"type": "video", "action": "startCapture", "code": 500, "data": None}),
+    ):
+        client._c.on_message(client._c, None, _msg(f"{REPORTS}/{tail}", envelope))
+    assert seen == [("light", lights), ("light", lights), ("print", {"taskid": "-1"}),
+                    ("info", {"state": "free"}), ("video", {})]

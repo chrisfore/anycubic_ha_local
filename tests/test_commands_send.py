@@ -56,3 +56,59 @@ async def test_publish_line_hides_the_file_name_while_the_printer_still_gets_it(
     topic, body = coord._transport.published[0]
     assert topic == f"anycubic/anycubicCloud/v1/web/printer/20029/{device}/file"
     assert json.loads(body)["data"]["filename"] == "alice-bracket.gcode"
+
+
+async def test_a_publish_line_that_cannot_be_written_does_not_stop_the_command(hass, caplog, monkeypatch):
+    # The line is made before the command is published. A redactor that raised while making
+    # it took the command with it, and only with debug logging on.
+    import json
+    import logging
+
+    from custom_components.anycubic import coordinator as coord_mod
+
+    def broken(*args, **kwargs):
+        raise RecursionError(f"cannot redact {args!r}")
+
+    caplog.set_level(logging.DEBUG, logger="custom_components.anycubic.coordinator")
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    coord._transport.published.clear()
+    monkeypatch.setattr(coord_mod, "redacted", broken)
+
+    await coord.async_send_command("file_details", filename="alice-bracket.gcode")
+
+    topic, body = coord._transport.published[0]
+    assert json.loads(body)["data"]["filename"] == "alice-bracket.gcode"
+    lines = [r.getMessage() for r in caplog.records if "file_details" in r.getMessage()]
+    assert lines == ["publish file_details: the line could not be written; sent as usual"]
+    assert "alice" not in caplog.text and "DEV" not in "".join(lines)
+
+
+async def test_the_publish_line_is_scrubbed_of_the_running_job(hass, caplog):
+    # A command that names the job under a key the list does not have. The coordinator
+    # knows what is printing, so the name goes by its value.
+    import logging
+    from unittest.mock import patch
+
+    from custom_components.anycubic import coordinator as coord_mod
+
+    job = "0907-2001-Alice desk bracket _plate(01)_PLA_0.2_1h12m.gcode.3mf"
+    caplog.set_level(logging.DEBUG, logger="custom_components.anycubic.coordinator")
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    coord._apply("print", {"taskid": "-1", "progress": 5, "filename": job})
+    await hass.async_block_till_done()
+    caplog.clear()
+
+    real_build = coord_mod.build_command
+
+    def build(model_id, device_id, command, **kwargs):
+        topic, payload = real_build(model_id, device_id, command, **kwargs)
+        payload["data"] = {"taskid": "-1", "target": "Alice_desk_bracket_.stl_id_0_copy_0"}
+        return topic, payload
+
+    with patch.object(coord_mod, "build_command", build):
+        await coord.async_send_command("pause")
+    line = next(r.getMessage() for r in caplog.records if r.getMessage().startswith("publish pause"))
+    assert "alice" not in line.lower() and "bracket" not in line.lower()
+    assert '"taskid": "-1"' in line
