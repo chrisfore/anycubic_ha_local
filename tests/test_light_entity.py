@@ -185,3 +185,16 @@ async def test_a_light_command_the_printer_refused_does_not_move_the_light(hass)
     _printer_sends(paho, "light/report", _light_report("control", OFF))
     await hass.async_block_till_done()
     assert hass.states.get(ENTITY).state == "off"
+
+
+async def test_a_lights_list_that_says_nothing_leaves_the_light_alone(hass):
+    paho = await _setup(hass)
+    _printer_sends(paho, "light/report", _light_report("query", {"lights": [ON]}))
+    await hass.async_block_till_done()
+    assert hass.states.get(ENTITY).state == "on"
+
+    for data in ({"lights": []}, {"lights": [{}]}, {"lights": [None]},
+                 {"type": 2, "status": None, "brightness": 0}):
+        _printer_sends(paho, "light/report", _light_report("query", data))
+        await hass.async_block_till_done()
+        assert hass.states.get(ENTITY).state == "on", data

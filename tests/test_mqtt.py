@@ -512,3 +512,96 @@ def test_only_a_light_control_answer_is_judged_by_its_code():
         client._c.on_message(client._c, None, _msg(f"{REPORTS}/{tail}", envelope))
     assert seen == [("light", lights), ("light", lights), ("print", {"taskid": "-1"}),
                     ("info", {"state": "free"}), ("video", {})]
+
+
+def test_a_payload_that_is_not_a_json_object_is_ignored(caplog):
+    # Valid JSON, and not a report: a list, a number, a string, null. Reading it as one
+    # raised on paho's network thread, with or without debug logging, and ended the thread.
+    import logging
+
+    for level in (logging.DEBUG, logging.WARNING):
+        caplog.set_level(level, logger=m.__name__)
+        seen = []
+        client = m.AnycubicMqtt(SECRET_HS, on_report=lambda t, d: seen.append((t, d)),
+                                client_factory=FakeClient)
+        for payload in ([1, 2, 3], [{"type": "info", "data": {"state": "free"}}], 7, "info", None,
+                        True):
+            client._c.on_message(client._c, None, _msg(f"{REPORTS}/info/report", payload))
+        assert seen == []
+        # The report after them is delivered: the thread is still there.
+        client._c.on_message(client._c, None, _msg(f"{REPORTS}/info/report", {
+            "type": "info", "action": "report", "data": {"state": "free"}}))
+        assert seen == [("info", {"state": "free"})]
+
+
+# --------------------------------------------------- the three paho constructors there are
+
+def test_the_client_is_built_the_way_each_paho_wants_it(monkeypatch):
+    # paho 1.x has no callback API version. 2.0.0 demands one, first and without a default,
+    # and the transport could not be constructed on it at all. 2.1 made it optional again.
+    made = []
+    version_1 = paho.CallbackAPIVersion.VERSION1
+
+    class Paho1(FakeClient):
+        def __init__(self, client_id="", clean_session=None, userdata=None):
+            made.append(("1.x", client_id)); super().__init__()
+
+    class Paho200(FakeClient):
+        def __init__(self, callback_api_version, client_id="", clean_session=None):
+            made.append(("2.0.0", callback_api_version, client_id)); super().__init__()
+
+    class Paho21(FakeClient):
+        def __init__(self, callback_api_version=version_1, client_id=""):
+            made.append(("2.1", callback_api_version, client_id)); super().__init__()
+
+    for factory in (Paho200, Paho21):
+        m.AnycubicMqtt(SECRET_HS, on_report=lambda t, d: None, client_factory=factory)
+    monkeypatch.delattr(m.mqtt, "CallbackAPIVersion")           # what importing 1.x looks like
+    m.AnycubicMqtt(SECRET_HS, on_report=lambda t, d: None, client_factory=Paho1)
+    # Version 1 callbacks everywhere: what 1.x has, and what 2.1 has given us until now.
+    assert [call[:-1] for call in made] == [
+        ("2.0.0", version_1), ("2.1", version_1), ("1.x",)]
+    assert all(call[-1].startswith("ha-") for call in made)
+
+
+def test_the_real_paho_client_can_be_constructed():
+    # Whichever paho is installed, with nothing faked.
+    client = m.AnycubicMqtt(SECRET_HS, on_report=lambda t, d: None)
+    assert client._c.on_message == client._handle
+
+
+# --------------------------------------------------- a disconnect we asked for is not news
+
+def _warnings(caplog):
+    import logging
+    return [r.getMessage() for r in caplog.records
+            if r.name == m.__name__ and r.levelno >= logging.WARNING]
+
+
+def test_our_own_disconnect_does_not_warn_that_the_connection_was_lost(caplog):
+    # Every reload of the entry, and every recovery, closes the session on purpose. paho
+    # then calls on_disconnect like for any other, and the log said the connection was lost.
+    class Paho(FakeClient):
+        def disconnect(self):
+            super().disconnect()
+            self.on_disconnect(self, None, 0)       # as paho does, from its own thread
+
+    client = m.AnycubicMqtt(SECRET_HS, on_report=lambda t, d: None, client_factory=Paho)
+    client.connect()
+    client.disconnect()
+    assert client.connected is False
+    assert _warnings(caplog) == []
+
+
+def test_a_disconnect_nobody_asked_for_still_warns(caplog):
+    client = m.AnycubicMqtt(SECRET_HS, on_report=lambda t, d: None, client_factory=FakeClient)
+    client.connect()
+    client._c.on_disconnect(client._c, None, 7)
+    assert _warnings(caplog) == ["printer broker connection lost; paho will auto-reconnect"]
+    # A session closed on purpose and then opened again is back to warning: recovery
+    # builds a new transport, but nothing here relies on that.
+    client.disconnect()
+    client.connect()
+    caplog.clear()
+    client._c.on_disconnect(client._c, None, 7)
+    assert _warnings(caplog) == ["printer broker connection lost; paho will auto-reconnect"]

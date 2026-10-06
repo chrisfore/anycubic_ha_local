@@ -464,6 +464,23 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         self._drying_hours[box_id] = value
 
     @callback
+    def registered_device(self, identifier: tuple[str, str]) -> dr.DeviceEntry | None:
+        """This entry's device with `identifier`, or None if it is not registered.
+
+        Home Assistant used to keep an identifier unique across the whole registry and looked
+        a device up by it alone (async_get_device). It no longer does, and wants the config
+        entry named as well (async_get_device_by_identifier); the old lookup is on its way
+        out. The new one is used wherever it exists, the old one where it does not, which
+        includes 2024.9.
+        """
+        registry = dr.async_get(self.hass)
+        by_identifier = getattr(registry, "async_get_device_by_identifier", None)
+        if by_identifier is None:
+            return registry.async_get_device(identifiers={identifier})
+        entry = self.config_entry
+        return by_identifier(identifier, entry.entry_id) if entry is not None else None
+
+    @callback
     def _sync_ace_device_model(self) -> None:
         """Show each box's real model (ACE Pro vs ACE 2) once it reports it.
 
@@ -479,7 +496,6 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
                 continue
             model = ace_device_model(box.id, box.model_id)
             name = ace_device_name(box.id, box.model_id)
-            device = registry.async_get_device(
-                identifiers={(DOMAIN, f"{self.hs.serial}_{ace_suffix(box.id)}")})
+            device = self.registered_device((DOMAIN, f"{self.hs.serial}_{ace_suffix(box.id)}"))
             if device is not None and (device.name != name or device.model != model):
                 registry.async_update_device(device.id, name=name, model=model)

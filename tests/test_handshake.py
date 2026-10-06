@@ -119,6 +119,7 @@ def test_the_second_request_goes_to_the_entered_address_whatever_the_printer_say
                      "http://[2001:db8::1]:18910/ctrl"):
         url = urllib.parse.urlsplit(_second_request(ENTERED, supplied))
         assert (url.scheme, url.hostname, url.username) == ("http", ENTERED, None), supplied
+        assert url.port == 18910, supplied
         assert url.path == "/ctrl" and not url.fragment, supplied
         assert "203.0.113.9" not in url.geturl() and "evil" not in url.geturl(), supplied
 
@@ -136,6 +137,11 @@ def test_the_second_request_keeps_the_port_path_and_query_the_printer_gave():
     assert (url.hostname, url.port, url.path) == (ENTERED, 8443, "/api/v2/ctrl")
     query = urllib.parse.parse_qs(url.query)
     assert query["a"] == ["1"] and {"ts", "nonce", "sign", "did"} <= set(query)
+    # No port given: the one the first request used, not whatever the scheme defaults to.
+    # The printer answers there, and port 80 on the same host is some other service.
+    for portless in ("http://203.0.113.9/ctrl", "https://203.0.113.9/ctrl", "/ctrl", "ctrl"):
+        assert _second_request(ENTERED, portless).startswith(f"http://{ENTERED}:18910/ctrl?ts="), \
+            portless
 
 
 def test_a_redirect_is_not_followed(socket_enabled):
@@ -193,6 +199,11 @@ def _wrong_answers():
         "ctrl url is not text": ({**good, "ctrlInfoUrl": ["http://x/ctrl"]}, None),
         "ctrl url cannot be parsed": ({**good, "ctrlInfoUrl": "http://[::1/ctrl"}, None),
         "ctrl url has a port that is not one": ({**good, "ctrlInfoUrl": "http://x:port/ctrl"}, None),
+        "serial is missing": ({k: v for k, v in good.items() if k != "cn"}, _ctrl()),
+        "serial is empty": ({**good, "cn": ""}, _ctrl()),
+        "serial is a number": ({**good, "cn": 12345}, _ctrl()),
+        "serial is a list": ({**good, "cn": ["SER-1"]}, _ctrl()),
+        "model id is not an id": ({**good, "modelId": {"id": 20029}}, _ctrl()),
         "ctrl is a list": (good, []),
         "ctrl is null": (good, None),
         "ctrl has no data": (good, {"code": 200}),
@@ -260,3 +271,13 @@ def test_a_reply_that_is_not_the_printers_json_is_a_failed_handshake(monkeypatch
         with pytest.raises((HandshakeError, OSError)) as err:
             handshake.do_handshake(ENTERED)
         assert ENTERED not in str(err.value), outcome
+
+
+def test_a_model_name_or_device_type_that_is_not_text_is_dropped_not_fatal():
+    # The serial becomes the entry's unique id, so one that is not text is refused (above).
+    # These two are only ever shown, and a printer is not turned away over a label.
+    answers = iter((_info(f"http://{ENTERED}:18910/ctrl", modelName=["Kobra"], deviceType=7,
+                          modelId=20029), _ctrl()))
+    res = handshake.do_handshake(ENTERED, fetch=lambda method, url, **kw: next(answers))
+    assert (res.model_name, res.device_type) == (None, None)
+    assert (res.serial, res.model_id) == ("SER-1", "20029")

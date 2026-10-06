@@ -40,7 +40,7 @@ async def test_already_configured(hass):
     MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "1.2.3.4"}).add_to_hass(hass)
     result = await _start(hass)
     with patch("custom_components.anycubic.config_flow.do_handshake", return_value=HS):
-        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"host": "9.9.9.9"})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"host": "1.2.3.4"})
     assert result["type"] == FlowResultType.ABORT
     assert result["reason"] == "already_configured"
 
@@ -352,10 +352,53 @@ async def test_adding_a_printer_again_at_its_new_address_moves_the_existing_entr
 
         result = await _submit(hass, await _start(hass), NEW)
 
-    assert result["type"] == FlowResultType.ABORT and result["reason"] == "already_configured"
+    # It says what happened. "Already configured" was true and read as "nothing was done".
+    assert result["type"] == FlowResultType.ABORT and result["reason"] == "reconfigure_successful"
     assert entry.data == {"host": NEW, "kept": "as it was"}
     assert entry.state is config_entries.ConfigEntryState.LOADED          # and reloaded there
     assert len(hass.config_entries.async_entries(DOMAIN)) == 1
+
+
+async def test_adding_a_printer_again_at_the_same_address_changes_nothing(hass):
+    # Nothing has moved, so nothing is written, nothing is reloaded, and the text says so.
+    entry = _entry(hass, kept="as it was")
+    with _printers({"1.2.3.4": HS}):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        session, modified = entry.runtime_data, entry.modified_at
+
+        with patch.object(hass.config_entries, "async_update_entry",
+                          wraps=hass.config_entries.async_update_entry) as update, \
+             patch.object(hass.config_entries, "async_schedule_reload") as reload_, \
+             patch.object(hass.config_entries, "async_reload") as reload_now:
+            # Typed with a space after it: still the same address once trimmed.
+            result = await _submit(hass, await _start(hass), "1.2.3.4 ")
+
+    assert result["type"] == FlowResultType.ABORT and result["reason"] == "already_configured"
+    assert all(call.kwargs.get("data", entry.data) == entry.data for call in update.call_args_list)
+    reload_.assert_not_called()
+    reload_now.assert_not_called()
+    assert entry.data == {"host": "1.2.3.4", "kept": "as it was"}
+    assert entry.modified_at == modified
+    assert entry.runtime_data is session
+    assert len(hass.config_entries.async_entries(DOMAIN)) == 1
+
+
+async def test_adding_a_printer_again_names_its_abort_reason_the_2024_9_way(hass):
+    # The reason is chosen with the helper's `error` argument, which Home Assistant 2024.9
+    # has, and by comparing the addresses here, which needs nothing from the helper at all.
+    import inspect
+
+    from homeassistant.config_entries import ConfigFlow
+
+    assert "error" in inspect.signature(ConfigFlow._abort_if_unique_id_configured).parameters
+    entry = _entry(hass)
+    with _printers({NEW: HS}), \
+         patch.object(ConfigFlow, "_abort_if_unique_id_configured",
+                      autospec=True, side_effect=ConfigFlow._abort_if_unique_id_configured) as helper:
+        result = await _submit(hass, await _start(hass), NEW)
+    assert helper.call_args.kwargs == {"updates": {"host": NEW}, "error": "reconfigure_successful"}
+    assert result["reason"] == "reconfigure_successful" and entry.data == {"host": NEW}
 
 
 async def test_adding_a_printer_with_no_serial_cannot_move_another_entry(hass):
