@@ -436,3 +436,94 @@ async def test_ace_sensors_go_unavailable_when_the_unit_is_detached(hass):
     # The device itself must survive — dropping the box would destroy its entity IDs.
     from homeassistant.helpers import device_registry as dr
     assert dr.async_get(hass).async_get_device(identifiers={(DOMAIN, "SER-1_ace0")}) is not None
+
+
+# ------------------------------------------- the device registry, old way and new way
+#
+# Home Assistant is retiring `via_device` (an identifier, which several config entries can
+# now share) for `via_device_id`, and `async_get_device` for a lookup that names the config
+# entry. The tests above run the old way on whatever is installed. These stand in for a
+# Home Assistant that has the new one, so both are exercised whichever is installed.
+
+async def _setup_with_two_boxes(hass):
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "1.2.3.4"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        entry.runtime_data._apply("multiColorBox", {"multi_color_box": [
+            {"id": 0, "temp": 30}, {"id": 1, "temp": 31}]})
+        await hass.async_block_till_done()
+    return entry
+
+
+def _new_registry_lookup(registry, asked):
+    """The lookup newer Home Assistant has, over the same registry; the old one refuses."""
+    old = registry.devices.get_entry
+
+    def by_identifier(identifier, config_entry_id):
+        asked.append((identifier, config_entry_id))
+        device = old({identifier}, None)
+        return device if device and config_entry_id in device.config_entries else None
+
+    def retired(*args, **kwargs):
+        raise AssertionError("async_get_device is deprecated; it must not be called")
+
+    return (patch.object(type(registry), "async_get_device_by_identifier",
+                         staticmethod(by_identifier), create=True),
+            patch.object(type(registry), "async_get_device", retired))
+
+
+async def test_a_box_is_renamed_through_the_lookup_that_names_the_config_entry(hass):
+    from homeassistant.helpers import device_registry as dr
+
+    entry = await _setup_with_two_boxes(hass)
+    registry = dr.async_get(hass)
+    box = registry.devices.get_entry({(DOMAIN, "SER-1_ace1")}, None)
+    assert box.name == "ACE #2"
+    asked = []
+    new, old = _new_registry_lookup(registry, asked)
+    with new, old:
+        entry.runtime_data._apply("multiColorBox", {"multi_color_box": [
+            {"id": 1, "model_id": 40002, "temp": 31}]})
+        await hass.async_block_till_done()
+    assert ((DOMAIN, "SER-1_ace1"), entry.entry_id) in asked
+    assert registry.devices.get_entry({(DOMAIN, "SER-1_ace1")}, None).name == "ACE 2 #2"
+
+
+async def test_a_box_links_to_the_printer_by_device_id_where_home_assistant_wants_that(hass, monkeypatch):
+    from homeassistant.helpers import device_registry as dr
+
+    from custom_components.anycubic import entity as entity_mod
+
+    entry = await _setup_with_two_boxes(hass)
+    registry = dr.async_get(hass)
+    printer = registry.devices.get_entry({(DOMAIN, "SER-1")}, None)
+    box = entity_mod.AnycubicAceEntity(entry.runtime_data, "probe", box_id=1)
+
+    # As installed here or on 2024.9: by identifier, the only way there is.
+    monkeypatch.setattr(entity_mod, "_VIA_BY_ID", False)
+    assert box.device_info["via_device"] == (DOMAIN, "SER-1")
+    assert "via_device_id" not in box.device_info
+
+    monkeypatch.setattr(entity_mod, "_VIA_BY_ID", True)
+    asked = []
+    new, old = _new_registry_lookup(registry, asked)
+    with new, old:
+        info = box.device_info
+        assert info["via_device_id"] == printer.id and "via_device" not in info
+        assert asked == [((DOMAIN, "SER-1"), entry.entry_id)]
+        # A printer that is not registered yet is not linked to, rather than named by an id
+        # that does not exist, which newer Home Assistant refuses outright.
+        registry.async_remove_device(printer.id)
+        info = box.device_info
+        assert "via_device_id" not in info and "via_device" not in info
+
+
+def test_the_way_to_link_a_box_is_read_from_home_assistant_itself():
+    from homeassistant.helpers.device_registry import DeviceInfo
+
+    from custom_components.anycubic import entity as entity_mod
+
+    assert entity_mod._VIA_BY_ID is ("via_device_id" in DeviceInfo.__annotations__)

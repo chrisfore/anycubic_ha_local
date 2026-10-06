@@ -63,6 +63,9 @@ def _parse_mac(usn) -> str | None:
 # up in Home Assistant's ordinary log.
 _NOT_A_PRINTER = "The device at this address did not answer the way a printer does."
 
+# Where a printer answers /info, and /ctrl unless it says otherwise.
+_INFO_PORT = 18910
+
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
     """Refuse every redirect, so a request ends at the host it was sent to.
@@ -102,7 +105,7 @@ def do_handshake(host: str, fetch=_http_fetch) -> HandshakeResult:
     wrapped in an `except` for KeyError, TypeError and AttributeError, so that a mistake in
     this code still fails as itself.
     """
-    info = fetch("GET", f"http://{host}:18910/info")
+    info = fetch("GET", f"http://{host}:{_INFO_PORT}/info")
     if not isinstance(info, dict):
         raise HandshakeError(_NOT_A_PRINTER)
     if info.get("ctrlType") == "cloud":
@@ -113,7 +116,14 @@ def do_handshake(host: str, fetch=_http_fetch) -> HandshakeResult:
         raise HandshakeError(
             "This printer doesn't use the signed LAN handshake this integration needs "
             "(Kobra 3 / S1 generation). Kobra 2 / Kobra X aren't supported yet.")
-    if not isinstance(token, str):
+    # The serial becomes the config entry's unique id and part of every entity's, so it has
+    # to be text and it has to be there: 12345 and "12345" would be two different printers,
+    # and a printer with no serial cannot be told from any other. The model id goes into
+    # every topic. The model's name and the device type are only ever shown, so one that is
+    # not text is dropped rather than held against the printer.
+    serial, model_id = info.get("cn"), info["modelId"]
+    if not (isinstance(token, str) and isinstance(serial, str) and serial
+            and isinstance(model_id, (str, int)) and not isinstance(model_id, bool)):
         raise HandshakeError(_NOT_A_PRINTER)
     ts = int(time.time() * 1000)
     nonce = "".join(random.choices(string.ascii_letters + string.digits, k=6))
@@ -138,9 +148,14 @@ def do_handshake(host: str, fetch=_http_fetch) -> HandshakeResult:
     return HandshakeResult(
         broker_host=m.group(1), broker_port=int(m.group(2)),
         username=data["username"], password=data["password"],
-        device_id=data["deviceId"], model_id=str(info["modelId"]), serial=info.get("cn", ""),
+        device_id=data["deviceId"], model_id=str(model_id), serial=serial,
         mac=_parse_mac(info.get("usn")),
-        model_name=info.get("modelName"), device_type=info.get("deviceType"))
+        model_name=_text_or_none(info.get("modelName")),
+        device_type=_text_or_none(info.get("deviceType")))
+
+
+def _text_or_none(value) -> str | None:
+    return value if isinstance(value, str) else None
 
 
 def _ctrl_url(host: str, supplied, query: str) -> str:
@@ -151,6 +166,8 @@ def _ctrl_url(host: str, supplied, query: str) -> str:
     host of its choosing. A printer gives its own address here, so the host is always the one
     the first request went to, and the scheme the one it used. The port, path and any query
     are kept: they say where on that host, and that host already had the first request.
+    Given no port, it is the first request's again, not the scheme's default: the printer is
+    known to answer on 18910, and port 80 of the same host is some other service.
     """
     if not isinstance(supplied, str):
         raise HandshakeError(_NOT_A_PRINTER)
@@ -161,5 +178,5 @@ def _ctrl_url(host: str, supplied, query: str) -> str:
         # Not a URL: a malformed host, or a port that is not a number.
         raise HandshakeError(_NOT_A_PRINTER) from err
     path = parts.path if parts.path.startswith("/") else f"/{parts.path}"
-    return "".join(("http://", host, "" if port is None else f":{port}", path, "?",
+    return "".join(("http://", host, f":{_INFO_PORT if port is None else port}", path, "?",
                     f"{parts.query}&{query}" if parts.query else query))

@@ -179,7 +179,7 @@ def redacted_error(err: BaseException, identifiers=()) -> str:
         text = redacted(str(err), wanted)
         if wanted:
             # Not inside a longer run of letters and digits: "pi" is not in "expired".
-            text = re.sub(rf"(?<![^\W_])(?:{'|'.join(map(re.escape, wanted))})(?![^\W_])",
+            text = re.sub(_whole_word("|".join(map(re.escape, wanted))),
                           REDACTED, text, flags=re.IGNORECASE)
         lowered = text.lower()
         if text and not any(i in lowered for i in wanted):
@@ -219,6 +219,14 @@ def _job_patterns(name: str) -> dict[str, str]:
 
     A text shorter than _MIN_IDENTIFIER is not scrubbed by value, for the reason an
     identifier is not: "cube" is a word. The key list still masks it where it is known to be.
+
+    A text that is ONE word is only scrubbed where it stands as a word, with no letter or
+    digit joined on to either end. Several words in a row hardly turn up by accident; one
+    does, inside a longer word ("preheat" in the state "preheating") or a longer number (a
+    job named by a date, inside a msgid). An underscore is not a letter here: the printer
+    writes "<model>_plate(01)" and "<model>_.stl", and those are the name. Where the word
+    stands alone and happens to be a state or a topic segment too, it goes: nothing tells
+    the two apart, and the job's name is the one that must not get out.
     """
     stem = _JOB_EXTENSIONS.sub("", name.replace("\\", "/").rsplit("/", 1)[-1])
     model = _SLICER_SUFFIX.sub("", _SLICER_PREFIX.sub("", stem))
@@ -230,8 +238,14 @@ def _job_patterns(name: str) -> dict[str, str]:
             # part of the name, and the slicer leaves one where it joined the pieces.
             text = text[text.index(words[0]):text.rindex(words[-1]) + len(words[-1])]
         if words and len(text) >= _MIN_IDENTIFIER:
-            found[text.lower()] = _SEPARATORS.join(re.escape(w.lower()) for w in words)
+            pattern = _SEPARATORS.join(re.escape(w.lower()) for w in words)
+            found[text.lower()] = pattern if len(words) > 1 else _whole_word(pattern)
     return found
+
+
+def _whole_word(pattern: str) -> str:
+    """`pattern`, matched only where no letter or digit joins on to it: "pi", not "expired"."""
+    return rf"(?<![^\W_])(?:{pattern})(?![^\W_])"
 
 
 def _redact(value, exact):

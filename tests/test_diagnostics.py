@@ -54,8 +54,13 @@ async def test_diagnostics_redacts_identifiers(hass):
     assert diag["printer"]["ip"] == "**REDACTED**"
     # And no raw secret/identifier value leaks anywhere in the blob.
     blob = str(diag)
-    for secret in ("10.0.0.5", "secretpw", "SER-1", "DEV", "JaneDoe"):
+    for secret in ("10.0.0.5", "SER-1", "DEV", "JaneDoe"):
         assert secret not in blob
+    # The broker credentials are not scrubbed out of anything: they are never put in. No
+    # report carries them, and the download is built without the handshake's username and
+    # password. (Their KEYS are masked, should a payload ever have one.)
+    assert "secretpw" not in blob
+    assert "username" not in blob and "password" not in blob
 
 
 async def test_diagnostics_includes_raw_multicolorbox_report(hass):
@@ -154,8 +159,9 @@ async def test_diagnostics_hides_identifiers_under_keys_nobody_has_seen(hass):
 
     blob = json.dumps(diag).lower()
     for secret in (device, serial, "aa:bb:cc:dd:ee:ff", "aa-bb-cc-dd-ee-ff", "192.168.1.50",
-                   "kobra-s1.local", token, "secretpw"):
+                   "kobra-s1.local", token):
         assert secret.lower() not in blob, secret
+    assert "secretpw" not in blob       # never put in, rather than scrubbed: see above
     # What the attachment is for is still there, unknown keys included.
     assert diag["capabilities"]["firmware"] == "2.7.1.4"
     assert diag["capabilities"]["features"]["fod_support"] is True

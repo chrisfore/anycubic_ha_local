@@ -279,8 +279,8 @@ class LightState:
 def parse_light(data: dict) -> LightState | None:
     """Parse a `light` report `.data` object; None if it does not say how the chamber light is.
 
-    Two shapes carry the state. A query is answered with a `lights` list, read here as it
-    always was (an empty list still gives the default). A control command is answered with
+    Two shapes carry the state. A query is answered with a `lights` list, whose first entry
+    is read as it always was. A control command is answered with
     the bare light object, holding the state the light took. Report topics are shared between
     clients, so that answer also arrives for commands the Slicer or the phone app sent. Only
     the list used to be understood, so every control answer parsed as the default and a light
@@ -288,20 +288,23 @@ def parse_light(data: dict) -> LightState | None:
 
     Anything else is unknown, which is not the same as off: the rule parse_extfilbox applies
     to a partial answer. A bare object counts only when it names the chamber light, since
-    nothing else in it says which lamp it describes.
+    nothing else in it says which lamp it describes. In either shape a light with no
+    `status`, or a null one, has not said how it is, and neither has a list with no light
+    in it. Both used to read as off.
     """
     if not isinstance(data, dict):
         return None
     lights = data.get("lights")
     if isinstance(lights, list):
-        if not lights:
-            return LightState()
-        first = lights[0]
-        return LightState(on=first.get("status") == 1, brightness=first.get("brightness", 0))
+        light = lights[0] if lights else None
+    elif data.get("type") == LIGHT_TYPE_CHAMBER:
+        light = data
+    else:
+        return None
     # No `status`, no reading: defaulting it would turn an unknown back into "off".
-    if data.get("type") == LIGHT_TYPE_CHAMBER and "status" in data:
-        return LightState(on=data["status"] == 1, brightness=data.get("brightness", 0))
-    return None
+    if not isinstance(light, dict) or light.get("status") is None:
+        return None
+    return LightState(on=light["status"] == 1, brightness=light.get("brightness") or 0)
 
 
 @dataclass

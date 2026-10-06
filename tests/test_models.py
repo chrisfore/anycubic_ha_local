@@ -84,6 +84,18 @@ def test_parse_light_does_not_read_an_unrecognised_payload_as_off():
         assert models.parse_light(payload) is None, payload
 
 
+def test_parse_light_does_not_read_a_list_or_object_that_says_nothing_as_off():
+    # The same rule, for the shapes that still slipped through: a `lights` list with no
+    # light in it, or with one that does not say how it is, and a bare object whose status
+    # is null. Each used to read as "off"; a list holding null raised.
+    for payload in ({"lights": []}, {"lights": [{}]}, {"lights": [None]},
+                    {"lights": [{"type": 2, "brightness": 100}]},
+                    {"lights": [{"type": 2, "status": None, "brightness": 0}]},
+                    {"lights": ["on"]},
+                    {"type": 2, "status": None, "brightness": 0}):
+        assert models.parse_light(payload) is None, payload
+
+
 def test_parse_light_ignores_a_bare_object_for_another_light():
     # A bare object names the lamp it is about. Only the chamber light's own type, the one
     # the command builder sends, may move the chamber light.

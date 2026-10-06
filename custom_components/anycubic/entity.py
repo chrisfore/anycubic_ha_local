@@ -24,6 +24,13 @@ from .const import (
 )
 from .coordinator import AnycubicCoordinator
 
+# How a device says which device it hangs off. Home Assistant is retiring `via_device`, the
+# parent's identifier, for `via_device_id`, the parent's id in the registry: an identifier
+# can now belong to devices of several config entries. 2024.9 knows only the first, and
+# refuses a device info with a key it does not know, so which one to give is read from the
+# Home Assistant that is running.
+_VIA_BY_ID = "via_device_id" in DeviceInfo.__annotations__
+
 
 class AnycubicEntity(CoordinatorEntity[AnycubicCoordinator]):
     _attr_has_entity_name = True
@@ -103,13 +110,21 @@ class AnycubicAceEntity(CoordinatorEntity[AnycubicCoordinator]):
     def device_info(self) -> DeviceInfo:
         box = self._box
         model_id = box.model_id if box else None
-        return DeviceInfo(
+        info = DeviceInfo(
             identifiers={(DOMAIN, f"{self.coordinator.hs.serial}_{ace_suffix(self._box_id)}")},
             manufacturer=MANUFACTURER,
             name=ace_device_name(self._box_id, model_id),
             model=ace_device_model(self._box_id, model_id),
-            via_device=(DOMAIN, self.coordinator.hs.serial),
         )
+        printer = (DOMAIN, self.coordinator.hs.serial)
+        if not _VIA_BY_ID:
+            info["via_device"] = printer
+        elif (device := self.coordinator.registered_device(printer)) is not None:
+            # Only an id that exists: Home Assistant refuses the whole device over one that
+            # does not. A printer not registered yet (the very first setup, if a box's
+            # entities get in before the printer's) is linked at the next load instead.
+            info["via_device_id"] = device.id
+        return info
 
 
 @callback

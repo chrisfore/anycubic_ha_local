@@ -73,7 +73,18 @@ class AnycubicConfigFlow(ConfigFlow, domain=DOMAIN):
                 # answer "already configured" and leave it pointing at the dead address.
                 # Safe only because _async_identify never returns an empty serial, which
                 # would otherwise match any entry that has no unique id of its own.
-                self._abort_if_unique_id_configured(updates={CONF_HOST: host})
+                #
+                # And say that it moved. "Already configured" is only the whole truth when
+                # the address is the one the entry has; then the helper finds nothing to
+                # write and does not reload. Which of the two it is, is worked out here: the
+                # helper takes the reason to give (`error`, there since before 2024.9) but
+                # does not say whether it changed anything.
+                known = self.hass.config_entries.async_entry_for_domain_unique_id(
+                    self.handler, hs.serial)
+                moved = known is not None and known.data.get(CONF_HOST) != host
+                self._abort_if_unique_id_configured(
+                    updates={CONF_HOST: host},
+                    error="reconfigure_successful" if moved else "already_configured")
                 title = MODEL_NAMES.get(hs.model_id, "Anycubic printer")
                 return self.async_create_entry(title=title, data={CONF_HOST: host})
         return self.async_show_form(

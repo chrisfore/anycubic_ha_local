@@ -273,6 +273,28 @@ def test_scrubbing_a_job_by_value_changes_nothing_else():
                    "version": "2.7.1.4", "state": "printing"}
 
 
+def test_a_job_named_by_one_word_is_scrubbed_only_where_it_stands_as_a_word():
+    # A name of several words can hardly turn up by accident. One word can: a job called
+    # "preheating" is also part of other words, and a job named by a number is inside every
+    # longer number. So one word is only scrubbed where nothing joins on to it.
+    for job, report, safe in (
+        ("0907-2001-preheat_plate(01)_PLA_0.2_9m.gcode",
+         {"state": "preheating", "features": {"preheats": 3}, "note": "preheat: done",
+          "path": "/x/preheat_plate(01).gcode", "object": "Preheat.stl_id_0_copy_0"},
+         {"state": "preheating", "features": {"preheats": 3}, "note": f"{MASK}: done",
+          "path": f"/x/{MASK}_plate(01).gcode", "object": f"{MASK}.stl_id_0_copy_0"}),
+        ("printers.gcode",
+         {"topic": "anycubic/v1/multiprinters/x", "model": "3Dprinters", "job": "printers"},
+         {"topic": "anycubic/v1/multiprinters/x", "model": "3Dprinters", "job": MASK}),
+        ("20240917.gcode",
+         {"msgid": "a920240917f3", "timestamp": "1720240917123", "label": "20240917 v2"},
+         {"msgid": "a920240917f3", "timestamp": "1720240917123", "label": f"{MASK} v2"}),
+    ):
+        assert const.redacted(report, job_names=job) == safe, job
+    # The word itself, where it stands alone, is the job as far as anyone can tell.
+    assert const.redacted({"state": "preheat"}, job_names="preheat.gcode") == {"state": MASK}
+
+
 # ------------------------------------------------------------------- copy, never mutation
 
 def test_redaction_returns_a_deep_copy_and_leaves_its_input_alone():

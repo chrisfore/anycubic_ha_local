@@ -33,6 +33,21 @@ def _connack_refused(code) -> bool:
         return False
 
 
+def _new_client(factory, client_id: str):
+    """Construct the paho client on any paho there is.
+
+    paho 1.x takes no callback API version. 2.0.0 demands one as its first argument, with no
+    default, and the transport could not be built on it at all. 2.1 made it optional again,
+    defaulting to version 1. So it is named wherever it exists, and it is version 1: the
+    callbacks 1.x has and the ones 2.1 has been giving this transport all along, so nothing
+    about how they are called changes with this.
+    """
+    versions = getattr(mqtt, "CallbackAPIVersion", None)
+    if versions is None:
+        return factory(client_id=client_id)
+    return factory(callback_api_version=versions.VERSION1, client_id=client_id)
+
+
 class AnycubicMqtt:
     def __init__(self, hs: HandshakeResult, on_report: Callable[[str, dict], None],
                  client_factory=mqtt.Client, identifiers: tuple[str, ...] | None = None,
@@ -51,7 +66,9 @@ class AnycubicMqtt:
         # Whether the broker currently has us. Read by the coordinator, which is the
         # only thing able to do anything about a dead session (re-handshake + rebuild).
         self._connected = False
-        self._c = client_factory(client_id=f"ha-{uuid.uuid4().hex[:8]}")
+        # Set while a disconnect is one we asked for, so that it is not reported as a loss.
+        self._closing = False
+        self._c = _new_client(client_factory, f"ha-{uuid.uuid4().hex[:8]}")
         self._c.username_pw_set(hs.username, hs.password)
         try:
             self._c.tls_set(cert_reqs=ssl.CERT_NONE)
@@ -86,6 +103,11 @@ class AnycubicMqtt:
 
     def _on_disconnect(self, *args) -> None:
         self._connected = False
+        if self._closing:
+            # Ours: an entry reload or a recovery closing the session it is replacing. The
+            # warning below, on every reload, told users of a fault there was not.
+            _LOGGER.debug("disconnected from the printer's broker, as asked")
+            return
         _LOGGER.warning("printer broker connection lost; paho will auto-reconnect")
 
     @property
@@ -93,11 +115,14 @@ class AnycubicMqtt:
         return self._connected
 
     def connect(self) -> None:
+        self._closing = False
         self._c.connect(self._hs.broker_host, self._hs.broker_port, keepalive=60)
         self._c.loop_start()
 
     def disconnect(self) -> None:
         self._connected = False
+        # Before paho is told: its on_disconnect can run on the network thread at once.
+        self._closing = True
         try:
             self._c.loop_stop()
             self._c.disconnect()
@@ -128,6 +153,10 @@ class AnycubicMqtt:
         try:
             obj = json.loads(message.payload)
         except Exception:  # noqa: BLE001
+            return
+        if not isinstance(obj, dict):
+            # Valid JSON that is not a report: a list, a number, null. Everything below
+            # reads it as an object, and an exception here ends paho's network thread.
             return
         if obj.get("action") == "query" and obj.get("data") is None and "state" not in obj:
             return  # our own echoed query
