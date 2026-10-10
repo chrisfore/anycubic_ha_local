@@ -8,7 +8,7 @@ cloud account, no rooting**.
 [![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chrisfore&repository=anycubic_ha_local&category=integration)
 [![Stars](https://img.shields.io/github/stars/chrisfore/anycubic_ha_local?style=flat&color=f5c518&label=stars)](https://github.com/chrisfore/anycubic_ha_local/stargazers)
 
-> **Status:** v1.2.13 — validated end-to-end on a Kobra S1 Max and user-validated on a Kobra 4,
+> **Status:** v1.2.14 — validated end-to-end on a Kobra S1 Max and user-validated on a Kobra 4,
 > Kobra 3 and Kobra X; the rest of the family shares the identical protocol. Entities adapt to each
 > model (see **Supported printers**).
 
@@ -156,6 +156,9 @@ and assumes the default device names — adjust the entity-ID prefixes if you re
   `-1` sentinel is shown as *None*).
 - **Camera won't play:** make sure `ffmpeg` is available and the printer is reachable on its stream
   port (18088 on most models — the integration uses the URL the printer itself reports).
+- **Camera blank after the printer was switched off and on:** from v1.2.14 the stream is started
+  again without reloading the integration. If a card that was already open stays blank, open it
+  again.
 - **Chamber light turns on by itself after a Home Assistant restart:** the printer firmware switches
   the chamber LED on whenever camera capture starts, and that can't be overridden. v1.2.2 stops HA's
   startup stream probe from triggering capture; also leave **Preload camera stream** (camera →

@@ -208,6 +208,16 @@ class AnycubicMqtt:
             # all is passed on as before.
             _LOGGER.debug("the printer says a light command was not accepted; state left as it was")
             return
+        if msg_type == "video" and (obj.get("action") == "stopCapture"
+                                    or obj.get("state") == "pushStopped"):
+            # The capture kick sends stopCapture, pauses, then startCapture, and waits for
+            # a video report. A slow printer answers the stop after the start has gone
+            # out, and that answer ended the wait before capture was running — and, on
+            # firmware that puts the stream URL in the start answer, before there was a
+            # URL to hand out (issue #15). The coordinator is handed `data` alone and
+            # cannot tell the two answers apart, so the stop answer is held back here,
+            # where the envelope is. It says nothing the coordinator uses.
+            return
         data = obj.get("data")
         if data is not None:
             self._on_report(msg_type, data)

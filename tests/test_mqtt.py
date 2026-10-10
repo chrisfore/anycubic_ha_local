@@ -144,6 +144,39 @@ def test_forwards_video_report_with_null_data():
     assert seen == [("video", {})]
 
 
+def test_the_answer_to_stop_capture_is_not_forwarded():
+    """The capture kick sends stopCapture, pauses, then startCapture, and waits for the
+    printer's video report. A slow printer answers the STOP after the start has gone out,
+    and that answer ended the wait: before capture was running and, on firmware that puts
+    the stream URL in the start answer, before there was a URL (issue #15). Only the
+    envelope says which command a video report answers, and only the transport sees it."""
+    hs = HandshakeResult("1.2.3.4", 9883, "u", "p", "DEV", "20029", "SER")
+    seen = []
+    client = m.AnycubicMqtt(hs, on_report=lambda t, d: seen.append((t, d)), client_factory=FakeClient)
+    client.connect()
+    topic = "anycubic/anycubicCloud/v1/printer/public/20029/DEV/video/report"
+    for envelope in (
+        {"type": "video", "action": "stopCapture", "state": "pushStopped", "code": 200,
+         "data": None},
+        # Whatever action it is filed under, a report that says pushing stopped is not
+        # the start answer.
+        {"type": "video", "action": "report", "state": "pushStopped", "code": 200,
+         "data": {"urls": {"rtspUrl": "http://1.2.3.4:18088/live/old"}}},
+    ):
+        client._c.on_message(client._c, None, _msg(topic, envelope))
+    assert seen == []
+    # The start answer still arrives, with a URL (Kobra 4) or without one (S1 family),
+    # and so does one that reports a failure: the wait has its answer either way.
+    client._c.on_message(client._c, None, _msg(topic, {
+        "type": "video", "action": "startCapture", "state": "initSuccess", "code": 200,
+        "data": {"urls": {"rtspUrl": "http://1.2.3.4:18088/live/new"}}}))
+    client._c.on_message(client._c, None, _msg(topic, {
+        "type": "video", "action": "startCapture", "state": "initFailed", "code": 11402,
+        "data": None}))
+    assert seen == [("video", {"urls": {"rtspUrl": "http://1.2.3.4:18088/live/new"}}),
+                    ("video", {})]
+
+
 def test_inbound_reports_are_logged_with_secrets_redacted(caplog):
     """The report log is the instrument for issue #9 — it must name the type that arrived
     and must not leak the address or filename into a log a user pastes into an issue."""
