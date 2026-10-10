@@ -6,6 +6,7 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 
@@ -85,6 +86,11 @@ STALE_AFTER = SILENCE_POLLS_BEFORE_RECOVERY * DEFAULT_QUERY_INTERVAL
 # attempts have failed to produce a single report do the entities go unavailable —
 # recovering quietly is right, but hiding a printer we genuinely cannot reach is not.
 MAX_RECOVERIES_BEFORE_UNAVAILABLE = 2
+# A printer that is switched off is re-handshaked on every poll, which is right — it is
+# how it is found again — but each attempt was a WARNING, and one user's log held twelve
+# thousand of them from six days (issue #15). The first attempt of an outage is still a
+# WARNING; after that one is repeated at that level this often, and the rest are DEBUG.
+RECOVERY_LOG_REMINDER = 3600.0
 
 
 @dataclass
@@ -138,6 +144,10 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # a system clock jump must not read as hours of silence.
         self._last_report: float | None = None
         self._recoveries = 0
+        # When a recovery attempt was last logged at WARNING (see RECOVERY_LOG_REMINDER).
+        self._recovery_warned_at: float | None = None
+        # Called when the printer answers again after a recovery (see _apply).
+        self._session_listeners: list[Callable[[], None]] = []
         # Filename we have already asked fileDetails about, so one job asks once.
         self._file_details_asked: str | None = None
 
@@ -203,8 +213,14 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         back stays dead until someone reloads the integration by hand.
         """
         self._recoveries += 1
-        _LOGGER.warning("re-handshaking printer (attempt %s): %s",
-                        self._recoveries, reason)
+        now = time.monotonic()
+        if (self._recoveries == 1 or self._recovery_warned_at is None
+                or now - self._recovery_warned_at >= RECOVERY_LOG_REMINDER):
+            level, self._recovery_warned_at = logging.WARNING, now
+        else:
+            level = logging.DEBUG
+        _LOGGER.log(level, "re-handshaking printer (attempt %s): %s",
+                    self._recoveries, reason)
         try:
             await self.hass.async_add_executor_job(self._rebuild)
         except CloudModeError as err:
@@ -271,6 +287,10 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         and the startCapture answer carries the tokenized stream URL, captured into
         video_stream_url by _apply. S1-family printers answer with no URL; the wait
         just ends early and callers fall back to the info-report URL.
+
+        The wait ends on the startCapture answer only. The stopCapture answer is a
+        video report too, and from a slow printer it arrives after the start has been
+        sent; the transport holds it back (issue #15), so it cannot end this early.
         """
         self._video_report = asyncio.Event()
         await self.async_send_command("camera_stop")
@@ -281,6 +301,33 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
                 await self._video_report.wait()
         except TimeoutError:
             _LOGGER.debug("no video report within %ss of startCapture", VIDEO_REPORT_TIMEOUT)
+
+    @property
+    def has_transport(self) -> bool:
+        """Is there a session a command could be published into right now?
+
+        False from a failed rebuild until the next one that works. async_send_command
+        drops commands then, so a caller with something to wait for can skip the wait.
+        """
+        return self._transport is not None
+
+    @callback
+    def async_add_session_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
+        """Call `listener` when the printer answers again after a recovery.
+
+        The first report after a re-handshake, not the re-handshake itself: reconnecting
+        can keep working against a printer that never answers. The camera uses it to
+        start capture again once a power-cycled printer is back (issue #15). Returns
+        the function that removes the listener.
+        """
+        self._session_listeners.append(listener)
+
+        @callback
+        def remove() -> None:
+            if listener in self._session_listeners:
+                self._session_listeners.remove(listener)
+
+        return remove
 
     @property
     def job_active(self) -> bool:
@@ -356,7 +403,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # Any report at all proves the session is alive; that, not a successful
         # publish, is what clears the watchdog.
         self._last_report = time.monotonic()
-        self._recoveries = 0
+        recovered, self._recoveries = self._recoveries, 0
         self.seen_report_types.add(msg_type)
         if msg_type == "info":
             self.data.printer = parse_info(data)
@@ -446,6 +493,13 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # froze for the whole job. Notify listeners without touching the schedule.
         self.last_update_success = True
         self.async_update_listeners()
+        if recovered:
+            # The one line that closes an outage in the log. INFO, as Home Assistant's
+            # own "recovered" lines are; the attempts it answers were the warnings.
+            _LOGGER.info("printer session is back after %s re-handshake attempt(s)", recovered)
+            self._recovery_warned_at = None
+            for listener in list(self._session_listeners):
+                listener()
 
     def _real_boxes(self, data: dict) -> list[dict]:
         """The entries of a multiColorBox report that are boxes this printer can have.

@@ -581,3 +581,108 @@ async def test_a_failed_setup_does_not_put_the_address_in_the_log(hass, caplog):
         await hass.config_entries.async_remove(entry.entry_id)
     assert "192.168.1.50" not in caplog.text
     assert "not ready yet" in caplog.text           # the line this is about was written
+
+
+# ------------------------------------------------- recovery logging (issue #15)
+#
+# A printer that is switched off is re-handshaked on every poll, and has to be: that is
+# how it is found again. Each attempt used to be logged at WARNING, which for a printer
+# left off for a week is several thousand identical lines.
+
+
+def _recovery_lines(caplog):
+    return [(r.levelname, r.getMessage()) for r in caplog.records
+            if r.name == coord_mod.__name__ and "re-handshaking" in r.getMessage()]
+
+
+async def _fail_polls(coord, count):
+    for _ in range(count):
+        with pytest.raises(UpdateFailed):
+            await coord._async_update_data()
+
+
+async def test_only_the_first_attempt_of_an_outage_is_a_warning(hass, monkeypatch, caplog):
+    calls = _handshakes(monkeypatch, error=OSError("no route to host"))
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    _go_silent(coord)
+    with caplog.at_level("DEBUG", logger=coord_mod.__name__):
+        await _fail_polls(coord, 5)
+    assert len(calls) == 5, "the retry cadence changed"
+    lines = _recovery_lines(caplog)
+    assert [level for level, _ in lines] == ["WARNING", "DEBUG", "DEBUG", "DEBUG", "DEBUG"]
+    assert "attempt 5" in lines[-1][1] and "no transport" in lines[-1][1]
+
+
+async def test_a_long_outage_is_repeated_as_a_warning_about_hourly(hass, monkeypatch, caplog):
+    _handshakes(monkeypatch, error=OSError("no route to host"))
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    _go_silent(coord)
+    with caplog.at_level("DEBUG", logger=coord_mod.__name__):
+        await _fail_polls(coord, 2)
+        coord._recovery_warned_at -= coord_mod.RECOVERY_LOG_REMINDER + 1    # an hour later
+        await _fail_polls(coord, 2)
+    assert [level for level, _ in _recovery_lines(caplog)] == [
+        "WARNING", "DEBUG", "WARNING", "DEBUG"]
+
+
+async def test_a_new_outage_is_a_warning_again_and_the_return_is_logged_once(
+        hass, monkeypatch, caplog):
+    _handshakes(monkeypatch, error=OSError("no route to host"))
+    coord = AnycubicCoordinator(hass, HS, host="192.168.1.50", transport_factory=FakeTransport)
+    await coord.async_start()
+    _go_silent(coord)
+    with caplog.at_level("DEBUG", logger=coord_mod.__name__):
+        await _fail_polls(coord, 3)
+        _handshakes(monkeypatch)                 # the printer is switched back on
+        with pytest.raises(UpdateFailed):
+            await coord._async_update_data()     # reconnected; nothing has answered yet
+        coord._apply("info", {"state": "free"})
+        coord._apply("tempature", {"curr_nozzle_temp": 30})
+        await hass.async_block_till_done()
+        back = [r for r in caplog.records if "session is back" in r.getMessage()]
+        assert len(back) == 1, "the return was not logged exactly once"
+        assert back[0].levelname == "INFO" and "4" in back[0].getMessage()
+
+        _handshakes(monkeypatch, error=OSError("no route to host"))
+        _go_silent(coord)
+        await _fail_polls(coord, 1)
+    assert [level for level, _ in _recovery_lines(caplog)][-1] == "WARNING"
+    for name in ("192.168.1.50", "SER-1", "DEV"):
+        assert all(name not in r.getMessage() for r in caplog.records
+                   if r.name == coord_mod.__name__ and r.levelname != "DEBUG")
+
+
+async def test_session_listeners_hear_the_first_report_after_a_recovery(hass, monkeypatch):
+    """The camera has to know the moment the printer is back (issue #15). A rebuilt transport
+    is not that moment: reconnecting can keep working against a printer that never answers."""
+    _handshakes(monkeypatch)
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    heard = []
+    remove = coord.async_add_session_listener(lambda: heard.append(True))
+    coord._apply("info", {"state": "free"})      # an ordinary report: no recovery behind it
+    assert heard == []
+    _go_silent(coord)
+    await coord._async_update_data()             # re-handshaked
+    assert heard == [], "told before the printer had answered"
+    coord._apply("info", {"state": "free"})
+    coord._apply("info", {"state": "free"})
+    assert heard == [True]
+    remove()
+    _go_silent(coord)
+    await coord._async_update_data()
+    coord._apply("info", {"state": "free"})
+    assert heard == [True]
+
+
+async def test_has_transport_follows_the_session(hass, monkeypatch):
+    _handshakes(monkeypatch, error=OSError("no route to host"))
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    assert coord.has_transport is False
+    await coord.async_start()
+    assert coord.has_transport is True
+    _go_silent(coord)
+    await _fail_polls(coord, 1)                  # the rebuild failed and left nothing
+    assert coord.has_transport is False
