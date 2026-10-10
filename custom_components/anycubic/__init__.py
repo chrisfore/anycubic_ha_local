@@ -28,7 +28,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: AnycubicConfigEntry) -> 
     except (HandshakeError, OSError) as err:
         raise ConfigEntryNotReady(redacted_error(err, (entry.data[CONF_HOST],))) from err
     coordinator = AnycubicCoordinator(hass, hs, host=entry.data[CONF_HOST])
-    await coordinator.async_start()
+    try:
+        await coordinator.async_start()
+    except OSError as err:
+        # The handshake is HTTP and the session is MQTT, and a printer that has just been
+        # switched on answers the first before its broker accepts the second — Home
+        # Assistant and the printer starting together is enough. Every way the connect
+        # fails then is an OSError (refused, timed out, a TLS handshake cut short, a name
+        # that does not resolve), and all of them pass with waiting, so setup is retried.
+        # Outside this, it was a setup error that stayed until a reload by hand. The
+        # handshake has succeeded here, so the redactor is given everything it reported
+        # as well as the entered address.
+        raise ConfigEntryNotReady(
+            "the printer's broker is not accepting connections yet: "
+            + redacted_error(err, (*coordinator.redaction_identifiers, entry.data[CONF_HOST]))
+        ) from err
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     return True

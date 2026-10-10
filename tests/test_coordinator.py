@@ -686,3 +686,108 @@ async def test_has_transport_follows_the_session(hass, monkeypatch):
     _go_silent(coord)
     await _fail_polls(coord, 1)                  # the rebuild failed and left nothing
     assert coord.has_transport is False
+
+
+# ------------------------------------------------- a broker that is not ready
+#
+# The handshake is HTTP and the session is MQTT, and a printer that has just been switched
+# on answers the first before its broker accepts the second. Every way paho's connect fails
+# there is an OSError: ConnectionRefusedError for a port nothing listens on yet, TimeoutError
+# for no answer or a TLS handshake that stalls, ssl.SSLError for one cut short, socket.gaierror
+# for a name that does not resolve (checked against paho 2.1's connect).
+
+
+class RefusingTransport(FakeTransport):
+    """A broker that is not accepting connections; the error text names the address."""
+    error = ConnectionRefusedError(111, "Connection refused by 192.168.1.50:9883")
+
+    def connect(self):
+        raise self.error
+
+
+async def _setup_entry_with(hass, transport, host="192.168.1.50"):
+    from unittest.mock import patch
+
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    from custom_components.anycubic.const import DOMAIN
+
+    hs = HandshakeResult(host, 9883, "u", "p", "DEV", "20029", "SER-1")
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": host})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=hs), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", transport):
+        loaded = await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    return entry, loaded
+
+
+@pytest.mark.parametrize("error", [
+    ConnectionRefusedError(111, "Connection refused by 192.168.1.50:9883"),
+    TimeoutError("timed out connecting to 192.168.1.50"),
+])
+async def test_setup_is_retried_when_the_broker_is_not_accepting_connections(hass, caplog, error):
+    """Home Assistant and the printer started together. Without a retry this was a setup
+    error that stayed until someone reloaded the integration by hand."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    class Transport(RefusingTransport):
+        pass
+
+    Transport.error = error
+    entry, loaded = await _setup_entry_with(hass, Transport)
+    assert not loaded
+    assert entry.state is ConfigEntryState.SETUP_RETRY, "a broker not ready yet was a final error"
+    assert entry.reason and "192.168.1.50" not in entry.reason
+    assert "192.168.1.50" not in caplog.text
+    assert "not ready yet" in caplog.text
+    await hass.config_entries.async_remove(entry.entry_id)
+
+
+async def test_a_setup_error_that_is_not_a_connection_failure_is_not_retried(hass):
+    """Only what waiting can cure is retried: anything else is a fault to be seen."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    class Transport(RefusingTransport):
+        error = ValueError("not a connection failure")
+
+    entry, loaded = await _setup_entry_with(hass, Transport)
+    assert not loaded and entry.state is ConfigEntryState.SETUP_ERROR
+    await hass.config_entries.async_remove(entry.entry_id)
+
+
+class HalfBuiltTransport(FakeTransport):
+    """Connects, and so starts its network thread, then fails in the connect-time queries."""
+    made = []
+
+    def __init__(self, hs, on_report, **k):
+        super().__init__(hs, on_report, **k)
+        type(self).made.append(self)
+
+    def query(self, t):
+        raise OSError("the socket went away")
+
+
+async def test_a_transport_that_fails_after_connecting_is_disconnected(hass):
+    """connect() starts paho's network thread. A transport dropped without disconnect()
+    leaves that thread running, reconnecting on its own, for the life of Home Assistant."""
+    from homeassistant.config_entries import ConfigEntryState
+
+    HalfBuiltTransport.made = []
+    entry, loaded = await _setup_entry_with(hass, HalfBuiltTransport)
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+    assert [t.connected for t in HalfBuiltTransport.made] == [False]
+    await hass.config_entries.async_remove(entry.entry_id)
+
+
+async def test_a_rebuild_that_fails_after_connecting_is_disconnected_too(hass, monkeypatch):
+    _handshakes(monkeypatch)
+    HalfBuiltTransport.made = []
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    coord._factory = HalfBuiltTransport
+    _go_silent(coord)
+    with pytest.raises(UpdateFailed):
+        await coord._async_update_data()
+    assert [t.connected for t in HalfBuiltTransport.made] == [False]
+    assert coord.has_transport is False

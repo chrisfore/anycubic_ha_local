@@ -160,3 +160,78 @@ async def test_setpoints_are_writable_while_paused(hass):
     num = {d.key: AnycubicNumber(coord, d) for d in PRINTER_NUMBERS}
     await num["nozzle_target"].async_set_native_value(210)
     coord.async_send_command.assert_awaited_with("set_nozzle_temp", value=210)
+
+
+# ------------------------------------------------- a write is not a poll
+#
+# Every control reflects its change at once, ahead of the printer's own report. It used to
+# do that through async_set_updated_data, which is Home Assistant's "a poll has just
+# succeeded": it cancels the refresh timer and starts it again, and marks the last update
+# good. So an automation writing more often than the poll interval stopped the polls
+# altogether, and the session watchdog with them, since recovery runs inside the poll; and a
+# write to a printer that could not be reached brought every entity back as available, with
+# the values it had when it was lost.
+
+
+def _writes(coord):
+    """Each control's write, as (name, coroutine function)."""
+    from custom_components.anycubic.definitions import PRINTER_NUMBERS
+    from custom_components.anycubic.light import AnycubicLight
+    from custom_components.anycubic.number import (
+        AnycubicDryingTempNumber,
+        AnycubicDryingTimeNumber,
+        AnycubicNumber,
+    )
+    from custom_components.anycubic.select import AnycubicSpeedSelect
+    from custom_components.anycubic.switch import AnycubicAceAutoFeedSwitch, AnycubicAceDryingSwitch
+
+    nozzle = next(d for d in PRINTER_NUMBERS if d.key == "nozzle_target")
+    return [
+        ("light", lambda: AnycubicLight(coord).async_turn_on()),
+        ("speed mode", lambda: AnycubicSpeedSelect(coord).async_select_option("sport")),
+        ("setpoint", lambda: AnycubicNumber(coord, nozzle).async_set_native_value(215)),
+        ("drying temperature", lambda: AnycubicDryingTempNumber(coord).async_set_native_value(55)),
+        ("drying time", lambda: AnycubicDryingTimeNumber(coord).async_set_native_value(6)),
+        ("drying", lambda: AnycubicAceDryingSwitch(coord).async_turn_on()),
+        ("auto feed", lambda: AnycubicAceAutoFeedSwitch(coord).async_turn_on()),
+    ]
+
+
+async def _setup_for_writes(hass):
+    coord = await _setup(hass)
+    coord._apply("multiColorBox", {"multi_color_box": [{"id": 0, "auto_feed": 0, "temp": 30}]})
+    coord.data.printer = PrinterState(printing=True, print_speed_mode=2)
+    coord.async_send_command = AsyncMock()
+    return coord
+
+
+async def test_a_write_does_not_push_out_the_next_poll(hass):
+    coord = await _setup_for_writes(hass)
+    # HA stores the poll timer as TimerHandle.cancel, so __self__ is the handle itself.
+    # A reschedule replaces the handle; keeping the same one is the assertion.
+    handle = coord._unsub_refresh.__self__
+    for name, write in _writes(coord):
+        await write()
+        assert coord._unsub_refresh.__self__ is handle, f"the {name} write re-armed the poll"
+    assert coord.async_send_command.await_count == 5     # the two setpoints send nothing
+
+
+async def test_a_write_does_not_bring_an_unreachable_printer_back(hass):
+    coord = await _setup_for_writes(hass)
+    coord.last_update_success = False            # the watchdog has given up on the session
+    for name, write in _writes(coord):
+        await write()
+        assert coord.last_update_success is False, f"the {name} write marked the printer reachable"
+
+
+async def test_a_write_still_reaches_the_listeners_at_once(hass):
+    coord = await _setup_for_writes(hass)
+    heard = []
+    coord.async_add_listener(lambda: heard.append(1))
+    for count, (name, write) in enumerate(_writes(coord), start=1):
+        await write()
+        assert len(heard) == count, f"the {name} write did not notify the listeners"
+    assert coord.data.light.on is True
+    assert coord.data.printer.print_speed_mode == 3 and coord.data.printer.nozzle_target == 215
+    assert coord.drying_temp(0) == 55 and coord.drying_hours(0) == 6
+    assert coord.data.ace[0].drying_active is True and coord.data.ace[0].auto_feed == 1

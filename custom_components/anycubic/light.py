@@ -49,4 +49,4 @@ class AnycubicLight(AnycubicEntity, LightEntity):
         and every poll answer after it reconciles to real state the same way.
         """
         self.coordinator.data.light = LightState(on=on)
-        self.coordinator.async_set_updated_data(self.coordinator.data)
+        self.coordinator.async_notify_write()

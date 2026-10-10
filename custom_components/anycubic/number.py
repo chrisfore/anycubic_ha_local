@@ -1,7 +1,7 @@
 """Printer setpoints (nozzle/bed target, fans) + ACE drying temperature/time setpoints."""
 from __future__ import annotations
 
-from homeassistant.components.number import NumberDeviceClass, NumberEntity
+from homeassistant.components.number import NumberDeviceClass, NumberEntity, RestoreNumber
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
@@ -56,16 +56,40 @@ class AnycubicNumber(AnycubicEntity, NumberEntity):
         # Reflect immediately; the printer echoes the new target within a second. Safe now
         # that the command is only sent when the firmware will actually act on it.
         setattr(self.coordinator.data.printer, self.entity_description.attr, int(value))
-        self.coordinator.async_set_updated_data(self.coordinator.data)
+        self.coordinator.async_notify_write()
 
 
-class _AnycubicDryingSetpoint(AnycubicAceEntity, NumberEntity):
+class _AnycubicDryingSetpoint(AnycubicAceEntity, RestoreNumber):
     """Drying setpoint shown on the ACE device but NOT gated on box presence: the box is
-    activity-gated (idle reports nothing), and these must be set BEFORE drying is turned on."""
+    activity-gated (idle reports nothing), and these must be set BEFORE drying is turned on.
+
+    The setpoint is ours, not the printer's — it is told one only when drying is switched
+    on — so nothing reports it back after a restart. It was held in the coordinator's
+    memory alone, and a restart or reload put it back to the default, which the next
+    "drying on" then used. The last value is restored when the entity is added, which for
+    a further box is when a report first names it.
+    """
 
     @property
     def available(self) -> bool:
         return self.coordinator.last_update_success
+
+    def _store(self, value: int) -> None:
+        """Keep `value` where the drying switch reads it."""
+        raise NotImplementedError
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        last = await self.async_get_last_number_data()
+        value = last.native_value if last is not None else None
+        # Checked against the range there is now, not the one it was stored under: the
+        # dryer must never be sent a value this entity would itself refuse. (A value
+        # that is not a number at all fails the comparison too.) Anything else leaves
+        # the default in place.
+        if value is None or not self.native_min_value <= value <= self.native_max_value:
+            return
+        self._store(int(value))
+        self.coordinator.async_notify_write()
 
 
 class AnycubicDryingTempNumber(_AnycubicDryingSetpoint):
@@ -86,9 +110,12 @@ class AnycubicDryingTempNumber(_AnycubicDryingSetpoint):
     def native_value(self) -> float:
         return self.coordinator.drying_temp(self._box_id)
 
+    def _store(self, value: int) -> None:
+        self.coordinator.set_drying_temp(self._box_id, value)
+
     async def async_set_native_value(self, value: float) -> None:
-        self.coordinator.set_drying_temp(self._box_id, int(value))
-        self.coordinator.async_set_updated_data(self.coordinator.data)
+        self._store(int(value))
+        self.coordinator.async_notify_write()
 
 
 class AnycubicDryingTimeNumber(_AnycubicDryingSetpoint):
@@ -109,6 +136,9 @@ class AnycubicDryingTimeNumber(_AnycubicDryingSetpoint):
     def native_value(self) -> float:
         return self.coordinator.drying_hours(self._box_id)
 
+    def _store(self, value: int) -> None:
+        self.coordinator.set_drying_hours(self._box_id, value)
+
     async def async_set_native_value(self, value: float) -> None:
-        self.coordinator.set_drying_hours(self._box_id, int(value))
-        self.coordinator.async_set_updated_data(self.coordinator.data)
+        self._store(int(value))
+        self.coordinator.async_notify_write()

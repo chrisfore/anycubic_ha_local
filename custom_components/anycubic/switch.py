@@ -53,7 +53,7 @@ class AnycubicAceDryingSwitch(AnycubicAceEntity, SwitchEntity):
         change now so the switch holds, then let polls reconcile to real state."""
         if self._box is not None:
             self._box.drying_active = on
-            self.coordinator.async_set_updated_data(self.coordinator.data)
+            self.coordinator.async_notify_write()
 
 
 class AnycubicAceAutoFeedSwitch(AnycubicAceEntity, SwitchEntity):
@@ -81,4 +81,4 @@ class AnycubicAceAutoFeedSwitch(AnycubicAceEntity, SwitchEntity):
     def _set_optimistic(self, value: int) -> None:
         if self._box is not None:
             self._box.auto_feed = value
-            self.coordinator.async_set_updated_data(self.coordinator.data)
+            self.coordinator.async_notify_write()

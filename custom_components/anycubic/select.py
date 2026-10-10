@@ -39,4 +39,4 @@ class AnycubicSpeedSelect(AnycubicEntity, SelectEntity):
         value = _VALUES[option]
         await self.coordinator.async_send_command("set_speed_mode", value=value)
         self.coordinator.data.printer.print_speed_mode = value
-        self.coordinator.async_set_updated_data(self.coordinator.data)
+        self.coordinator.async_notify_write()

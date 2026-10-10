@@ -160,10 +160,18 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         transport = self._factory(self.hs, on_report=self._on_report,
                                   identifiers=self.redaction_identifiers,
                                   job_names=self._job_names)
-        transport.connect()
-        for t in (*_QUERY_TYPES, *_CONNECT_ONLY_QUERY_TYPES):
-            transport.query(t)
-        self._probe_extfilbox(transport)
+        try:
+            transport.connect()
+            for t in (*_QUERY_TYPES, *_CONNECT_ONLY_QUERY_TYPES):
+                transport.query(t)
+            self._probe_extfilbox(transport)
+        except Exception:
+            # connect() starts paho's network thread. A transport that got that far and
+            # then failed here is handed to nobody, so nobody would ever stop it: the
+            # thread would keep the dead session reconnecting for the life of Home
+            # Assistant. Harmless on one that never connected.
+            transport.disconnect()
+            raise
         return transport
 
     def _probe_extfilbox(self, transport) -> None:
@@ -500,6 +508,20 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             self._recovery_warned_at = None
             for listener in list(self._session_listeners):
                 listener()
+
+    @callback
+    def async_notify_write(self) -> None:
+        """Tell the entities a control has just changed self.data, ahead of the printer.
+
+        Listeners only, for the reason _apply gives, and one more: a write is not news
+        from the printer, so it must not mark the last update good either.
+        async_set_updated_data does both. It re-arms the refresh timer, so an automation
+        writing more often than the poll interval stopped the polls — and the session
+        watchdog, which runs inside the poll — for as long as it kept writing; and it
+        sets last_update_success, so a write to a printer that could not be reached
+        showed every entity as available again, with the values it had when it was lost.
+        """
+        self.async_update_listeners()
 
     def _real_boxes(self, data: dict) -> list[dict]:
         """The entries of a multiColorBox report that are boxes this printer can have.

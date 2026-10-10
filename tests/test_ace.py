@@ -643,3 +643,104 @@ async def test_a_box_entry_without_a_usable_id_is_skipped_and_the_rest_applied(h
         coord._apply("multiColorBox", data)
     assert [box.id for box in coord.data.ace] == [0]
     assert len(_ace_devices(hass, "SER-1")) == 1
+
+
+# ------------------------------------------------- drying setpoints across a restart
+#
+# The drying temperature and time are ours, not the printer's: it is told them only when
+# drying is switched on. They were held in memory alone, so a restart or a reload put both
+# back to the defaults, and the next "drying on" ran at 45 °C for 4 hours whatever had been
+# dialled in.
+
+
+def _stored(entity_id, value, minimum, maximum, step, unit):
+    """What Home Assistant keeps for a number entity between runs."""
+    from homeassistant.core import State
+    return (State(entity_id, str(value)), {
+        "native_max_value": maximum, "native_min_value": minimum, "native_step": step,
+        "native_unit_of_measurement": unit, "native_value": value})
+
+
+async def _setup_with_stored(hass, *stored, boxes=(0,)):
+    from pytest_homeassistant_custom_component.common import mock_restore_cache_with_extra_data
+
+    mock_restore_cache_with_extra_data(hass, stored)
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "1.2.3.4"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    coord = entry.runtime_data
+    coord._apply("multiColorBox", {"multi_color_box": [
+        {"id": box, "model_id": 40001, "temp": 30} for box in boxes]})
+    await hass.async_block_till_done()
+    coord.async_send_command = AsyncMock()
+    return coord
+
+
+async def test_restored_drying_setpoints_are_what_the_drying_switch_uses(hass):
+    coord = await _setup_with_stored(
+        hass,
+        _stored("number.ace_2_drying_temperature", 55.0, 35, 65, 5, "°C"),
+        _stored("number.ace_2_drying_time", 6.0, 1, 12, 1, "h"))
+    assert hass.states.get("number.ace_2_drying_temperature").state == "55"
+    assert hass.states.get("number.ace_2_drying_time").state == "6"
+    await hass.services.async_call(
+        "switch", "turn_on", {"entity_id": "switch.ace_2_drying"}, blocking=True)
+    coord.async_send_command.assert_awaited_with(
+        "drying_start", target_temp=55, duration=360, box_id=0)
+
+
+async def test_a_second_box_restores_its_own_setpoints_when_it_first_reports(hass):
+    """A further box's entities are added when a report first names it, which is after
+    setup. Its setpoints are restored then, and box 0's are not touched by them."""
+    coord = await _setup_with_stored(
+        hass,
+        _stored("number.ace_pro_2_drying_temperature", 60.0, 35, 65, 5, "°C"),
+        _stored("number.ace_pro_2_drying_time", 8.0, 1, 12, 1, "h"),
+        boxes=(0, 1))
+    assert coord.drying_temp(1) == 60 and coord.drying_hours(1) == 8
+    assert coord.drying_temp(0) == 45 and coord.drying_hours(0) == 4
+    await hass.services.async_call(
+        "switch", "turn_on", {"entity_id": "switch.ace_pro_2_drying"}, blocking=True)
+    coord.async_send_command.assert_awaited_with(
+        "drying_start", target_temp=60, duration=480, box_id=1)
+
+
+async def test_a_restored_setpoint_outside_the_range_falls_back_to_the_default(hass):
+    """What was stored was valid for the range of the version that stored it. Checked
+    against the range there is now, so the dryer is never sent a value the entity itself
+    would refuse."""
+    coord = await _setup_with_stored(
+        hass,
+        _stored("number.ace_2_drying_temperature", 90.0, 35, 90, 5, "°C"),
+        _stored("number.ace_2_drying_time", 0.0, 0, 12, 1, "h"))
+    assert coord.drying_temp(0) == 45 and coord.drying_hours(0) == 4
+    assert hass.states.get("number.ace_2_drying_temperature").state == "45"
+
+
+async def test_a_stored_setpoint_that_is_not_a_number_falls_back_to_the_default(hass):
+    coord = await _setup_with_stored(
+        hass,
+        _stored("number.ace_2_drying_temperature", None, 35, 65, 5, "°C"),
+        _stored("number.ace_2_drying_time", float("nan"), 1, 12, 1, "h"))
+    assert coord.drying_temp(0) == 45 and coord.drying_hours(0) == 4
+
+
+async def test_with_nothing_stored_the_setpoints_are_the_defaults(hass):
+    coord = await _setup_with_stored(hass)
+    assert coord.drying_temp(0) == 45 and coord.drying_hours(0) == 4
+    await hass.services.async_call(
+        "switch", "turn_on", {"entity_id": "switch.ace_2_drying"}, blocking=True)
+    coord.async_send_command.assert_awaited_with(
+        "drying_start", target_temp=45, duration=240, box_id=0)
+
+
+async def test_restoring_setpoints_changes_no_identity(hass):
+    from homeassistant.helpers import entity_registry as er
+
+    await _setup_with_stored(hass, _stored("number.ace_2_drying_temperature", 55.0, 35, 65, 5, "°C"))
+    registry = er.async_get(hass)
+    assert registry.async_get("number.ace_2_drying_temperature").unique_id == "SER-1_ace0_drying_temp"
+    assert registry.async_get("number.ace_2_drying_time").unique_id == "SER-1_ace0_drying_duration"
