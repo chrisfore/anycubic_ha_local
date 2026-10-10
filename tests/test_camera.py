@@ -170,6 +170,70 @@ async def test_stream_source_kicks_capture_and_uses_video_report_url(hass):
     assert video_actions == ["stopCapture", "startCapture"]
 
 
+# ------------------------------------------------- what is taken from a reported URL
+#
+# Only the path and port are taken from the printer; the host is always the configured one.
+
+
+async def _source_for(hass, reported, host="printer.local"):
+    """stream_source() for a printer whose startCapture answer carried `reported`."""
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": host})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coord = entry.runtime_data
+
+    from custom_components.anycubic.camera import AnycubicCamera
+    cam = AnycubicCamera(coord)
+    coord.async_send_command = AsyncMock()
+    coord.video_stream_url = reported
+    return await cam.stream_source()
+
+
+async def test_a_reported_host_in_another_case_is_still_replaced(hass):
+    """A host name reads the same in any case, and the reported one is not ours to keep."""
+    assert await _source_for(hass, "http://PRINTER-Cam.Example:18088/flv") == \
+        "http://printer.local:18088/flv"
+
+
+async def test_reported_port_and_tokenised_path_are_kept_as_reported(hass):
+    assert await _source_for(hass, "http://192.0.2.9:28088/live/k5DawnaQ?session=Ab3") == \
+        "http://printer.local:28088/live/k5DawnaQ?session=Ab3"
+    assert await _source_for(hass, "RTSP://192.0.2.9/streaming/live/1") == \
+        "rtsp://printer.local/streaming/live/1"
+
+
+async def test_user_information_in_a_reported_url_is_not_passed_on(hass):
+    assert await _source_for(hass, "http://name:word@192.0.2.9:18088/live/k5DawnaQ") == \
+        "http://printer.local:18088/live/k5DawnaQ"
+
+
+@pytest.mark.parametrize("reported", [
+    "file:///live/k5DawnaQ",
+    "file://192.0.2.9/live/k5DawnaQ",
+    "ftp://192.0.2.9:18088/flv",
+    "http://192.0.2.9:port/flv",                 # a port that is not a number
+    "http://192.0.2.9:99999/flv",                # or not a port
+    "http://[192.0.2.9/flv",                     # cannot be parsed at all
+    "//192.0.2.9:18088/flv",                     # no scheme
+    "http:///flv",                               # no host
+])
+async def test_a_reported_url_that_is_not_a_stream_address_falls_back_to_the_default(
+        hass, reported):
+    """http, https and rtsp are what a printer serves its stream on. Anything else, or
+    anything that does not read as an address, is not used at all."""
+    assert await _source_for(hass, reported) == "http://printer.local:18088/flv"
+
+
+async def test_a_configured_ipv6_address_is_bracketed(hass):
+    assert await _source_for(hass, "http://192.0.2.9:18088/live/k5DawnaQ",
+                             host="2001:db8::10") == "http://[2001:db8::10]:18088/live/k5DawnaQ"
+    assert await _source_for(hass, "rtsp://192.0.2.9/streaming/live/1",
+                             host="[2001:db8::10]") == "rtsp://[2001:db8::10]/streaming/live/1"
+
+
 # ------------------------------------------------- capture re-kick (issue #15)
 #
 # Home Assistant asks stream_source() once per camera entity and keeps the Stream it
@@ -488,17 +552,19 @@ async def test_a_stream_that_fails_while_being_watched_is_still_restarted(rig):
     assert stream.outputs() == {}
 
 
-async def test_a_stream_that_played_under_a_minute_does_not_count_as_watched(rig):
+@pytest.mark.parametrize("played", [50, 100])
+async def test_a_stream_that_played_under_a_minute_does_not_count_as_watched(rig, played):
     """A new output is kept for a minute from its first segment whether or not anybody
     ever requests one. So a printer camera that plays for fifty seconds and drops, over and
     over, with the browser long gone, must not keep the window open — or capture would be
-    restarted about once a minute for ever, with the chamber lit."""
+    restarted about once a minute for ever, with the chamber lit. Nor at a hundred seconds
+    on our clock, which starts before the stream is opened: a slow open can take thirty."""
     stream = await rig.open_card()
     stream.set_state(False)
     await rig.settle()
-    rig.clock.now = 1000.0 + rig.mod.CAPTURE_VIEWER_WINDOW - 40
+    rig.clock.now = 1000.0 + rig.mod.CAPTURE_VIEWER_WINDOW - played + 10
     stream.set_state(True)                       # it plays...
-    rig.clock.now += 50                          # ...for fifty seconds, into the lapsed window
+    rig.clock.now += played                      # ...and drops, into the lapsed window
     stream.set_state(False)
     await rig.settle()
     assert rig.transport.starts == 1, "capture was restarted for a stream nobody asked for"
@@ -506,14 +572,14 @@ async def test_a_stream_that_played_under_a_minute_does_not_count_as_watched(rig
 
 
 async def test_a_stream_that_played_past_the_startup_timeout_counts_as_watched(rig):
-    """An output still there after a hundred seconds of playing has had a segment requested
-    in the last half minute: somebody is watching."""
+    """An output still there after more than two minutes has had a segment requested in the
+    last half minute: somebody is watching."""
     stream = await rig.open_card()
     stream.set_state(False)
     await rig.settle()
-    rig.clock.now = 1000.0 + rig.mod.CAPTURE_VIEWER_WINDOW - 90
+    rig.clock.now = 1000.0 + rig.mod.CAPTURE_VIEWER_WINDOW - 120
     stream.set_state(True)
-    rig.clock.now += 100
+    rig.clock.now += 130
     stream.set_state(False)
     await rig.settle()
     assert rig.transport.starts == 2
