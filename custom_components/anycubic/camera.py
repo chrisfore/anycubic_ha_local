@@ -43,12 +43,14 @@ CAPTURE_VIEWER_WINDOW = 600.0
 # A stream that drops while it is being watched counts as asked for again (a card left
 # open on a long print makes only the one request). The evidence is its output: Home
 # Assistant removes a playing stream's output 30 s after the last segment request. But a
-# NEW output — and every restart here makes one — is kept for a 60 s startup timeout from
-# its first segment, requested or not, so STREAM_HEALTHY_AFTER proves nothing about
+# NEW output — and every restart here makes one — is kept for a 60 s startup timeout
+# whether or not anything is requested, so STREAM_HEALTHY_AFTER proves nothing about
 # viewers: a camera that plays for fifty seconds and drops would reopen the window each
-# time, for ever. Only an output still there after this long, clear of the startup
-# timeout, has had a segment requested within the last 30 s.
-STREAM_WATCHED_AFTER = 90.0
+# time, for ever. That startup timeout runs from the output's first segment, and the
+# time measured here runs from the start of the attempt, before the source is opened,
+# which can itself take the worker's 30 s source timeout. So 90 s at the least; only an
+# output still there after this long has had a segment requested within the last 30 s.
+STREAM_WATCHED_AFTER = 120.0
 # Once a Stream has failed, its reporting "available" again says nothing: it does so at
 # the start of every attempt to open the URL. An attempt that is going to fail has done
 # so within the worker's 30 s source timeout; one still up after this long is playing.
@@ -60,6 +62,9 @@ STREAM_STOP_TIMEOUT = 10.0
 
 # Home Assistant's name for the Stream output a recording is written through.
 _RECORDER_OUTPUT = "recorder"
+
+# The schemes a reported stream URL may have (see AnycubicCamera._stream_url).
+_STREAM_SCHEMES = ("http", "https", "rtsp")
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEntitiesCallback) -> None:
@@ -176,7 +181,7 @@ class AnycubicCamera(Camera):
         returns a per-session tokenized URL there — issue #6, Kobra 4), then the
         info report's urls.rtspUrl, then the S1-family :18088/flv. Only the host
         is replaced: the user-entered name must keep winning over the
-        printer-reported IP.
+        printer-reported IP. (See _stream_url for what is taken from a reported URL.)
         """
         async with self._kick_lock:
             return await self._async_kick()
@@ -185,12 +190,32 @@ class AnycubicCamera(Camera):
         """Start capture and return the URL it is served on. Call with _kick_lock held."""
         self._last_kick = monotonic()
         await self.coordinator.async_start_capture()
-        reported = self.coordinator.video_stream_url or self.coordinator.data.printer.camera_url
-        if reported and (parts := urlsplit(reported)).hostname:
-            return parts._replace(
-                netloc=parts.netloc.replace(parts.hostname, self.coordinator.host)
-            ).geturl()
-        return f"http://{self.coordinator.host}:18088/flv"
+        return self._stream_url(
+            self.coordinator.video_stream_url or self.coordinator.data.printer.camera_url)
+
+    def _stream_url(self, reported: str | None) -> str:
+        """The address Home Assistant opens, for the URL the printer reported (if any).
+
+        Only the path and port are taken from the printer; the host is always the
+        configured one. The address part is built, not edited: the configured host,
+        in brackets if it is an IPv6 literal, and the reported port when there is one.
+        Path and query go through exactly as reported — on new-generation firmware
+        the path is the session token. A reported URL is used only if it is http,
+        https or rtsp, which is what a printer serves its stream on, and reads as an
+        address with a host and a valid port; otherwise the S1-family default is.
+        """
+        host = self.coordinator.host
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        try:
+            parts = urlsplit(reported or "")
+            port = parts.port                    # raises for a port that is not one
+        except ValueError:
+            parts = port = None
+        if (parts is None or not parts.hostname
+                or parts.scheme.lower() not in _STREAM_SCHEMES):
+            return f"http://{host}:18088/flv"
+        return parts._replace(netloc=host if port is None else f"{host}:{port}").geturl()
 
     async def async_create_stream(self) -> Stream | None:
         """Hand out this camera's Stream, with capture running behind it (issue #15).
