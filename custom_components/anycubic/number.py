@@ -1,6 +1,8 @@
 """Printer setpoints (nozzle/bed target, fans) + ACE drying temperature/time setpoints."""
 from __future__ import annotations
 
+import math
+
 from homeassistant.components.number import NumberDeviceClass, NumberEntity, RestoreNumber
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature, UnitOfTime
@@ -82,11 +84,16 @@ class _AnycubicDryingSetpoint(AnycubicAceEntity, RestoreNumber):
         await super().async_added_to_hass()
         last = await self.async_get_last_number_data()
         value = last.native_value if last is not None else None
-        # Checked against the range there is now, not the one it was stored under: the
-        # dryer must never be sent a value this entity would itself refuse. (A value
-        # that is not a number at all fails the comparison too.) Anything else leaves
-        # the default in place.
-        if value is None or not self.native_min_value <= value <= self.native_max_value:
+        # What was stored is read back from a file, so it is checked for being a number
+        # before it is compared as one: a text or a list there has no order against the
+        # range, and the comparison raising stopped the entity being added at all. (bool
+        # is an int to Python, and not a setpoint; NaN is a float, and inside no range.)
+        # Then against the range there is now, not the one it was stored under: the dryer
+        # must never be sent a value this entity would itself refuse. Anything that fails
+        # leaves the default in place.
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or not self.native_min_value <= value <= self.native_max_value):
             return
         self._store(int(value))
         self.coordinator.async_notify_write()

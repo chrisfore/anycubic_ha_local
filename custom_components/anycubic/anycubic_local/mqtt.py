@@ -73,21 +73,25 @@ class AnycubicMqtt:
         self._closing = False
         self._c = _new_client(client_factory, f"ha-{uuid.uuid4().hex[:8]}")
         self._c.username_pw_set(hs.username, hs.password)
+        # Whether the client was given TLS. The session is TLS, and without it connect()
+        # does not open one.
+        self._tls_ready = True
         try:
             self._c.tls_set(cert_reqs=ssl.CERT_NONE)
             self._c.tls_insecure_set(True)
         except Exception as err:  # noqa: BLE001
-            # Not raised: the connect that follows fails, and that failure is handled
-            # (setup is retried, a recovery reports it). But it used to be all anyone
-            # saw, with nothing to say the cause was here. The kind of error only — its
-            # text can hold a file path or an address — and once, because a transport is
-            # built again on every recovery attempt and would fail the same way each time.
+            # Not raised here: connect() is where this transport refuses (see there), and
+            # that failure is handled — setup is retried, a recovery reports it. This line
+            # is what says the cause was here. The kind of error only — its text can hold
+            # a file path or an address — and once, because a transport is built again on
+            # every recovery attempt and would fail the same way each time.
+            self._tls_ready = False
             global _tls_failure_logged
             if not _tls_failure_logged:
                 _tls_failure_logged = True
                 _LOGGER.warning(
                     "TLS could not be set up for the printer's broker (%s); "
-                    "the connection will probably fail", type(err).__name__)
+                    "not connecting", type(err).__name__)
         self._c.on_message = self._handle
         # Sessions are clean, so the broker forgets our subscription on every drop
         # (the printer's broker restarts whenever the printer reboots). Subscribing in
@@ -128,6 +132,12 @@ class AnycubicMqtt:
         return self._connected
 
     def connect(self) -> None:
+        if not self._tls_ready:
+            # The session's credentials are the first thing sent on the connection, and
+            # a client that was not given TLS would send them without it. So nothing is
+            # opened. An OSError like any other failed connect, which is what setup and
+            # recovery already handle; the text is fixed, with nothing of the session in it.
+            raise ConnectionError("TLS is not set up for the broker session")
         self._closing = False
         self._c.connect(self._hs.broker_host, self._hs.broker_port, keepalive=60)
         self._c.loop_start()

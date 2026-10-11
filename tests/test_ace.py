@@ -728,6 +728,26 @@ async def test_a_stored_setpoint_that_is_not_a_number_falls_back_to_the_default(
     assert coord.drying_temp(0) == 45 and coord.drying_hours(0) == 4
 
 
+async def test_a_stored_setpoint_of_another_type_falls_back_to_the_default(hass):
+    """The restore store is a file, and a file can be edited by hand. A text or a list where
+    the number should be has no order against the range at all: comparing them raises, and
+    that used to stop the entity being added."""
+    coord = await _setup_with_stored(
+        hass,
+        _stored("number.ace_2_drying_temperature", "55", 35, 65, 5, "°C"),
+        _stored("number.ace_2_drying_time", [6], 1, 12, 1, "h"))
+    assert coord.drying_temp(0) == 45 and coord.drying_hours(0) == 4
+    assert hass.states.get("number.ace_2_drying_temperature").state == "45"
+    assert hass.states.get("number.ace_2_drying_time").state == "4"
+
+
+async def test_a_stored_true_is_not_a_setpoint(hass):
+    """True is the number 1 to Python, and 1 is inside the range for hours."""
+    coord = await _setup_with_stored(
+        hass, _stored("number.ace_2_drying_time", True, 1, 12, 1, "h"))
+    assert coord.drying_hours(0) == 4
+
+
 async def test_with_nothing_stored_the_setpoints_are_the_defaults(hass):
     coord = await _setup_with_stored(hass)
     assert coord.drying_temp(0) == 45 and coord.drying_hours(0) == 4

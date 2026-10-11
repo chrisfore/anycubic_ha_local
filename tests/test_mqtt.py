@@ -644,16 +644,23 @@ def test_a_disconnect_nobody_asked_for_still_warns(caplog):
 # ------------------------------------------------- TLS that could not be set up
 
 
+class NoTlsClient(FakeClient):
+    """A client that cannot be given TLS, and records whether it was asked to connect."""
+
+    def tls_set(self, **k):
+        raise FileNotFoundError(2, "No such file", "/home/someone/certs/192.168.1.50.pem")
+
+    def connect(self, h, port, keepalive=60):
+        self.connect_calls = getattr(self, "connect_calls", 0) + 1
+        super().connect(h, port, keepalive)
+
+
 def test_a_failed_tls_setup_is_logged_once_by_its_kind_alone(caplog, monkeypatch):
     """The printer's broker speaks TLS only, so a client that could not be given TLS is one
     that will not connect, and it used to say nothing at all. The line names the kind of
     error and no more: its text can hold a file path or an address. Once, because a
     transport is built again on every recovery attempt and would fail the same way each time."""
     monkeypatch.setattr(m, "_tls_failure_logged", False)
-
-    class NoTlsClient(FakeClient):
-        def tls_set(self, **k):
-            raise FileNotFoundError(2, "No such file", "/home/someone/certs/192.168.1.50.pem")
 
     hs = HandshakeResult("192.168.1.50", 9883, "u", "p", "DEV", "20029", "SER")
     with caplog.at_level("DEBUG", logger=m.__name__):
@@ -663,10 +670,55 @@ def test_a_failed_tls_setup_is_logged_once_by_its_kind_alone(caplog, monkeypatch
     assert len(lines) == 1, "not logged, or logged for every transport built"
     assert lines[0].levelname == "WARNING" and "FileNotFoundError" in lines[0].getMessage()
     assert lines[0].exc_info is None, "a traceback carries the text the line leaves out"
+    assert "not connecting" in lines[0].getMessage()
     for secret in ("192.168.1.50", "/home/someone", "No such file"):
         assert secret not in caplog.text
-    first.connect()                              # and the transport is still built, as before
-    assert first.connected is True
+    assert first.connected is False              # built, as before, and not connected
+
+
+def test_a_transport_without_tls_does_not_connect(monkeypatch):
+    """The session is TLS, and the session's credentials are the first thing sent on it. A
+    client that could not be given TLS would open the connection without it, so the
+    transport does not open one at all: connect() fails the way an unreachable broker
+    does, which setup retries and a recovery reports."""
+    monkeypatch.setattr(m, "_tls_failure_logged", False)
+    hs = HandshakeResult("192.168.1.50", 9883, "u", "p", "DEV", "20029", "SER")
+    client = m.AnycubicMqtt(hs, on_report=lambda t, d: None, client_factory=NoTlsClient)
+    try:
+        client.connect()
+    except OSError as err:
+        assert "192.168.1.50" not in str(err) and "/home/someone" not in str(err)
+    else:
+        raise AssertionError("connected without TLS")
+    assert getattr(client._c, "connect_calls", 0) == 0, "the client was asked to connect"
+    assert not getattr(client._c, "started", False), "the network thread was started"
+    assert client.connected is False
+    client.disconnect()                          # what the coordinator does next; harmless
+
+
+async def test_setup_is_retried_when_tls_could_not_be_set_up(hass, monkeypatch):
+    from unittest.mock import patch
+
+    from homeassistant.config_entries import ConfigEntryState
+    from pytest_homeassistant_custom_component.common import MockConfigEntry
+
+    monkeypatch.setattr(m, "_tls_failure_logged", False)
+    made, real = [], m.AnycubicMqtt
+
+    def transport(hs, on_report, **k):           # the real transport, on a client without TLS
+        made.append(real(hs, on_report, client_factory=NoTlsClient, **k))
+        return made[-1]
+
+    hs = HandshakeResult("192.168.1.50", 9883, "u", "p", "DEV", "20029", "SER-1")
+    entry = MockConfigEntry(domain="anycubic", unique_id="SER-1", data={"host": "192.168.1.50"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=hs), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", transport):
+        assert not await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.SETUP_RETRY
+    assert entry.reason and "192.168.1.50" not in entry.reason
+    assert len(made) == 1 and getattr(made[0]._c, "connect_calls", 0) == 0
 
 
 def test_a_working_tls_setup_logs_nothing(caplog, monkeypatch):
