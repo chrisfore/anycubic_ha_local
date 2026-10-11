@@ -15,3 +15,20 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
+  # Lint and tests. The versions are the ones in pyproject.toml's `dev` dependency group,
+  # which is also what a local venv installs; Python 3.13 is what they are known to pass on.
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade "pip>=25.1"
+          python -m pip install --group dev
+      - name: Lint
+        run: ruff check .
+      - name: Test
+        run: pytest
