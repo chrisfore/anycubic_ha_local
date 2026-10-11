@@ -10,12 +10,21 @@ from urllib.parse import urlsplit
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 
-from .const import CAMERA_MODELS, DOMAIN, MANUFACTURER, MODEL_NAMES
+from .const import (
+    CAMERA_MODELS,
+    CAMERA_SOURCE_RINKHALS,
+    CONF_CAMERA_SOURCE,
+    DOMAIN,
+    MANUFACTURER,
+    MODEL_NAMES,
+)
 from .coordinator import AnycubicCoordinator
+from .rinkhals_camera import AnycubicRinkhalsCamera
 
 if TYPE_CHECKING:
     from homeassistant.components.stream import Stream
@@ -71,8 +80,21 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEnt
     # Only models with a local camera (built-in on enclosed and on the Kobra 4 / X, add-on on
     # the Kobra 3 family). Kobra 2 has no camera.
     coord: AnycubicCoordinator = entry.runtime_data
-    if coord.hs.model_id in CAMERA_MODELS:
+    if entry.options.get(CONF_CAMERA_SOURCE) == CAMERA_SOURCE_RINKHALS:
+        # The "Camera source" option. Rinkhals serves its feed on every model it runs on,
+        # so this camera exists whatever the model — and under the same unique id as the
+        # one below, so the option changes what is behind the entity, not which entity.
+        add([AnycubicRinkhalsCamera(coord)])
+    elif coord.hs.model_id in CAMERA_MODELS:
         add([AnycubicCamera(coord)])
+    else:
+        # A model with no camera of its own, back on the printer's source after having
+        # been on the other: its camera entity would stay in the registry for good as one
+        # that is never provided again.
+        registry = er.async_get(hass)
+        stale = registry.async_get_entity_id("camera", DOMAIN, f"{coord.hs.serial}_camera")
+        if stale is not None:
+            registry.async_remove(stale)
 
 
 async def async_stop_stream(stream: Stream) -> None:

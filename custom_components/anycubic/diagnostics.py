@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .anycubic_local.const import SENSITIVE_KEYS, redacted
+from .const import CAMERA_SOURCE_PRINTER, CONF_CAMERA_SOURCE
 from .coordinator import AnycubicCoordinator
 
 # Shared with the inbound-report debug log, so a key only has to be classified once.
@@ -33,6 +34,8 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
             "entry_data": dict(entry.data),
             "model_id": coordinator.hs.model_id,
             "host": coordinator.host,
+            # Which camera the entry is set to show — the choice, not an address.
+            "camera_source": entry.options.get(CONF_CAMERA_SOURCE, CAMERA_SOURCE_PRINTER),
             "update_success": coordinator.last_update_success,
             # Capability snapshot for adding a new printer model — everything the maintainer needs to
             # support it, and nothing sensitive (model IDs, the printer's own feature/peripheral

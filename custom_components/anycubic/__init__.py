@@ -45,6 +45,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: AnycubicConfigEntry) -> 
         ) from err
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+
+    # The options (the camera source) are read when the platforms are set up, so a change
+    # takes effect by setting the entry up again. Only a change to the options: this
+    # listener also hears the address being changed, and that flow reloads the entry
+    # itself — reloading here as well would do it twice.
+    loaded_with = dict(entry.options)
+
+    async def _async_reload_on_new_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
+        if dict(entry.options) != loaded_with:
+            await hass.config_entries.async_reload(entry.entry_id)
+
+    entry.async_on_unload(entry.add_update_listener(_async_reload_on_new_options))
     return True
 
 

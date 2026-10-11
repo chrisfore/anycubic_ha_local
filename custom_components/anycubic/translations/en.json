@@ -24,6 +24,21 @@
       "reconfigure_successful": "Printer address updated."
     }
   },
+  "options": {
+    "step": {
+      "init": {
+        "data": { "camera_source": "Camera source" }
+      }
+    }
+  },
+  "selector": {
+    "camera_source": {
+      "options": {
+        "printer": "Printer camera",
+        "rinkhals": "Rinkhals camera"
+      }
+    }
+  },
   "entity": {
     "sensor": {
       "status": { "name": "Status" },

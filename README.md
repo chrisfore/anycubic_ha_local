@@ -21,7 +21,8 @@ and the more printers and firmware versions in use, the faster problems get spot
 - **Printer:** status / lifecycle, nozzle / bed / chamber temperatures, progress, current & total
   layers, time remaining, file name; *printing* and *paused* binary sensors.
   (Firmware version shows on the device page as its software version.)
-- **Live camera:** the printer's H.264 stream, started on demand.
+- **Live camera:** the printer's H.264 stream, started on demand — or the Rinkhals camera feed
+  (see **Printers running Rinkhals**).
 - **ACE 2:** humidity, box temperature, loaded slot, and all four filament slots (material, color,
   remaining %).
 
@@ -165,6 +166,23 @@ and assumes the default device names — adjust the entity-ID prefixes if you re
   settings gear) off, or HA keeps the capture — and the LED — running the whole time HA is up.
 - **Bug reports:** download diagnostics from the device page (⋮ → *Download diagnostics*) — it is
   automatically redacted of addresses and identifiers.
+
+## Printers running Rinkhals
+
+On a printer running the Rinkhals firmware overlay with its camera app on, the camera is served
+by Rinkhals and the printer's own camera stream cannot work. To use it:
+
+1. In **Settings → Devices & Services**, open the integration and choose **Configure**.
+2. Set **Camera source** to **Rinkhals camera** and submit. The integration reloads by itself.
+
+Notes:
+
+- The picture is dark unless the chamber light is on. Reading this feed does not switch the
+  light; switch it on at the printer, or with the **Chamber light** entity on enclosed models.
+- The feed is a picture stream, shown directly in the camera card. It needs no `ffmpeg`.
+- The source is a choice, not a fallback: if the feed does not answer, the camera shows as
+  unavailable and is tried again the next time it is displayed. To go back to the printer's own
+  camera, set **Camera source** to **Printer camera**.
 
 ## Feedback, bugs & requests
 

@@ -8,6 +8,15 @@ PLATFORMS: list[Platform] = [
 ]
 
 DEFAULT_QUERY_INTERVAL = 30  # seconds; heartbeat poll
+
+# The "Camera source" option: which camera the entry's camera entity shows. The printer's
+# own (camera.py) is the default and what every entry had before the option existed. The
+# other is the feed of the Rinkhals firmware overlay (rinkhals_camera.py), whose camera app
+# takes the camera away from the printer's own service. It is a choice and never a
+# fallback: neither camera tries the other when its own does not answer.
+CONF_CAMERA_SOURCE = "camera_source"
+CAMERA_SOURCE_PRINTER = "printer"
+CAMERA_SOURCE_RINKHALS = "rinkhals"
 MANUFACTURER = "Anycubic"
 
 # Printer modelId -> name. IDs verified across multiple on-printer sources (Rinkhals api.cfg,

@@ -5,12 +5,20 @@ from collections.abc import Mapping
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_HOST
+from homeassistant.core import callback
+from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig
 
 from .anycubic_local.exceptions import HandshakeError
 from .anycubic_local.handshake import HandshakeResult, do_handshake
-from .const import DOMAIN, MODEL_NAMES
+from .const import (
+    CAMERA_SOURCE_PRINTER,
+    CAMERA_SOURCE_RINKHALS,
+    CONF_CAMERA_SOURCE,
+    DOMAIN,
+    MODEL_NAMES,
+)
 
 # Characters that are never part of a bare address and that would change what the handshake
 # URL means: the address is interpolated into "http://{host}:18910/info" exactly as typed.
@@ -38,6 +46,12 @@ def _clean_host(typed: str) -> str | None:
 
 class AnycubicConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
+
+    @staticmethod
+    @callback
+    def async_get_options_flow(config_entry: ConfigEntry) -> OptionsFlow:
+        """Having this is what makes Home Assistant offer "Configure" on the entry."""
+        return AnycubicOptionsFlow()
 
     async def _async_identify(self, typed: str) -> tuple[str, HandshakeResult] | None:
         """Check an address and ask the printer there who it is; None if it cannot be used.
@@ -153,3 +167,29 @@ class AnycubicConfigFlow(ConfigFlow, domain=DOMAIN):
         return self.async_show_form(
             step_id="reconfigure_confirm",
             data_schema=vol.Schema({vol.Required(CONF_HOST, default=shown): str}), errors=errors)
+
+
+class AnycubicOptionsFlow(OptionsFlow):
+    """The entry's "Configure" dialog: which camera the camera entity shows.
+
+    Spelled so that it runs on every Home Assistant since 2024.9, like the steps above.
+    The entry is looked up by `self.handler`, which for an options flow has always been
+    the entry's id: handing the entry to the flow is how 2024.9 did it and is refused by
+    current versions, and the `config_entry` property that replaced it arrived in 2024.11.
+    The reload that makes a new choice take effect is done by the entry's update listener
+    (see async_setup_entry), for the same reason: OptionsFlowWithReload is newer still.
+    """
+
+    async def async_step_init(self, user_input=None) -> ConfigFlowResult:
+        if user_input is not None:
+            return self.async_create_entry(title="", data=user_input)
+        entry = self.hass.config_entries.async_get_entry(self.handler)
+        current = entry.options.get(CONF_CAMERA_SOURCE, CAMERA_SOURCE_PRINTER)
+        # A choice of two, named in strings.json. Nothing is typed here: the feed's
+        # address is built from the printer's own (see rinkhals_camera.py).
+        return self.async_show_form(step_id="init", data_schema=vol.Schema({
+            vol.Required(CONF_CAMERA_SOURCE, default=current): SelectSelector(
+                SelectSelectorConfig(
+                    options=[CAMERA_SOURCE_PRINTER, CAMERA_SOURCE_RINKHALS],
+                    translation_key=CONF_CAMERA_SOURCE)),
+        }))
