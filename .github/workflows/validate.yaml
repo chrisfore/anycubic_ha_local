@@ -2,6 +2,8 @@ name: Validate
 on:
   push:
   pull_request:
+permissions:
+  contents: read
 jobs:
   hassfest:
     runs-on: ubuntu-latest
