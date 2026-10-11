@@ -33,7 +33,7 @@ def decrypt_ctrl(info_b64: str, token: str, local_token: str) -> dict:
         unpadder = PKCS7(128).unpadder()
         plaintext = unpadder.update(padded) + unpadder.finalize()
         return json.loads(plaintext.decode())
-    except Exception as err:  # noqa: BLE001
+    except Exception as err:
         raise HandshakeError(f"ctrl decrypt failed: {err}") from err
 
 

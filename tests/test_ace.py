@@ -2,8 +2,8 @@ from unittest.mock import AsyncMock, patch
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.anycubic.const import DOMAIN
 from custom_components.anycubic.anycubic_local.handshake import HandshakeResult
+from custom_components.anycubic.const import DOMAIN
 
 HS = HandshakeResult("1.2.3.4", 9883, "u", "p", "DEV", "20029", "SER-1")
 

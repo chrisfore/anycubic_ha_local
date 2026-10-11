@@ -8,8 +8,22 @@ dependencies = ["cryptography>=42", "paho-mqtt>=1.6"]
 [tool.setuptools.packages.find]
 include = ["custom_components*"]
 
-[project.optional-dependencies]
-dev = ["pytest", "ruff>=0.6", "pytest-homeassistant-custom-component>=0.13.200"]
+# What the tests and the linter need, for a local venv and for CI alike
+# (`pip install --group dev`, pip 25.1 or newer). A dependency group and not an extra, so
+# installing it does not build this project: nothing here is imported as an installed
+# package — pytest finds `custom_components` through `pythonpath` below.
+#
+# Pinned to what the suite is known to pass on, under Python 3.13: the pytest plugin pins
+# its own Home Assistant (0.13.316 -> 2026.2.3), and a newer ruff can find new things in
+# unchanged code. PyTurboJPEG is here because Home Assistant's camera component imports
+# it at load and the plugin does not bring it; the stream tests stand in for PyAV
+# themselves, so that is not.
+[dependency-groups]
+dev = [
+    "pytest-homeassistant-custom-component==0.13.316",
+    "PyTurboJPEG==2.5.0",
+    "ruff==0.16.0",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -18,3 +32,35 @@ asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100
+target-version = "py312"
+# Not this project's code: third-party clones kept for reference, bench captures, and the
+# one-off script that drew the brand icons.
+extend-exclude = ["reference", "research", "brand-options"]
+
+[tool.ruff.lint]
+# A modest set, chosen for what it catches here and not for coverage:
+#   E, W    pycodestyle: syntax-level slips.
+#   F       pyflakes: unused and undefined names — real mistakes.
+#   I       import order, so it stops being a matter of taste in review.
+#   B       bugbear: constructs that are usually bugs (a closure over a loop variable).
+#   UP      idioms older than the oldest Python supported (3.12).
+#   BLE     a broad `except` has to be marked. Every deliberate one here already carries
+#           `# noqa: BLE001` with its reason beside it; this makes the next one do so too.
+#   RUF100  a `# noqa` that no longer suppresses anything is removed, so they stay honest.
+# Left out on purpose: the style families (C4, SIM, RET, PL, ...), which would have the
+# code rewritten to no gain; S, whose findings in this code are its deliberate
+# `try/except/pass` around paho; and EXE, which on this tree only reports the executable
+# bit an SMB share puts on every file.
+select = ["E", "W", "F", "I", "B", "UP", "BLE", "RUF100"]
+# E501: the limit above is for the import sorter. Some ninety lines run past it, mostly
+# entity tables and test data that read better unbroken; wrapping them is a formatting
+# pass, which this is not.
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# The fake transports and clients are written one method to a line on purpose.
+"tests/**" = ["E702"]
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+known-first-party = ["custom_components"]

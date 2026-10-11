@@ -1,5 +1,5 @@
-from custom_components.anycubic.coordinator import AnycubicCoordinator
 from custom_components.anycubic.anycubic_local.handshake import HandshakeResult
+from custom_components.anycubic.coordinator import AnycubicCoordinator
 
 HS = HandshakeResult("1.2.3.4", 9883, "u", "p", "DEV", "20029", "SER-1")
 

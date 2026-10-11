@@ -180,7 +180,6 @@ def test_the_answer_to_stop_capture_is_not_forwarded():
 def test_inbound_reports_are_logged_with_secrets_redacted(caplog):
     """The report log is the instrument for issue #9 — it must name the type that arrived
     and must not leak the address or filename into a log a user pastes into an issue."""
-    import logging
     from custom_components.anycubic.anycubic_local.const import redacted
 
     payload = {"type": "info", "action": "report",
@@ -555,8 +554,10 @@ def test_a_payload_that_is_not_a_json_object_is_ignored(caplog):
     for level in (logging.DEBUG, logging.WARNING):
         caplog.set_level(level, logger=m.__name__)
         seen = []
-        client = m.AnycubicMqtt(SECRET_HS, on_report=lambda t, d: seen.append((t, d)),
-                                client_factory=FakeClient)
+        # The lambda is called inside this iteration, so the loop variable is the right one.
+        client = m.AnycubicMqtt(
+            SECRET_HS, on_report=lambda t, d: seen.append((t, d)),  # noqa: B023
+            client_factory=FakeClient)
         for payload in ([1, 2, 3], [{"type": "info", "data": {"state": "free"}}], 7, "info", None,
                         True):
             client._c.on_message(client._c, None, _msg(f"{REPORTS}/info/report", payload))

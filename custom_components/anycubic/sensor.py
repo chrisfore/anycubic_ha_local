@@ -10,9 +10,9 @@ from .const import ACE_SLOT_COUNT, ENCLOSED_MODELS, box_has_dryer
 from .coordinator import AnycubicCoordinator
 from .definitions import (
     ACE_SENSORS,
+    PRINTER_SENSORS,
     AceSensorEntityDescription,
     AnycubicSensorEntityDescription,
-    PRINTER_SENSORS,
     slot_attributes,
 )
 from .entity import AnycubicAceEntity, AnycubicEntity, async_setup_ace_entities

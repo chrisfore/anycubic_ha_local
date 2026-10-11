@@ -5,8 +5,8 @@ from unittest.mock import patch
 from homeassistant import config_entries
 from homeassistant.data_entry_flow import FlowResultType
 
-from custom_components.anycubic.const import DOMAIN
 from custom_components.anycubic.anycubic_local.handshake import HandshakeResult
+from custom_components.anycubic.const import DOMAIN
 
 HS = HandshakeResult("1.2.3.4", 9883, "u", "p", "DEV", "20029", "SER-1")
 
@@ -83,6 +83,7 @@ async def test_reauth_still_cloud(hass):
 
 async def test_setup_cloud_mode_starts_reauth(hass):
     from pytest_homeassistant_custom_component.common import MockConfigEntry
+
     from custom_components.anycubic.anycubic_local.exceptions import CloudModeError
     entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "1.2.3.4"})
     entry.add_to_hass(hass)

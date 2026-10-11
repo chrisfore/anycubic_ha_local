@@ -7,7 +7,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .coordinator import AnycubicCoordinator
-from .definitions import AnycubicBinaryEntityDescription, PRINTER_BINARY_SENSORS
+from .definitions import PRINTER_BINARY_SENSORS, AnycubicBinaryEntityDescription
 from .entity import AnycubicEntity
 
 

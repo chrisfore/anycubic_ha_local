@@ -41,7 +41,7 @@ class AceBox:
 def _rgb_hex(color) -> str | None:
     if not color or len(color) < 3:
         return None
-    return "#{:02X}{:02X}{:02X}".format(color[0], color[1], color[2])
+    return f"#{color[0]:02X}{color[1]:02X}{color[2]:02X}"
 
 
 def _opt(s: str | None) -> str | None:

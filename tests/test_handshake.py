@@ -230,7 +230,9 @@ def test_an_answer_of_the_wrong_shape_is_a_failed_handshake():
     for what, (info, ctrl) in _wrong_answers().items():
         answers = iter((info, ctrl))
         with pytest.raises(HandshakeError) as err:
-            handshake.do_handshake(ENTERED, fetch=lambda method, url, **kw: next(answers))
+            # The lambda is called inside this iteration, so the loop variable is the right one.
+            handshake.do_handshake(
+                ENTERED, fetch=lambda method, url, **kw: next(answers))  # noqa: B023
         # And it does not say where: the text ends up in Home Assistant's ordinary log.
         assert ENTERED not in str(err.value), what
 

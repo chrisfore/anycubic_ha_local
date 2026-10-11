@@ -82,7 +82,7 @@ class AnycubicMqtt:
             # saw, with nothing to say the cause was here. The kind of error only — its
             # text can hold a file path or an address — and once, because a transport is
             # built again on every recovery attempt and would fail the same way each time.
-            global _tls_failure_logged  # noqa: PLW0603
+            global _tls_failure_logged
             if not _tls_failure_logged:
                 _tls_failure_logged = True
                 _LOGGER.warning(

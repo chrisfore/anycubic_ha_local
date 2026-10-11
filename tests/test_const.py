@@ -1,6 +1,5 @@
 # tests/test_const.py
-from custom_components.anycubic.anycubic_local import const
-from custom_components.anycubic.anycubic_local import QUERY_TYPES
+from custom_components.anycubic.anycubic_local import QUERY_TYPES, const
 
 
 def test_topic_builders():

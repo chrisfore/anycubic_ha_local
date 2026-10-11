@@ -42,7 +42,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 # component scanner tries to iterate as a directory, causing FileNotFoundError.
 _CC_ROOT = str(pathlib.Path(__file__).parent.parent / "custom_components")
 try:
-    import custom_components as _cc  # noqa: PLC0415
+    import custom_components as _cc
     _cc.__path__ = [p for p in list(_cc.__path__) if pathlib.Path(p).exists()]
     if _CC_ROOT not in _cc.__path__:
         _cc.__path__.insert(0, _CC_ROOT)

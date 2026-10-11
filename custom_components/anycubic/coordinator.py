@@ -237,7 +237,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             raise ConfigEntryAuthFailed(self._error_text(err)) from err
         except UpdateFailed:
             raise
-        except Exception as err:  # noqa: BLE001
+        except Exception as err:
             raise UpdateFailed(f"reconnect failed: {self._error_text(err)}") from err
         # Give the rebuilt session a full silence window before judging it again.
         self._last_report = time.monotonic()

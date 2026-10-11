@@ -2,9 +2,9 @@ from unittest.mock import patch
 
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
+from custom_components.anycubic.anycubic_local.handshake import HandshakeResult
 from custom_components.anycubic.const import DOMAIN
 from custom_components.anycubic.diagnostics import async_get_config_entry_diagnostics
-from custom_components.anycubic.anycubic_local.handshake import HandshakeResult
 
 HS = HandshakeResult("1.2.3.4", 9883, "u", "secretpw", "DEV", "20029", "SER-1",
                      model_name="Anycubic Kobra S1 Max", device_type="fdm")

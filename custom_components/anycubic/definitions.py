@@ -6,7 +6,11 @@ from dataclasses import dataclass
 
 from homeassistant.components.binary_sensor import BinarySensorEntityDescription
 from homeassistant.components.number import NumberDeviceClass, NumberEntityDescription
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntityDescription, SensorStateClass
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntityDescription,
+    SensorStateClass,
+)
 from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfTemperature, UnitOfTime
 
 from .anycubic_local.models import AceBox, PrinterState, Slot, display_filename

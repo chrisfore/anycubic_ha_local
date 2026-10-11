@@ -3,9 +3,9 @@ from unittest.mock import patch
 import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.anycubic.const import DOMAIN
 from custom_components.anycubic.anycubic_local.exceptions import HandshakeError
 from custom_components.anycubic.anycubic_local.handshake import HandshakeResult, do_handshake
+from custom_components.anycubic.const import DOMAIN
 
 
 class FakeTransport:
