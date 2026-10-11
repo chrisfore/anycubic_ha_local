@@ -195,6 +195,9 @@ views:
                   - condition: state
                     entity: binary_sensor.anycubic_kobra_s1_max_paused
                     state: "on"
+                  - condition: state
+                    entity: sensor.anycubic_kobra_s1_max_status
+                    state: [preheating, printing, pausing, paused, resuming, resumed]
             card:
               type: gauge
               entity: sensor.anycubic_kobra_s1_max_progress
@@ -264,6 +267,9 @@ views:
                   - condition: state
                     entity: binary_sensor.anycubic_kobra_s1_max_paused
                     state: "on"
+                  - condition: state
+                    entity: sensor.anycubic_kobra_s1_max_status
+                    state: [preheating, printing, pausing, paused, resuming, resumed]
             card:
               type: entities
               title: Print
