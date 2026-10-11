@@ -38,6 +38,9 @@ views:
                   - condition: state
                     entity: binary_sensor.anycubic_kobra_s1_max_paused
                     state: "on"
+                  - condition: state
+                    entity: sensor.anycubic_kobra_s1_max_status
+                    state: [preheating, printing, pausing, paused, resuming, resumed]
             card:
               type: picture-glance
               title: ""
@@ -53,6 +56,9 @@ views:
               - condition: state
                 entity: binary_sensor.anycubic_kobra_s1_max_paused
                 state_not: "on"
+              - condition: state
+                entity: sensor.anycubic_kobra_s1_max_status
+                state_not: [preheating, printing, pausing, paused, resuming, resumed]
             card:
               type: custom:mushroom-template-card
               entity: camera.anycubic_kobra_s1_max_camera

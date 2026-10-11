@@ -182,7 +182,9 @@ Notes:
 - The feed is a picture stream, shown directly in the camera card. It needs no `ffmpeg`.
 - The source is a choice, not a fallback: if the feed does not answer, the camera shows as
   unavailable and is tried again the next time it is displayed. To go back to the printer's own
-  camera, set **Camera source** to **Printer camera**.
+  camera, set **Camera source** to **Printer camera**. On a printer model with no camera of its
+  own, that removes the camera entity, so a card that used it shows nothing until the source is
+  set back.
 
 ## Feedback, bugs & requests
 
