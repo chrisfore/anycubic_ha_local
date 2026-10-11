@@ -79,6 +79,39 @@ def ace_suffix(box_id: int) -> str:
     """Device-identifier / unique-id suffix for an ACE box ("ace0", "ace1", ...)."""
     return f"ace{box_id}"
 
+
+# The two below name a unit's device. They live here, and not with the entities that use
+# them, because the coordinator renames devices with them too and the entities import the
+# coordinator.
+def ace_device_name(box_id: int, model_id) -> str:
+    """Display name for a multi-material unit's device.
+
+    A negative id is the printer's built-in changer (Kobra X), not a box the user owns —
+    naming it "ACE 2" off its reported model_id claims hardware they don't have (issue #8).
+    Box 0 keeps the literal "ACE 2" until its model is known, so entity IDs minted at
+    registration stay deterministic (ace_2_*). Additional boxes only register after
+    they have reported, so they can carry the real model plus a unit number ("ACE Pro #2").
+    """
+    if box_id < 0:
+        return "Multi-color unit"
+    model = ACE_MODEL_NAMES.get(str(model_id)) if model_id is not None else None
+    if box_id == 0:
+        return model or "ACE 2"
+    return f"{model or 'ACE'} #{box_id + 1}"
+
+
+def ace_device_model(box_id: int, model_id) -> str:
+    """Hardware model shown on the device page.
+
+    The built-in changer reports the ACE 2 model id because it speaks the same protocol
+    (Anycubic ships it as "ACE Gen 2" tech), but it is part of the printer.
+    """
+    model = ACE_MODEL_NAMES.get(str(model_id)) if model_id is not None else None
+    if box_id < 0:
+        return f"{model or 'ACE'} (built-in)"
+    return model or "ACE 2"
+
+
 # Defaults used when the drying switch is turned on (the values the Anycubic app sent live).
 ACE_DRYING_DEFAULT_TEMP = 45        # °C
 ACE_DRYING_DEFAULT_DURATION_MIN = 240

@@ -48,6 +48,9 @@ def _new_client(factory, client_id: str):
     return factory(callback_api_version=versions.VERSION1, client_id=client_id)
 
 
+# Whether a failed TLS setup has been logged in this run (see AnycubicMqtt.__init__).
+_tls_failure_logged = False
+
 class AnycubicMqtt:
     def __init__(self, hs: HandshakeResult, on_report: Callable[[str, dict], None],
                  client_factory=mqtt.Client, identifiers: tuple[str, ...] | None = None,
@@ -73,8 +76,18 @@ class AnycubicMqtt:
         try:
             self._c.tls_set(cert_reqs=ssl.CERT_NONE)
             self._c.tls_insecure_set(True)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as err:  # noqa: BLE001
+            # Not raised: the connect that follows fails, and that failure is handled
+            # (setup is retried, a recovery reports it). But it used to be all anyone
+            # saw, with nothing to say the cause was here. The kind of error only — its
+            # text can hold a file path or an address — and once, because a transport is
+            # built again on every recovery attempt and would fail the same way each time.
+            global _tls_failure_logged  # noqa: PLW0603
+            if not _tls_failure_logged:
+                _tls_failure_logged = True
+                _LOGGER.warning(
+                    "TLS could not be set up for the printer's broker (%s); "
+                    "the connection will probably fail", type(err).__name__)
         self._c.on_message = self._handle
         # Sessions are clean, so the broker forgets our subscription on every drop
         # (the printer's broker restarts whenever the printer reboots). Subscribing in

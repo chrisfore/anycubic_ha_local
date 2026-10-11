@@ -97,11 +97,6 @@ class AceSensorEntityDescription(SensorEntityDescription):
     dry_box_only: bool = False
 
 
-@dataclass(frozen=True, kw_only=True)
-class AceBinaryEntityDescription(BinarySensorEntityDescription):
-    is_on_fn: Callable[[AceBox], bool]
-
-
 ACE_SENSORS: tuple[AceSensorEntityDescription, ...] = (
     AceSensorEntityDescription(key="humidity", translation_key="ace_humidity",
         device_class=SensorDeviceClass.HUMIDITY, native_unit_of_measurement=PERCENTAGE,
@@ -115,9 +110,6 @@ ACE_SENSORS: tuple[AceSensorEntityDescription, ...] = (
         # Printer slots are 0-indexed; show 1-4 to match the "Slot N" labels. -1/None = nothing loaded.
         value_fn=lambda b: "None" if b.loaded_slot in (None, -1) else b.loaded_slot + 1),
 )
-
-# Drying is exposed as a controllable switch (see switch.py), not a read-only binary sensor.
-ACE_BINARY_SENSORS: tuple[AceBinaryEntityDescription, ...] = ()
 
 
 def slot_attributes(slot: Slot | None) -> dict:

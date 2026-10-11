@@ -309,7 +309,18 @@ def _mask_url(text: str) -> str:
                     path, f"?{REDACTED}" if parts.query else "",
                     f"#{REDACTED}" if parts.fragment else ""))
 
-QUERY_TYPES = ["info", "tempature", "fan", "light", "multiColorBox", "print"]
+# The report types asked for at connect and on every poll. The one list: the coordinator
+# polls from it.
+#
+# Printer status (info/tempature/fan/light) is pushed by the printer during activity, but the ACE
+# box (multiColorBox) is NOT pushed — it only answers an on-demand getInfo — so we re-poll on an interval.
+# The push rates differ by orders of magnitude: `tempature` lands within a second of a reading
+# changing, while `info` can go minutes between arrivals when no other client (the Anycubic Slicer)
+# is talking to the printer. Every type here must therefore be applied, not just `info` (issue #9).
+#
+# `print` is not here: it is pushed on every change during a job and answers no query. Nor
+# is `extfilbox`, which a query gets nothing from either (see the coordinator's probe).
+QUERY_TYPES = ("info", "tempature", "fan", "light", "multiColorBox")
 # note: "tempature" is the printer firmware's actual (misspelled) wire string and must NOT be corrected.
 # report `action` varies (query/report/refresh/workReport/setInfo) — key off TYPE, never action.
 

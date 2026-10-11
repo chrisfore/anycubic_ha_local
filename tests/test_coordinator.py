@@ -147,6 +147,17 @@ async def test_coordinator_captures_capabilities(hass):
     assert {"info", "peripherie"} <= coord.seen_report_types
 
 
+async def test_the_coordinator_polls_the_one_list_of_query_types(hass):
+    from custom_components.anycubic.anycubic_local import QUERY_TYPES
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    assert coord._transport.queries == [*QUERY_TYPES, "peripherie"]     # at connect
+    coord._transport.queries.clear()
+    await coord._async_update_data()
+    assert coord._transport.queries == list(QUERY_TYPES)                # on every poll
+    assert coord._transport.queries == ["info", "tempature", "fan", "light", "multiColorBox"]
+
+
 # ------------------------------------------------- dead-session detection (issue #9)
 #
 # The reported symptom: entities freeze at their last values while the integration

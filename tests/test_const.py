@@ -18,3 +18,10 @@ def test_pause_enum():
 def test_query_types_includes_required_entries():
     assert "info" in QUERY_TYPES
     assert "multiColorBox" in QUERY_TYPES
+
+
+def test_print_is_not_polled():
+    """`print` is pushed on every change during a job and answers no query. The list said
+    otherwise while nothing read it; now that it is the one the coordinator polls from, it
+    has to say what is polled."""
+    assert "print" not in QUERY_TYPES

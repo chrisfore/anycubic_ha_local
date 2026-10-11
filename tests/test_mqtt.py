@@ -638,3 +638,38 @@ def test_a_disconnect_nobody_asked_for_still_warns(caplog):
     caplog.clear()
     client._c.on_disconnect(client._c, None, 7)
     assert _warnings(caplog) == ["printer broker connection lost; paho will auto-reconnect"]
+
+
+# ------------------------------------------------- TLS that could not be set up
+
+
+def test_a_failed_tls_setup_is_logged_once_by_its_kind_alone(caplog, monkeypatch):
+    """The printer's broker speaks TLS only, so a client that could not be given TLS is one
+    that will not connect, and it used to say nothing at all. The line names the kind of
+    error and no more: its text can hold a file path or an address. Once, because a
+    transport is built again on every recovery attempt and would fail the same way each time."""
+    monkeypatch.setattr(m, "_tls_failure_logged", False)
+
+    class NoTlsClient(FakeClient):
+        def tls_set(self, **k):
+            raise FileNotFoundError(2, "No such file", "/home/someone/certs/192.168.1.50.pem")
+
+    hs = HandshakeResult("192.168.1.50", 9883, "u", "p", "DEV", "20029", "SER")
+    with caplog.at_level("DEBUG", logger=m.__name__):
+        first = m.AnycubicMqtt(hs, on_report=lambda t, d: None, client_factory=NoTlsClient)
+        m.AnycubicMqtt(hs, on_report=lambda t, d: None, client_factory=NoTlsClient)
+    lines = [r for r in caplog.records if "TLS" in r.getMessage()]
+    assert len(lines) == 1, "not logged, or logged for every transport built"
+    assert lines[0].levelname == "WARNING" and "FileNotFoundError" in lines[0].getMessage()
+    assert lines[0].exc_info is None, "a traceback carries the text the line leaves out"
+    for secret in ("192.168.1.50", "/home/someone", "No such file"):
+        assert secret not in caplog.text
+    first.connect()                              # and the transport is still built, as before
+    assert first.connected is True
+
+
+def test_a_working_tls_setup_logs_nothing(caplog, monkeypatch):
+    monkeypatch.setattr(m, "_tls_failure_logged", False)
+    with caplog.at_level("DEBUG", logger=m.__name__):
+        _client()
+    assert not [r for r in caplog.records if "TLS" in r.getMessage()]

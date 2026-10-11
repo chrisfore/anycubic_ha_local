@@ -17,7 +17,13 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 
 from .anycubic_local import mqtt as mqtt_mod
 from .anycubic_local.commands import build as build_command
-from .anycubic_local.const import query_topic, redacted, redacted_error, runtime_identifiers
+from .anycubic_local.const import (
+    QUERY_TYPES,
+    query_topic,
+    redacted,
+    redacted_error,
+    runtime_identifiers,
+)
 from .anycubic_local.exceptions import CloudModeError
 from .anycubic_local.handshake import HandshakeResult, do_handshake
 from .anycubic_local.models import (
@@ -44,19 +50,14 @@ from .const import (
     BUILTIN_ACE_MODELS,
     DEFAULT_QUERY_INTERVAL,
     DOMAIN,
+    ace_device_model,
+    ace_device_name,
     ace_suffix,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-# Printer status (info/tempature/fan/light) is pushed by the printer during activity, but the ACE
-# box (multiColorBox) is NOT pushed — it only answers an on-demand getInfo — so we re-poll on an interval.
-# The push rates differ by orders of magnitude: `tempature` lands within a second of a reading
-# changing, while `info` can go minutes between arrivals when no other client (the Anycubic Slicer)
-# is talking to the printer. Every type here must therefore be applied, not just `info` (issue #9).
-_QUERY_TYPES = ("info", "tempature", "fan", "light", "multiColorBox")
-
-# `extfilbox` is NOT here. Polling it with action "query" is answered by nothing at all —
+# `extfilbox` is NOT in QUERY_TYPES (anycubic_local/const.py), the list polled from. Polling it with action "query" is answered by nothing at all —
 # confirmed on a Kobra 3 V2 whose holder had a spool loaded and no ACE attached, where a
 # full connect + poll cycle answered every other type and never once sent `extfilbox`
 # (issue #12). It arrives only when the Slicer connects or the ACE is unplugged. These are
@@ -162,7 +163,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
                                   job_names=self._job_names)
         try:
             transport.connect()
-            for t in (*_QUERY_TYPES, *_CONNECT_ONLY_QUERY_TYPES):
+            for t in (*QUERY_TYPES, *_CONNECT_ONLY_QUERY_TYPES):
                 transport.query(t)
             self._probe_extfilbox(transport)
         except Exception:
@@ -251,7 +252,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
                 and time.monotonic() - self._last_report > STALE_AFTER)
 
     def _poll(self) -> None:
-        for t in _QUERY_TYPES:
+        for t in QUERY_TYPES:
             self._transport.query(t)
 
     async def async_shutdown(self) -> None:
@@ -597,8 +598,6 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         entity IDs stay deterministic, further boxes as "ACE #N"); this renames only
         the registry display name/model. A user rename (name_by_user) still wins.
         """
-        from .entity import ace_device_model, ace_device_name  # local: entity.py imports this module
-
         registry = dr.async_get(self.hass)
         for box in self.data.ace:
             if box.model_id is None or str(box.model_id) not in ACE_MODEL_NAMES:
