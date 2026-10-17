@@ -198,3 +198,74 @@ async def test_a_lights_list_that_says_nothing_leaves_the_light_alone(hass):
         _printer_sends(paho, "light/report", _light_report("query", data))
         await hass.async_block_till_done()
         assert hass.states.get(ENTITY).state == "on", data
+
+
+# ------------------------------------------- the Kobra 4 camera light (issue #17)
+
+HS_K4 = HandshakeResult("1.2.3.4", 9883, "u", "p", "DEV", "20028", "SER-4")
+
+
+async def _setup_k4(hass):
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-4", data={"host": "1.2.3.4"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS_K4), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    return entry
+
+
+def _light_entities(hass):
+    from homeassistant.helpers import entity_registry as er
+    return {e.unique_id: e.entity_id for e in er.async_get(hass).entities.values()
+            if e.domain == "light"}
+
+
+async def test_kobra4_camera_light_appears_once_peripherie_reports_a_camera(hass):
+    entry = await _setup_k4(hass)
+    coord = entry.runtime_data
+    assert _light_entities(hass) == {}                 # peripherie not answered yet
+    coord._apply("peripherie", {"camera": 1, "multiColorBox": 0, "udisk": 1})
+    await hass.async_block_till_done()
+    ents = _light_entities(hass)
+    assert list(ents) == ["SER-4_camera_light"]        # no chamber light on a Kobra 4
+    eid = ents["SER-4_camera_light"]
+    assert eid.endswith("_camera_light")
+    assert hass.states.get(eid).state == "unknown"
+
+    coord._apply("light", {"lights": [{"type": 2, "status": 1, "brightness": 100},
+                                      {"type": 3, "status": 1, "brightness": 100}]})
+    await hass.async_block_till_done()
+    assert hass.states.get(eid).state == "on"
+
+    coord.async_send_command = AsyncMock()
+    await hass.services.async_call("light", "turn_off", {"entity_id": eid}, blocking=True)
+    coord.async_send_command.assert_awaited_with("camera_light", on=False)
+    await hass.async_block_till_done()
+    assert hass.states.get(eid).state == "off"
+    await hass.services.async_call("light", "turn_on", {"entity_id": eid}, blocking=True)
+    coord.async_send_command.assert_awaited_with("camera_light", on=True)
+
+    # A later peripherie answer does not add it twice.
+    coord._apply("peripherie", {"camera": 1})
+    await hass.async_block_till_done()
+    assert list(_light_entities(hass)) == ["SER-4_camera_light"]
+
+
+async def test_kobra4_without_a_camera_gets_no_camera_light(hass):
+    entry = await _setup_k4(hass)
+    entry.runtime_data._apply("peripherie", {"camera": 0, "multiColorBox": 0, "udisk": 1})
+    await hass.async_block_till_done()
+    assert _light_entities(hass) == {}
+
+
+async def test_s1_max_gets_no_camera_light(hass):
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "1.2.3.4"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    entry.runtime_data._apply("peripherie", {"camera": 1, "multiColorBox": 1, "udisk": 0})
+    await hass.async_block_till_done()
+    assert list(_light_entities(hass)) == ["SER-1_chamber_light"]

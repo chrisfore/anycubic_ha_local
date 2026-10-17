@@ -265,3 +265,39 @@ def test_parse_file_details_rejects_an_oversized_blob(load_fixture):
 def test_parse_file_details_ignores_a_non_details_file_report(load_fixture):
     # listLocal / deleteLocal / listUdisk share the `file` topic and carry no renders.
     assert models.parse_file_details({"root": "local", "records": [{"name": "a.gcode"}]}) is None
+
+
+# ------------------------------------------- the Kobra 4 camera light (issue #17)
+CHAMBER_ON = {"type": 2, "status": 1, "brightness": 100}
+CAMERA_OFF = {"type": 3, "status": 0, "brightness": 0}
+
+
+def test_parse_light_picks_each_lamp_from_a_list_by_type_in_either_order():
+    for lights in ([CHAMBER_ON, CAMERA_OFF], [CAMERA_OFF, CHAMBER_ON]):
+        data = {"lights": lights}
+        assert models.parse_light(data) == models.LightState(on=True, brightness=100)
+        assert models.parse_light(data, 3) == models.LightState(on=False, brightness=0)
+
+
+def test_parse_light_with_only_the_camera_light_says_nothing_about_the_chamber():
+    data = {"lights": [{"type": 3, "status": 1, "brightness": 100}]}
+    assert models.parse_light(data) is None
+    assert models.parse_light(data, 3) == models.LightState(on=True, brightness=100)
+
+
+def test_parse_light_does_not_take_an_untyped_entry_for_any_lamp():
+    data = {"lights": [{"status": 1, "brightness": 100}]}
+    assert models.parse_light(data) is None
+    assert models.parse_light(data, 3) is None
+
+
+def test_parse_light_reads_a_bare_camera_light_object_only_for_the_camera_light():
+    assert models.parse_light({"type": 3, "status": 1, "brightness": 100}) is None
+    assert models.parse_light({"type": 3, "status": 1, "brightness": 100}, 3).on is True
+    assert models.parse_light({"type": 2, "status": 1, "brightness": 100}, 3) is None
+
+
+def test_s1_max_single_chamber_entry_still_parses(load_fixture):
+    data = load_fixture("light_report.json")
+    assert models.parse_light(data) == models.LightState(on=True, brightness=100)
+    assert models.parse_light(data, 3) is None

@@ -93,7 +93,8 @@
       "camera": { "name": "Camera" }
     },
     "light": {
-      "chamber_light": { "name": "Chamber light" }
+      "chamber_light": { "name": "Chamber light" },
+      "camera_light": { "name": "Camera light" }
     }
   }
 }

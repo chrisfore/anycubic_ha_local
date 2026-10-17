@@ -46,6 +46,9 @@ ACE_MODEL_NAMES: dict[str, str] = {
 # Enclosed printers (KS1 / KS1 Max): chamber temperature, box/chamber fan, and chamber light are
 # real hardware only here. On open-frame Kobra models those fields are absent or no-ops.
 ENCLOSED_MODELS: frozenset[str] = frozenset({"20025", "20029"})
+# Models with a camera light (light type 3), shown only when peripherie reports a camera.
+# Kobra 4 (issue #17), confirmed from a user capture.
+CAMERA_LIGHT_MODELS: frozenset[str] = frozenset({"20028"})
 
 # Models with a camera at :18088 (built-in on enclosed and on the Kobra 4 / X, add-on on the
 # Kobra 3 family); Kobra 2 has no camera. Kobra 4 (issue #6) and Kobra X (issue #8) both confirmed

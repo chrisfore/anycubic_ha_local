@@ -336,6 +336,8 @@ STATE_BUSY = "busy"
 # report parser on purpose: the printer answers a light command with a bare light object,
 # and the parser believes one only for the lamp the builder commands (issue #14).
 LIGHT_TYPE_CHAMBER = 2
+# The camera light on the Kobra 4 (model 20028), switched with the same command (issue #17).
+LIGHT_TYPE_CAMERA = 3
 
 
 def query_topic(model_id: str, device_id: str, msg_type: str) -> str:

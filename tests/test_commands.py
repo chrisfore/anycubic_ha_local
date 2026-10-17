@@ -52,6 +52,19 @@ def test_light_command_names_the_lamp_the_parser_accepts():
     assert parse_light(p_off["data"]) == LightState(on=False, brightness=0)
 
 
+def test_camera_light():
+    # Kobra 4 camera light (issue #17): the same command, light type 3.
+    t, p = commands.build(M, D, "camera_light", on=True)
+    assert t == f"{BASE}/light"
+    assert p["action"] == "control"
+    assert p["data"] == {"type": 3, "status": 1, "brightness": 100}
+    _, p_off = commands.build(M, D, "camera_light", on=False)
+    assert p_off["data"] == {"type": 3, "status": 0, "brightness": 0}
+    from custom_components.anycubic.anycubic_local.models import LightState, parse_light
+    assert parse_light(p["data"], 3) == LightState(on=True, brightness=100)
+    assert parse_light(p["data"]) is None
+
+
 def test_ace_drying_and_autofeed():
     _, p = commands.build(M, D, "drying_start", target_temp=45, duration=240)
     assert p["type"] == "multiColorBox" and p["action"] == "setDry"

@@ -6,7 +6,7 @@ All commands are validated against real hardware, including `stop`: the app send
 import time
 import uuid
 
-from .const import LIGHT_TYPE_CHAMBER, query_topic
+from .const import LIGHT_TYPE_CAMERA, LIGHT_TYPE_CHAMBER, query_topic
 
 _TASKID = "-1"
 
@@ -33,10 +33,12 @@ def build(model_id: str, device_id: str, command: str, *, value=None, on=None,
                "set_fan_speed": "fan_speed_pct", "set_aux_fan": "aux_fan_speed_pct",
                "set_box_fan": "box_fan_level", "set_speed_mode": "print_speed_mode"}[command]
         mtype, action, data = "print", "update", {"taskid": _TASKID, "settings": {key: value}}
-    elif command == "light":
+    elif command in ("light", "camera_light"):
         mtype, action = "light", "control"
         # On/off light: when no brightness is given, turn fully on (100). status 0 -> off.
-        data = {"type": LIGHT_TYPE_CHAMBER, "status": 1 if on else 0,
+        # "camera_light" is the Kobra 4's camera light: the same command for another lamp.
+        light_type = LIGHT_TYPE_CAMERA if command == "camera_light" else LIGHT_TYPE_CHAMBER
+        data = {"type": light_type, "status": 1 if on else 0,
                 "brightness": (100 if brightness is None else brightness) if on else 0}
     elif command == "auto_feed":
         mtype, action, data = "multiColorBox", "setAutoFeed", _box({"auto_feed": 1 if on else 0}, box_id)

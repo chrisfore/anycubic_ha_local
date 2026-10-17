@@ -276,11 +276,14 @@ class LightState:
     brightness: int = 0
 
 
-def parse_light(data: dict) -> LightState | None:
-    """Parse a `light` report `.data` object; None if it does not say how the chamber light is.
+def parse_light(data: dict, light_type: int = LIGHT_TYPE_CHAMBER) -> LightState | None:
+    """Parse a `light` report `.data` object; None if it does not say how that light is.
 
-    Two shapes carry the state. A query is answered with a `lights` list, whose first entry
-    is read as it always was. A control command is answered with
+    `light_type` picks the lamp: the chamber light (2) by default, or the Kobra 4's camera
+    light (3, issue #17). Two shapes carry the state. A query is answered with a `lights`
+    list, from which the entry of that type is read; the Kobra 4 lists both lamps, so the
+    first entry is not necessarily the one asked for, and an entry with no type is not
+    taken for any lamp. A control command is answered with
     the bare light object, holding the state the light took. Report topics are shared between
     clients, so that answer also arrives for commands the Slicer or the phone app sent. Only
     the list used to be understood, so every control answer parsed as the default and a light
@@ -296,8 +299,9 @@ def parse_light(data: dict) -> LightState | None:
         return None
     lights = data.get("lights")
     if isinstance(lights, list):
-        light = lights[0] if lights else None
-    elif data.get("type") == LIGHT_TYPE_CHAMBER:
+        light = next((x for x in lights if isinstance(x, dict) and x.get("type") == light_type),
+                     None)
+    elif data.get("type") == light_type:
         light = data
     else:
         return None

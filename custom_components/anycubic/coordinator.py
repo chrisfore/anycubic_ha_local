@@ -18,6 +18,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .anycubic_local import mqtt as mqtt_mod
 from .anycubic_local.commands import build as build_command
 from .anycubic_local.const import (
+    LIGHT_TYPE_CAMERA,
     QUERY_TYPES,
     query_topic,
     redacted,
@@ -99,6 +100,8 @@ class AnycubicData:
     printer: PrinterState = field(default_factory=PrinterState)
     ace: list[AceBox] = field(default_factory=list)
     light: LightState = field(default_factory=LightState)
+    # The Kobra 4's camera light (issue #17). None until the printer says how it is.
+    camera_light: LightState | None = None
     # None until the printer reports one. It only reports `extfilbox` while no ACE unit is
     # attached, so None means "no bare spool in use", not "not read yet".
     external_spool: ExternalSpool | None = None
@@ -486,6 +489,10 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             light = parse_light(data)
             if light is not None:
                 self.data.light = light
+            # The camera light is tracked apart, by the same rule (issue #17).
+            camera_light = parse_light(data, LIGHT_TYPE_CAMERA)
+            if camera_light is not None:
+                self.data.camera_light = camera_light
         elif msg_type == "peripherie" and isinstance(data, dict):
             self.peripherie = data
         elif msg_type == "video":

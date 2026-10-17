@@ -802,3 +802,29 @@ async def test_a_rebuild_that_fails_after_connecting_is_disconnected_too(hass, m
         await coord._async_update_data()
     assert [t.connected for t in HalfBuiltTransport.made] == [False]
     assert coord.has_transport is False
+
+
+async def test_coordinator_tracks_the_camera_light_apart_from_the_chamber(hass):
+    # Kobra 4 (issue #17): light type 3 is the camera light; it never moves the chamber light.
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    assert coord.data.camera_light is None                       # unknown, not off
+    for lights in ([{"type": 2, "status": 1, "brightness": 100},
+                    {"type": 3, "status": 0, "brightness": 0}],
+                   [{"type": 3, "status": 0, "brightness": 0},
+                    {"type": 2, "status": 1, "brightness": 100}]):
+        coord._apply("light", {"lights": lights})
+        assert coord.data.light.on is True
+        assert coord.data.camera_light.on is False
+    # A bare control answer for the camera light leaves the chamber light alone.
+    coord._apply("light", {"type": 3, "status": 1, "brightness": 100})
+    assert coord.data.camera_light.on is True
+    assert coord.data.light.on is True
+    # A list with the camera light only says nothing about the chamber light.
+    coord._apply("light", {"lights": [{"type": 3, "status": 0, "brightness": 0}]})
+    assert coord.data.camera_light.on is False
+    assert coord.data.light.on is True
+    # And the S1 Max's single chamber entry never touches the camera light.
+    coord._apply("light", {"lights": [{"type": 2, "status": 0, "brightness": 0}]})
+    assert coord.data.light.on is False
+    assert coord.data.camera_light.on is False
