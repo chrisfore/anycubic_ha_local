@@ -173,6 +173,15 @@ class AnycubicCamera(Camera):
         self._unwatched_task: asyncio.Task | None = None
 
     @property
+    def available(self) -> bool:
+        # Issue #16: Home Assistant's own answer follows stream.available, which a Stream
+        # stopped while unwatched leaves False, so the entity stayed unavailable and no card
+        # asked for the stream again. A stopped Stream has no outputs and its flag means
+        # nothing; only a running one that is failing makes the camera unavailable.
+        s = self.stream
+        return s is None or s.available or not s.outputs()
+
+    @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, self.coordinator.hs.serial)},

@@ -948,3 +948,26 @@ async def test_removing_the_entity_while_capture_is_being_restarted(rig, real_st
     count = len(opened)
     await asyncio.sleep(0.1)
     assert len(opened) == count and not _worker_running(stream), "the worker came back"
+
+
+async def test_camera_available_follows_only_a_running_stream(rig):
+    # Issue #16: a Stream stopped while unwatched keeps available=False, and the entity
+    # used to stay unavailable for good. Only a running Stream that is failing counts.
+    cam = rig.cam
+    cam.stream = None
+    assert cam.available is True
+
+    stopped = FakeStream("http://x")
+    stopped.available = False                    # stopped: no outputs, flag meaningless
+    cam.stream = stopped
+    assert cam.available is True
+
+    failing = FakeStream("http://x")
+    failing.add_provider("hls")
+    failing.available = False                    # running and failing
+    cam.stream = failing
+    assert cam.available is False
+
+    failing.available = True
+    assert cam.available is True
+    cam.stream = None
