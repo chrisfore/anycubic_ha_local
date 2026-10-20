@@ -332,6 +332,77 @@ PAUSE_PAUSED = 1  # project.pause int for the paused state
 STATE_FREE = "free"
 STATE_BUSY = "busy"
 
+# Why a job paused or stopped. A `print` report in one of the phases below carries the
+# reason as its envelope `code` and `msg`: 200 for an ordinary answer, anything else for
+# the cause. Captured on a Kobra 3 (fw 2.4.1.9): the user-initiated codes come with msg
+# 用户发起 ("user initiated"), the clog with an English msg. Codes not listed here pass
+# their msg through, so a fault nobody has catalogued yet still says what it is.
+REASON_PAUSED_BY_USER = 10401
+REASON_STOPPED_BY_USER = 10601
+REASON_FILAMENT_STUCK = 11518
+REASON_TEXT = {
+    REASON_PAUSED_BY_USER: "Paused by user",
+    REASON_STOPPED_BY_USER: "Stopped by user",
+    REASON_FILAMENT_STUCK: "Filament is stuck",
+    # The rest are Anycubic's own Kobra 3 error codes, from the titles of its wiki pages
+    # (wiki.anycubic.com/en/error-codes/<code>-code/k3 and …/kobra-3), cut to the first
+    # clause. Not all of them can stop a print; one that does is named all the same.
+    10105: "File download failed",
+    10106: "Insufficient memory",
+    10107: "Filament broken",
+    10113: "Downloaded file failed its MD5 check",
+    10115: "The device cannot parse the file",
+    10116: "Abnormal slice file",
+    10118: "X-axis homing failed",
+    10119: "Y-axis homing failed",
+    10120: "Z-axis homing failed",
+    10121: "Hotbed heating abnormal",
+    10122: "Extruder heating abnormal",
+    10123: "Hotbed NTC abnormal",
+    10124: "Extruder NTC abnormal",
+    10126: "X-axis vibration compensation abnormal",
+    10127: "Y-axis vibration compensation abnormal",
+    10128: "X-axis vibration compensation abnormal",
+    10129: "Y-axis vibration compensation abnormal",
+    10130: "Z-axis homing failed, check the Z-axis sensor",
+    10131: "Nozzle MCU abnormal",
+    10133: "The file is missing necessary commands",
+    10134: "This feature requires the camera",
+    10135: "This feature requires a USB flash drive",
+    10136: "This feature requires the camera and a USB flash drive",
+    10402: "Filament broken",
+    10408: "Print head or mainboard firmware too old",
+    10801: "Firmware download failed",
+    10802: "Firmware update failed, previous version restored",
+    10803: "Insufficient memory",
+    10804: "Failed to mount external storage",
+    10805: "Firmware verification failed",
+    11001: "Failed to delete local file",
+    11402: "Network connection timed out",
+    11407: "The device failed to start",
+    11503: "Color engine connection problem",
+    11504: "Unknown feed location",
+    11509: "Color engine response timeout",
+    11511: "Extrusion abnormal",
+    11512: "Retraction abnormal",
+    11513: "ACE Pro response timeout",
+    11519: "Filament tangle detected",
+    11520: "ACE filament abnormal",
+    11521: "Color engine motor rotation abnormal",
+    11524: "Color engine connection problem",
+    11529: "ACE NTC abnormal, drying stopped",
+    11530: "ACE PTC abnormal, drying stopped",
+    11531: "The model has more than 8 colors",
+    11532: "Device lacks automatic leveling",
+    11801: "Spaghetti detected, print paused",
+    11900: "Nozzle diameter does not match the model",
+}
+# From the slicer, the app or the printer's screen: not a fault.
+USER_REASONS = frozenset({REASON_PAUSED_BY_USER, REASON_STOPPED_BY_USER})
+# project.state values for a paused and a stopped job. "stoped" is the wire spelling.
+PAUSED_PHASES = frozenset({"pausing", "paused"})
+STOPPED_PHASES = frozenset({"stopping", "stoped", "stopped"})
+
 # `type` of the chamber light inside a `light` object. Shared by the command builder and the
 # report parser on purpose: the printer answers a light command with a bare light object,
 # and the parser believes one only for the lamp the builder commands (issue #14).

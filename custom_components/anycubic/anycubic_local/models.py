@@ -6,7 +6,15 @@ import binascii
 import logging
 from dataclasses import dataclass, field
 
-from .const import LIGHT_TYPE_CHAMBER, PAUSE_PAUSED, STATE_FREE
+from .const import (
+    LIGHT_TYPE_CHAMBER,
+    PAUSE_PAUSED,
+    PAUSED_PHASES,
+    REASON_TEXT,
+    STATE_FREE,
+    STOPPED_PHASES,
+    USER_REASONS,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -135,6 +143,35 @@ class PrinterState:
     camera_url: str | None = None
     printing: bool = False
     paused: bool = False
+
+
+@dataclass(frozen=True)
+class JobReason:
+    """Why the printer paused or stopped the job, from the `print` report that said so."""
+    code: int
+    reason: str           # English for a catalogued code, else the printer's own msg
+    phase: str            # the report's state: pausing / paused / stopping / stoped
+    by_user: bool         # paused or stopped from the slicer, app or screen
+
+    @property
+    def paused(self) -> bool:
+        return self.phase in PAUSED_PHASES
+
+
+def parse_reason(report: dict) -> JobReason | None:
+    """The reason a `print` report gives for a pause or stop, or None if it gives none.
+
+    Reads the whole report, not `data`: the reason is in the envelope (`code`, `msg`,
+    `state`). Only a pause or stop phase counts. Everything else on the `print` topic, a
+    progress push or a command ack, carries code 200 or a phase that is no reason.
+    """
+    code, phase = report.get("code"), report.get("state")
+    if (phase not in PAUSED_PHASES | STOPPED_PHASES or not isinstance(code, int)
+            or isinstance(code, bool) or code == 200):
+        return None
+    msg = report.get("msg")
+    reason = REASON_TEXT.get(code) or (msg if isinstance(msg, str) and msg else f"code {code}")
+    return JobReason(code=code, reason=reason, phase=phase, by_user=code in USER_REASONS)
 
 
 def parse_info(data: dict) -> PrinterState:
