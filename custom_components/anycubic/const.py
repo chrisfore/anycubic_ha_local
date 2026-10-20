@@ -4,7 +4,7 @@ from homeassistant.const import Platform
 DOMAIN = "anycubic"
 PLATFORMS: list[Platform] = [
     Platform.SENSOR, Platform.BINARY_SENSOR, Platform.CAMERA, Platform.LIGHT, Platform.SWITCH,
-    Platform.BUTTON, Platform.NUMBER, Platform.SELECT, Platform.IMAGE,
+    Platform.BUTTON, Platform.NUMBER, Platform.SELECT, Platform.IMAGE, Platform.EVENT,
 ]
 
 DEFAULT_QUERY_INTERVAL = 30  # seconds; heartbeat poll

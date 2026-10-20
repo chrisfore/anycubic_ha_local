@@ -42,6 +42,7 @@
   "entity": {
     "sensor": {
       "status": { "name": "Status" },
+      "pause_reason": { "name": "Pause reason" },
       "nozzle_temperature": { "name": "Nozzle temperature" },
       "bed_temperature": { "name": "Bed temperature" },
       "chamber_temperature": { "name": "Chamber temperature" },
@@ -95,6 +96,23 @@
     "light": {
       "chamber_light": { "name": "Chamber light" },
       "camera_light": { "name": "Camera light" }
+    },
+    "event": {
+      "print_event": {
+        "name": "Print event",
+        "state_attributes": {
+          "event_type": {
+            "state": {
+              "started": "Started",
+              "paused": "Paused",
+              "resumed": "Resumed",
+              "finished": "Finished",
+              "stopped": "Stopped",
+              "error": "Error"
+            }
+          }
+        }
+      }
     }
   }
 }

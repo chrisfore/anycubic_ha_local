@@ -5,10 +5,14 @@ The envelopes below are as captured from a Kobra 3 (fw 2.4.1.9): a pause and a s
 the slicer, and a clog. The reason rides the envelope (`code`, `msg`, `state`), never `data`.
 """
 import json
+from unittest.mock import patch
+
+from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.anycubic.anycubic_local import mqtt as m
 from custom_components.anycubic.anycubic_local.handshake import HandshakeResult
 from custom_components.anycubic.anycubic_local.models import JobReason, parse_reason
+from custom_components.anycubic.const import DOMAIN
 from custom_components.anycubic.coordinator import AnycubicCoordinator
 
 HS = HandshakeResult("1.2.3.4", 9883, "u", "p", "DEV", "20024", "SER-1")
@@ -191,3 +195,32 @@ async def test_starting_mid_print_is_not_a_new_job(hass):
     coord._apply("info", _info("printing"))
     await hass.async_block_till_done()
     assert events == []
+
+
+# -- entities ----------------------------------------------------------------------------
+
+async def test_pause_reason_sensor_and_print_event_entity(hass):
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "1.2.3.4"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coord = entry.runtime_data
+        coord._apply("info", _info("printing"))
+        coord._apply_reason(parse_reason(CLOG_PAUSED))
+        coord._apply("info", _info("paused"))
+        await hass.async_block_till_done()
+
+        reason = hass.states.get("sensor.anycubic_kobra_3_pause_reason")
+        assert reason.state == "Filament is stuck"
+        assert reason.attributes["code"] == 11518 and reason.attributes["by_user"] is False
+        event = hass.states.get("event.anycubic_kobra_3_print_event")
+        assert event.attributes["event_type"] == "paused"
+        assert event.attributes["reason"] == "Filament is stuck"
+
+        coord._apply("info", _info("printing"))
+        await hass.async_block_till_done()
+        assert hass.states.get("sensor.anycubic_kobra_3_pause_reason").state == "unknown"
+        assert hass.states.get("event.anycubic_kobra_3_print_event").attributes[
+            "event_type"] == "resumed"
