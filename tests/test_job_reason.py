@@ -9,6 +9,7 @@ import json
 from custom_components.anycubic.anycubic_local import mqtt as m
 from custom_components.anycubic.anycubic_local.handshake import HandshakeResult
 from custom_components.anycubic.anycubic_local.models import JobReason, parse_reason
+from custom_components.anycubic.coordinator import AnycubicCoordinator
 
 HS = HandshakeResult("1.2.3.4", 9883, "u", "p", "DEV", "20024", "SER-1")
 PROGRESS = {"curr_layer": 2, "filename": "part.gcode", "print_time": 2, "progress": 4,
@@ -25,6 +26,30 @@ USER_PAUSED = _print("pause", "paused", 10401, "用户发起")
 USER_STOPPING = _print("stop", "stopping", 10601, "用户发起")
 CLOG_PAUSING = _print("pause", "pausing", 11518, "Filament is stuck")
 CLOG_PAUSED = _print("pause", "paused", 11518, "Filament is stuck")
+
+
+def _info(state):
+    """An info report whose project is in `state`; None for an idle printer."""
+    if state is None:
+        return {"state": "free", "project": None}
+    return {"state": "busy", "project": {"state": state, "progress": 4, "pause": 0,
+                                         "filename": "part.gcode"}}
+
+
+class FakeTransport:
+    def __init__(self, hs, on_report, **k): self.on_reason = k.get("on_reason")
+    def connect(self): pass
+    def disconnect(self): pass
+    def query(self, t): pass
+    def publish(self, topic, payload): pass
+
+
+async def _coordinator(hass):
+    coord = AnycubicCoordinator(hass, HS, transport_factory=FakeTransport)
+    await coord.async_start()
+    events = []
+    coord.async_add_event_listener(lambda kind, attrs: events.append((kind, attrs)))
+    return coord, events
 
 
 # -- parse_reason ------------------------------------------------------------------------
@@ -96,3 +121,73 @@ def test_a_transport_with_no_reason_callback_works_as_before():
                        client_factory=FakeClient)
     t._handle(None, None, _msg(CLOG_PAUSED))
     assert reports == ["print"]
+
+
+async def test_the_coordinator_hands_the_transport_its_reason_callback(hass):
+    coord, _ = await _coordinator(hass)
+    assert coord._transport.on_reason == coord._on_reason
+
+
+# -- coordinator: reason and events ------------------------------------------------------
+
+async def test_a_clog_fires_one_error_then_paused_with_the_reason(hass):
+    coord, events = await _coordinator(hass)
+    coord._apply("info", _info("printing"))
+    coord._apply_reason(parse_reason(CLOG_PAUSING))
+    coord._apply_reason(parse_reason(CLOG_PAUSED))     # same fault, reported twice
+    coord._apply("info", _info("paused"))
+    await hass.async_block_till_done()
+    assert [kind for kind, _ in events] == ["error", "paused"]
+    for _, attrs in events:
+        assert attrs["reason_code"] == 11518 and attrs["reason"] == "Filament is stuck"
+        assert attrs["filename"] == "part.gcode"
+
+
+async def test_a_pause_from_the_slicer_is_no_error(hass):
+    coord, events = await _coordinator(hass)
+    coord._apply("info", _info("printing"))
+    coord._apply_reason(parse_reason(USER_PAUSING))
+    coord._apply_reason(parse_reason(USER_PAUSED))
+    coord._apply("info", _info("paused"))
+    coord._apply("info", _info("resuming"))
+    coord._apply("info", _info("printing"))
+    await hass.async_block_till_done()
+    assert [(kind, attrs.get("reason")) for kind, attrs in events] == [
+        ("paused", "Paused by user"), ("resumed", None)]
+    assert coord.data.reason is None                    # resumed: no longer applies
+
+
+async def test_the_reason_survives_the_next_info_report(hass):
+    # info rebuilds PrinterState and never carries the reason; it must not wipe it.
+    coord, _ = await _coordinator(hass)
+    coord._apply("info", _info("printing"))
+    coord._apply_reason(parse_reason(CLOG_PAUSED))
+    coord._apply("info", _info("paused"))
+    coord._apply("info", _info("paused"))
+    await hass.async_block_till_done()
+    assert coord.data.reason.code == 11518
+
+
+async def test_stopped_and_finished(hass):
+    coord, events = await _coordinator(hass)
+    coord._apply("info", _info(None))
+    coord._apply("info", _info("preheating"))
+    coord._apply("info", _info("printing"))
+    coord._apply_reason(parse_reason(USER_STOPPING))
+    coord._apply("info", _info("stopping"))
+    coord._apply("info", _info("stoped"))
+    coord._apply("info", _info(None))
+    coord._apply("info", _info("printing"))
+    coord._apply("info", _info(None))
+    await hass.async_block_till_done()
+    assert [(kind, attrs.get("reason")) for kind, attrs in events] == [
+        ("started", None), ("stopped", "Stopped by user"), ("started", None),
+        ("finished", None)]
+
+
+async def test_starting_mid_print_is_not_a_new_job(hass):
+    coord, events = await _coordinator(hass)
+    coord._apply("info", _info("printing"))
+    coord._apply("info", _info("printing"))
+    await hass.async_block_till_done()
+    assert events == []

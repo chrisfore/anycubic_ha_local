@@ -19,7 +19,9 @@ from .anycubic_local import mqtt as mqtt_mod
 from .anycubic_local.commands import build as build_command
 from .anycubic_local.const import (
     LIGHT_TYPE_CAMERA,
+    PAUSED_PHASES,
     QUERY_TYPES,
+    STOPPED_PHASES,
     query_topic,
     redacted,
     redacted_error,
@@ -30,6 +32,7 @@ from .anycubic_local.handshake import HandshakeResult, do_handshake
 from .anycubic_local.models import (
     AceBox,
     ExternalSpool,
+    JobReason,
     LightState,
     ObjectImages,
     PrinterState,
@@ -107,6 +110,23 @@ class AnycubicData:
     external_spool: ExternalSpool | None = None
     # The printer's renders of the running job. None until a fileDetails answer lands.
     object_images: ObjectImages | None = None
+    # Why the job is paused or stopped. Kept here, not in PrinterState, because every
+    # `info` report rebuilds that, and info never carries the reason. None while the job
+    # runs, and once it is over.
+    reason: JobReason | None = None
+
+
+# What the print event entity fires (see AnycubicCoordinator._track_status).
+EVENT_STARTED = "started"
+EVENT_PAUSED = "paused"
+EVENT_RESUMED = "resumed"
+EVENT_FINISHED = "finished"
+EVENT_STOPPED = "stopped"
+EVENT_ERROR = "error"
+EVENT_TYPES = (EVENT_STARTED, EVENT_PAUSED, EVENT_RESUMED, EVENT_FINISHED, EVENT_STOPPED,
+               EVENT_ERROR)
+# Statuses with no job behind them: before one starts, and after it ends.
+_NO_JOB = frozenset({"idle", "finished"}) | STOPPED_PHASES
 
 
 class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
@@ -154,6 +174,15 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         self._session_listeners: list[Callable[[], None]] = []
         # Filename we have already asked fileDetails about, so one job asks once.
         self._file_details_asked: str | None = None
+        # Told of print events (see async_add_event_listener).
+        self._event_listeners: list[Callable[[str, dict], None]] = []
+        # The status the last info report gave, to turn changes into events. Unset until
+        # the first one: Home Assistant starting mid-print is not a new job.
+        self._status: str | None = None
+        self._status_seen = False
+        # The fault an error event was fired for. A pause is reported twice, pausing and
+        # paused, with the same code; it is one fault.
+        self._error_code: int | None = None
 
     def _build_and_connect(self):
         """Construct the transport (paho client + blocking tls_set) and connect.
@@ -163,7 +192,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         """
         transport = self._factory(self.hs, on_report=self._on_report,
                                   identifiers=self.redaction_identifiers,
-                                  job_names=self._job_names)
+                                  job_names=self._job_names, on_reason=self._on_reason)
         try:
             transport.connect()
             for t in (*QUERY_TYPES, *_CONNECT_ONLY_QUERY_TYPES):
@@ -290,6 +319,67 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         loop trips HA's thread-safety check on every report.
         """
         self.hass.loop.call_soon_threadsafe(self._apply, msg_type, data)
+
+    def _on_reason(self, reason: JobReason) -> None:
+        """Called on the paho network thread, as _on_report is, and marshalled the same way."""
+        self.hass.loop.call_soon_threadsafe(self._apply_reason, reason)
+
+    @callback
+    def _apply_reason(self, reason: JobReason) -> None:
+        self.data.reason = reason
+        # One error per fault the user did not cause. Fired here, on the `print` report,
+        # rather than on the next info: that can be half a minute away, and this is the
+        # event a phone notification hangs on.
+        if not reason.by_user and reason.code != self._error_code:
+            self._error_code = reason.code
+            self._fire(EVENT_ERROR, {"reason_code": reason.code, "reason": reason.reason})
+        self.async_update_listeners()
+
+    @callback
+    def async_add_event_listener(self, listener: Callable[[str, dict], None]) -> Callable[[], None]:
+        """Call `listener(event_type, attributes)` on each print event. Returns the remover."""
+        self._event_listeners.append(listener)
+
+        @callback
+        def remove() -> None:
+            if listener in self._event_listeners:
+                self._event_listeners.remove(listener)
+
+        return remove
+
+    @callback
+    def _fire(self, event_type: str, attributes: dict | None = None) -> None:
+        printer = self.data.printer
+        attributes = {"filename": printer.filename, "progress": printer.progress,
+                      **(attributes or {})}
+        for listener in list(self._event_listeners):
+            listener(event_type, attributes)
+
+    @callback
+    def _track_status(self) -> None:
+        """Turn a change of the job's status, as info gives it, into a print event."""
+        status = self.data.printer.status
+        if not self._status_seen:
+            self._status_seen, self._status = True, status
+            return
+        before, self._status = self._status, status
+        if status == before:
+            return
+        if status not in PAUSED_PHASES | STOPPED_PHASES:
+            # Running again, or over: what paused or stopped it no longer applies.
+            self.data.reason, self._error_code = None, None
+        reason = self.data.reason
+        why = {"reason_code": reason.code, "reason": reason.reason} if reason else {}
+        if status not in _NO_JOB and (before is None or before in _NO_JOB):
+            self._fire(EVENT_STARTED)
+        if status in PAUSED_PHASES and before not in PAUSED_PHASES:
+            self._fire(EVENT_PAUSED, why)
+        elif before in PAUSED_PHASES and status not in PAUSED_PHASES | _NO_JOB:
+            self._fire(EVENT_RESUMED)
+        elif status in STOPPED_PHASES and before not in STOPPED_PHASES:
+            self._fire(EVENT_STOPPED, why)
+        elif status in ("idle", "finished") and before not in _NO_JOB:
+            self._fire(EVENT_FINISHED)
 
     async def async_start_capture(self) -> None:
         """Start camera capture the way the official client does.
@@ -422,6 +512,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             features = data.get("features")
             if isinstance(features, dict):
                 self.raw_features = features
+            self._track_status()
         elif msg_type == "tempature":
             # Not a typo — the firmware's wire string. Folded rather than parsed into a
             # fresh state: it carries only temperatures, and is the fastest-moving source
