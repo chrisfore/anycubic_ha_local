@@ -54,6 +54,17 @@ async def test_print_buttons_gated_on_state(hass):
     coord.data.printer = PrinterState()
     assert not any(btn[k].available for k in ("pause", "resume", "stop"))
 
+    # Before the first layer the job can be stopped, not paused.
+    for phase in ("preheating", "auto_leveling", "vibrating", "flow_calibrating"):
+        coord.data.printer = PrinterState(raw_state="busy", status=phase)
+        assert btn["stop"].available, phase
+        assert not btn["pause"].available and not btn["resume"].available, phase
+
+    # Busy with no job (drying, loading filament), or the job over: nothing to stop.
+    for status in ("busy", "idle", "finished", "stoped"):
+        coord.data.printer = PrinterState(raw_state="busy", status=status)
+        assert not btn["stop"].available, status
+
 
 async def test_printer_number_setpoints(hass):
     coord = await _setup(hass)

@@ -20,6 +20,13 @@ class AnycubicButtonEntityDescription(ButtonEntityDescription):
     available_fn: Callable[[PrinterState], bool]
 
 
+# Every phase of a job a stop can cancel, as info's project.state names them: the
+# preparation before the first layer as well as the print itself (captured on a Kobra 3).
+# `printing` alone left a job in preheating or auto-leveling with no way to stop it.
+# A busy printer with no job, drying or loading filament, is in none of them.
+_JOB_PHASES = frozenset({"preheating", "auto_leveling", "vibrating", "flow_calibrating",
+                         "printing", "pausing", "paused", "resuming", "resumed"})
+
 BUTTONS: tuple[AnycubicButtonEntityDescription, ...] = (
     AnycubicButtonEntityDescription(key="pause", translation_key="pause", command="pause",
         icon="mdi:pause", available_fn=lambda p: p.printing),
@@ -27,7 +34,8 @@ BUTTONS: tuple[AnycubicButtonEntityDescription, ...] = (
         icon="mdi:play", available_fn=lambda p: p.paused),
     # Stop cancels the running print (validated on hardware) — gated on an active job.
     AnycubicButtonEntityDescription(key="stop", translation_key="stop", command="stop",
-        icon="mdi:stop", available_fn=lambda p: p.printing or p.paused),
+        icon="mdi:stop",
+        available_fn=lambda p: p.printing or p.paused or p.status in _JOB_PHASES),
 )
 
 
