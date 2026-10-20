@@ -21,6 +21,8 @@ and the more printers and firmware versions in use, the faster problems get spot
 - **Printer:** status / lifecycle, nozzle / bed / chamber temperatures, progress, current & total
   layers, time remaining, file name; *printing* and *paused* binary sensors.
   (Firmware version shows on the device page as its software version.)
+- **Why it paused or stopped:** a *pause reason* sensor ("Paused by user", "Filament is stuck", …)
+  and a *print event* entity for notifications — see **Print events and pause reasons**.
 - **Live camera:** the printer's H.264 stream, started on demand — or the Rinkhals camera feed
   (see **Printers running Rinkhals**).
 - **ACE 2:** humidity, box temperature, loaded slot, and all four filament slots (material, color,
@@ -114,7 +116,8 @@ Home Assistant. Or find it manually:
 
 | Domain | Entities |
 | --- | --- |
-| `sensor` | Status, Nozzle/Bed/Chamber temperature, Progress, Current/Total layer, Time remaining, File name, Firmware |
+| `sensor` | Status, Pause reason, Nozzle/Bed/Chamber temperature, Progress, Current/Total layer, Time remaining, File name, Firmware |
+| `event` | Print event (started / paused / resumed / finished / stopped / error) |
 | `binary_sensor` | Printing, Paused |
 | `camera` | Camera |
 | `light` | Chamber light |
@@ -128,6 +131,50 @@ Home Assistant. Or find it manually:
 Chamber temperature, Chamber light, and the box (chamber) fan are created **only on enclosed models**
 (S1 / S1 Max); the camera only on models with a local stream; ACE entities only when a box is attached.
 See **Supported printers** above.
+
+## Print events and pause reasons
+
+When the printer pauses or stops a job it says why: the `print` report carries a reason code. The
+**Pause reason** sensor shows it while the job is paused, and the **Print event** entity fires on each
+change of the job — `started`, `paused`, `resumed`, `finished`, `stopped` — with `reason_code` and
+`reason` on `paused` and `stopped`. `error` fires once, as soon as the printer reports it, for a pause
+or stop the user did not ask for, such as a clog.
+
+| Code | Reason | Error? |
+| --- | --- | --- |
+| 10401 | Paused by user (slicer, app or the printer's screen) | no |
+| 10601 | Stopped by user | no |
+| 11518 | Filament is stuck | yes |
+| 11519 | Filament tangle detected | yes |
+| 11801 | Spaghetti detected, print paused | yes |
+
+These were captured on a Kobra 3. Beyond them, the integration names the 49 other codes on
+Anycubic's [Kobra 3 error code pages](https://wiki.anycubic.com/en/error-codes/11518-code/k3)
+(`REASON_TEXT` in `anycubic_local/const.py`). Any code is an error unless the user caused it,
+and a code in neither list shows the printer's own message, which may be in Chinese. If you
+see one, please open an issue with it.
+
+To have a clog reach your phone:
+
+```yaml
+automation:
+  - alias: Printer error
+    triggers:
+      # The event entity's state is the time of the last event, so this fires for every
+      # event, a second error in a row included; the condition picks the errors.
+      - trigger: state
+        entity_id: event.anycubic_kobra_3_print_event
+    conditions:
+      - condition: state
+        entity_id: event.anycubic_kobra_3_print_event
+        attribute: event_type
+        state: error
+    actions:
+      - action: notify.mobile_app_your_phone
+        data:
+          title: Printer needs attention
+          message: "{{ state_attr('event.anycubic_kobra_3_print_event', 'reason') }}"
+```
 
 ## Example dashboard
 
