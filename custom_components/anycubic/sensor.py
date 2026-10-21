@@ -22,6 +22,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEnt
     coord: AnycubicCoordinator = entry.runtime_data
     enclosed = coord.hs.model_id in ENCLOSED_MODELS
     add([AnycubicSensor(coord, d) for d in PRINTER_SENSORS if enclosed or not d.enclosed_only])
+    add([AnycubicPauseReasonSensor(coord)])
 
     def ace_sensors(box_id: int) -> list:
         dryer = box_has_dryer(box_id)
@@ -64,6 +65,31 @@ class AnycubicSensor(AnycubicEntity, SensorEntity):
     @property
     def native_value(self):
         return self.entity_description.value_fn(self.coordinator.data.printer)
+
+
+class AnycubicPauseReasonSensor(AnycubicEntity, SensorEntity):
+    """Why the print is paused: "Paused by user", "Filament is stuck", … Unknown otherwise.
+
+    Read from the coordinator's reason, not from PrinterState: info never carries it.
+    """
+
+    _attr_translation_key = "pause_reason"
+    _attr_icon = "mdi:alert-circle-outline"
+
+    def __init__(self, coordinator: AnycubicCoordinator) -> None:
+        super().__init__(coordinator, "pause_reason")
+
+    @property
+    def native_value(self):
+        reason = self.coordinator.data.reason
+        return reason.reason if reason is not None and reason.paused else None
+
+    @property
+    def extra_state_attributes(self):
+        reason = self.coordinator.data.reason
+        if reason is None or not reason.paused:
+            return None
+        return {"code": reason.code, "by_user": reason.by_user}
 
 
 class AnycubicAceBoxSensor(AnycubicAceEntity, SensorEntity):
