@@ -9,6 +9,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
+from .anycubic_local.const import JOB_PHASES
 from .anycubic_local.models import PrinterState
 from .coordinator import AnycubicCoordinator
 from .entity import AnycubicEntity
@@ -20,12 +21,8 @@ class AnycubicButtonEntityDescription(ButtonEntityDescription):
     available_fn: Callable[[PrinterState], bool]
 
 
-# Every phase of a job a stop can cancel, as info's project.state names them: the
-# preparation before the first layer as well as the print itself (captured on a Kobra 3).
-# `printing` alone left a job in preheating or auto-leveling with no way to stop it.
-# A busy printer with no job, drying or loading filament, is in none of them.
-_JOB_PHASES = frozenset({"preheating", "auto_leveling", "vibrating", "flow_calibrating",
-                         "printing", "pausing", "paused", "resuming", "resumed"})
+# Stop is gated on every job phase (JOB_PHASES), not `printing` alone, which left a job
+# in preheating or auto-leveling with no way to stop it.
 
 BUTTONS: tuple[AnycubicButtonEntityDescription, ...] = (
     AnycubicButtonEntityDescription(key="pause", translation_key="pause", command="pause",
@@ -35,7 +32,7 @@ BUTTONS: tuple[AnycubicButtonEntityDescription, ...] = (
     # Stop cancels the running print (validated on hardware) — gated on an active job.
     AnycubicButtonEntityDescription(key="stop", translation_key="stop", command="stop",
         icon="mdi:stop",
-        available_fn=lambda p: p.printing or p.paused or p.status in _JOB_PHASES),
+        available_fn=lambda p: p.printing or p.paused or p.status in JOB_PHASES),
 )
 
 

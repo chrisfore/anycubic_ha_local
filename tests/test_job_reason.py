@@ -197,6 +197,17 @@ async def test_starting_mid_print_is_not_a_new_job(hass):
     assert events == []
 
 
+
+async def test_a_busy_printer_with_no_job_fires_nothing(hass):
+    # Drying in the ACE or loading filament: state busy, but no project or last_project,
+    # so the status is the raw "busy". That is not a job starting or finishing.
+    coord, events = await _coordinator(hass)
+    coord._apply("info", _info(None))
+    coord._apply("info", {"state": "busy"})
+    coord._apply("info", _info(None))
+    await hass.async_block_till_done()
+    assert events == []
+
 # -- entities ----------------------------------------------------------------------------
 
 async def test_pause_reason_sensor_and_print_event_entity(hass):

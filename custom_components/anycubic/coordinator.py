@@ -18,6 +18,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .anycubic_local import mqtt as mqtt_mod
 from .anycubic_local.commands import build as build_command
 from .anycubic_local.const import (
+    JOB_PHASES,
     LIGHT_TYPE_CAMERA,
     PAUSED_PHASES,
     QUERY_TYPES,
@@ -125,8 +126,9 @@ EVENT_STOPPED = "stopped"
 EVENT_ERROR = "error"
 EVENT_TYPES = (EVENT_STARTED, EVENT_PAUSED, EVENT_RESUMED, EVENT_FINISHED, EVENT_STOPPED,
                EVENT_ERROR)
-# Statuses with no job behind them: before one starts, and after it ends.
-_NO_JOB = frozenset({"idle", "finished"}) | STOPPED_PHASES
+# A job ends idle or finished; any other status outside JOB_PHASES (a stop, or a busy
+# printer with no job such as drying) is not a job either.
+_JOB_ENDED = frozenset({"idle", "finished"})
 
 
 class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
@@ -370,15 +372,15 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             self.data.reason, self._error_code = None, None
         reason = self.data.reason
         why = {"reason_code": reason.code, "reason": reason.reason} if reason else {}
-        if status not in _NO_JOB and (before is None or before in _NO_JOB):
+        if status in JOB_PHASES and before not in JOB_PHASES:
             self._fire(EVENT_STARTED)
         if status in PAUSED_PHASES and before not in PAUSED_PHASES:
             self._fire(EVENT_PAUSED, why)
-        elif before in PAUSED_PHASES and status not in PAUSED_PHASES | _NO_JOB:
+        elif before in PAUSED_PHASES and status in JOB_PHASES - PAUSED_PHASES:
             self._fire(EVENT_RESUMED)
         elif status in STOPPED_PHASES and before not in STOPPED_PHASES:
             self._fire(EVENT_STOPPED, why)
-        elif status in ("idle", "finished") and before not in _NO_JOB:
+        elif status in _JOB_ENDED and before in JOB_PHASES:
             self._fire(EVENT_FINISHED)
 
     async def async_start_capture(self) -> None:

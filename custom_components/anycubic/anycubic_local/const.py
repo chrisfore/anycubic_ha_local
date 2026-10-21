@@ -348,7 +348,7 @@ REASON_TEXT = {
     # (wiki.anycubic.com/en/error-codes/<code>-code/k3 and …/kobra-3), cut to the first
     # clause. Not all of them can stop a print; one that does is named all the same.
     10105: "File download failed",
-    10106: "Insufficient memory",
+    10106: "Insufficient memory available, this task has been cancelled",
     10107: "Filament broken",
     10113: "Downloaded file failed its MD5 check",
     10115: "The device cannot parse the file",
@@ -360,7 +360,7 @@ REASON_TEXT = {
     10122: "Extruder heating abnormal",
     10123: "Hotbed NTC abnormal",
     10124: "Extruder NTC abnormal",
-    10126: "X-axis vibration compensation abnormal",
+    10126: "Abnormal X-axis vibration compensation detected",
     10127: "Y-axis vibration compensation abnormal",
     10128: "X-axis vibration compensation abnormal",
     10129: "Y-axis vibration compensation abnormal",
@@ -370,7 +370,7 @@ REASON_TEXT = {
     10134: "This feature requires the camera",
     10135: "This feature requires a USB flash drive",
     10136: "This feature requires the camera and a USB flash drive",
-    10402: "Filament broken",
+    10402: "Filament broken, please load a new filament",
     10408: "Print head or mainboard firmware too old",
     10801: "Firmware download failed",
     10802: "Firmware update failed, previous version restored",
@@ -402,6 +402,11 @@ USER_REASONS = frozenset({REASON_PAUSED_BY_USER, REASON_STOPPED_BY_USER})
 # project.state values for a paused and a stopped job. "stoped" is the wire spelling.
 PAUSED_PHASES = frozenset({"pausing", "paused"})
 STOPPED_PHASES = frozenset({"stopping", "stoped", "stopped"})
+# Every phase of a running job, as info's project.state names them: the preparation before
+# the first layer as well as the print itself (captured on a Kobra 3). A busy printer with
+# no job, drying or loading filament, is in none of them: its status is the raw "busy".
+JOB_PHASES = frozenset({"preheating", "auto_leveling", "vibrating", "flow_calibrating",
+                        "printing", "pausing", "paused", "resuming", "resumed"})
 
 # `type` of the chamber light inside a `light` object. Shared by the command builder and the
 # report parser on purpose: the printer answers a light command with a bare light object,

@@ -140,21 +140,23 @@ change of the job — `started`, `paused`, `resumed`, `finished`, `stopped` — 
 `reason` on `paused` and `stopped`. `error` fires once, as soon as the printer reports it, for a pause
 or stop the user did not ask for, such as a clog.
 
+Only these three codes have been captured on the wire, from a Kobra 3:
+
 | Code | Reason | Error? |
 | --- | --- | --- |
 | 10401 | Paused by user (slicer, app or the printer's screen) | no |
 | 10601 | Stopped by user | no |
 | 11518 | Filament is stuck | yes |
-| 11519 | Filament tangle detected | yes |
-| 11801 | Spaghetti detected, print paused | yes |
 
-These were captured on a Kobra 3. Beyond them, the integration names the 49 other codes on
-Anycubic's [Kobra 3 error code pages](https://wiki.anycubic.com/en/error-codes/11518-code/k3)
-(`REASON_TEXT` in `anycubic_local/const.py`). Any code is an error unless the user caused it,
-and a code in neither list shows the printer's own message, which may be in Chinese. If you
-see one, please open an issue with it.
+The integration also names the other codes listed on Anycubic's
+[Kobra 3 error code pages](https://wiki.anycubic.com/en/error-codes/11518-code/k3) (for example
+11519, filament tangle, and 11801, spaghetti detected), kept in `REASON_TEXT` in
+`anycubic_local/const.py`. Those names come from the wiki only; none of those codes has been seen
+on the wire yet. Any code is an error unless the user caused it, and a code in neither list shows
+the printer's own message, which may be in Chinese. If you see one, please open an issue with it.
 
-To have a clog reach your phone:
+To have a clog reach your phone (the entity id depends on your printer's name; replace
+`event.anycubic_kobra_3_print_event` with the one Home Assistant gave yours):
 
 ```yaml
 automation:
