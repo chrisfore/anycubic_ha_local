@@ -25,8 +25,8 @@ and the more printers and firmware versions in use, the faster problems get spot
   and a *print event* entity for notifications — see **Print events and pause reasons**.
 - **Live camera:** the printer's H.264 stream, started on demand — or the Rinkhals camera feed
   (see **Printers running Rinkhals**).
-- **ACE 2:** humidity, box temperature, loaded slot, and all four filament slots (material, color,
-  remaining %).
+- **ACE 2:** humidity, box temperature, drying time remaining, loaded slot, and all four
+  filament slots (material, color, remaining %).
 
 ### Control
 - **Print:** pause, resume, stop.
@@ -125,7 +125,7 @@ Home Assistant. Or find it manually:
 | `button` | Pause, Resume, Stop |
 | `number` | Nozzle/Bed target temperature, Part-cooling/Auxiliary/Chamber fan |
 | `select` | Print speed (silent / standard / sport) |
-| ACE `sensor` | Humidity, Box temperature, Loaded slot, Slot 1–4 (material/color/remaining as attributes) |
+| ACE `sensor` | Humidity, Box temperature, Drying time remaining, Loaded slot, Slot 1–4 (material/color/remaining as attributes) |
 | ACE `switch` | Drying, Auto-feed |
 | ACE `number` | Drying temperature, Drying time |
 
