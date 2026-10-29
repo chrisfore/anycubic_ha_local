@@ -110,6 +110,13 @@ ACE_SENSORS: tuple[AceSensorEntityDescription, ...] = (
         device_class=_T, native_unit_of_measurement=_C, suggested_unit_of_measurement=_C,
         state_class=SensorStateClass.MEASUREMENT, value_fn=lambda b: b.temp,
         dry_box_only=True),
+    AceSensorEntityDescription(key="drying_remaining", translation_key="ace_drying_remaining",
+        device_class=SensorDeviceClass.DURATION, native_unit_of_measurement=UnitOfTime.MINUTES,
+        # remain_time is the minutes left while drying, counting down from duration.
+        # 0 once drying is off; unknown until a report says either way.
+        value_fn=lambda b: (b.drying_remaining if b.drying_active
+                            else 0 if b.drying_active is False else None),
+        dry_box_only=True),
     AceSensorEntityDescription(key="loaded_slot", translation_key="ace_loaded_slot",
         # Printer slots are 0-indexed; show 1-4 to match the "Slot N" labels. -1/None = nothing loaded.
         value_fn=lambda b: "None" if b.loaded_slot in (None, -1) else b.loaded_slot + 1),

@@ -764,3 +764,28 @@ async def test_restoring_setpoints_changes_no_identity(hass):
     registry = er.async_get(hass)
     assert registry.async_get("number.ace_2_drying_temperature").unique_id == "SER-1_ace0_drying_temp"
     assert registry.async_get("number.ace_2_drying_time").unique_id == "SER-1_ace0_drying_duration"
+
+
+async def test_drying_time_remaining(hass):
+    # As reported by a Kobra 3's ACE 2 Pro (fw 2.4.1.9) 73 min into a 2 h run.
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "1.2.3.4"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coord = entry.runtime_data
+
+        def box(drying_status):
+            coord._apply("multiColorBox", {"multi_color_box": [{
+                "id": 0, "temp": 45, "drying_status": drying_status, "slots": []}]})
+
+        box({"status": 1, "target_temp": 45, "duration": 120, "remain_time": 47})
+        await hass.async_block_till_done()
+        remaining = hass.states.get("sensor.ace_2_drying_time_remaining")
+        assert remaining.state == "47"
+        assert remaining.attributes["unit_of_measurement"] == "min"
+
+        box({"status": 0, "target_temp": 0, "duration": 0, "remain_time": 0})
+        await hass.async_block_till_done()
+        assert hass.states.get("sensor.ace_2_drying_time_remaining").state == "0"
