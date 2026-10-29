@@ -372,13 +372,15 @@ async def test_no_capture_command_is_ever_published_on_the_rinkhals_source(
     when the printer comes back from a recovery, not when the entity is removed."""
     entry = await _setup(hass, RINKHALS)
     coord = entry.runtime_data
+    # The websocket client first: it sets up websocket_api, whose route can't be added
+    # once hass_client() has started the HTTP app and frozen its router.
+    ws = await hass_ws_client(hass)
     feed.answers = [FakeResponse()]
     await async_get_image(hass, CAMERA)
     feed.answers = [FakeResponse(content_type=MULTIPART, body=FRAMES)]
     client = await hass_client()
     await (await client.get(f"/api/camera_proxy_stream/{CAMERA}")).read()
     # What the frontend asks a camera with a stream; this one has none to give.
-    ws = await hass_ws_client(hass)
     await ws.send_json({"id": 1, "type": "camera/stream", "entity_id": CAMERA})
     assert (await ws.receive_json())["success"] is False
     coord._recoveries = 2
