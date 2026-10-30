@@ -50,6 +50,7 @@
       "current_layer": { "name": "Current layer" },
       "total_layers": { "name": "Total layers" },
       "time_remaining": { "name": "Time remaining" },
+      "print_time": { "name": "Elapsed time" },
       "filename": { "name": "File name" },
       "firmware": { "name": "Firmware" },
       "ace_humidity": { "name": "Humidity" },

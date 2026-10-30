@@ -7,6 +7,7 @@ from time import monotonic
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
+from homeassistant.components import ffmpeg
 from homeassistant.components.camera import Camera, CameraEntityFeature
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
@@ -16,10 +17,12 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_call_later
 
 from .const import (
+    CAMERA_LIGHT_MODELS,
     CAMERA_MODELS,
     CAMERA_SOURCE_RINKHALS,
     CONF_CAMERA_SOURCE,
     DOMAIN,
+    ENCLOSED_MODELS,
     MANUFACTURER,
     MODEL_NAMES,
 )
@@ -68,6 +71,16 @@ STREAM_HEALTHY_AFTER = 45.0
 # gives up only at its source timeout. Removing the entity does not wait that long: the
 # worker has been told to quit by then and ends on its own.
 STREAM_STOP_TIMEOUT = 10.0
+
+# Still images (issue #21). The printer serves no snapshot of its own: a still is one frame
+# of the stream, and the stream is only there once capture has been started — which turns
+# the light on. So a still is taken by starting capture, reading one frame, stopping capture
+# and switching back off a light that had been off (a frame taken in the dark is black; the
+# first frame takes about 7 s on a Kobra S1 Max). A card asks again every 10 s, so the frame
+# is kept: it is taken again only when the job's state has changed since, or, at most once
+# per STILL_REFRESH_INTERVAL, while the light is on anyway or someone is watching the stream.
+STILL_REFRESH_INTERVAL = 60.0
+STILL_TIMEOUT = 20.0
 
 # Home Assistant's name for the Stream output a recording is written through.
 _RECORDER_OUTPUT = "recorder"
@@ -171,6 +184,12 @@ class AnycubicCamera(Camera):
         self._last_viewed: float | None = None
         self._viewer_timer = None
         self._unwatched_task: asyncio.Task | None = None
+        # The last still, the job state it shows, and the monotonic time of the last
+        # attempt at one (None before the first).
+        self._still: bytes | None = None
+        self._still_at: float | None = None
+        self._still_status: str | None = None
+        self._still_lock = asyncio.Lock()
 
     @property
     def available(self) -> bool:
@@ -223,6 +242,73 @@ class AnycubicCamera(Camera):
         await self.coordinator.async_start_capture()
         return self._stream_url(
             self.coordinator.video_stream_url or self.coordinator.data.printer.camera_url)
+
+    async def async_camera_image(
+            self, width: int | None = None, height: int | None = None) -> bytes | None:
+        """A still: the kept frame, or a new one when it is due (see STILL_REFRESH_INTERVAL).
+
+        The frame is taken at full size; Home Assistant scales it for the card that asked.
+        None only if no frame has been had at all.
+        """
+        async with self._still_lock:
+            if self._still_due():
+                status = self.coordinator.data.printer.status
+                image = await self._async_take_still()
+                # A failed attempt counts too: the next waits the interval, rather than
+                # light the chamber again for every request.
+                self._still_at = monotonic()
+                if image:
+                    self._still, self._still_status = image, status
+            return self._still
+
+    def _still_due(self) -> bool:
+        if self._still_at is None:
+            return True
+        if monotonic() - self._still_at < STILL_REFRESH_INTERVAL:
+            return False
+        if self._still is None or self.coordinator.data.printer.status != self._still_status:
+            return True
+        stream = self.stream
+        return (self._light_on() or (stream is not None and bool(stream.outputs())
+                                     and self._stream_healthy()))
+
+    def _light_on(self) -> bool:
+        """Is a light the capture would switch on already on?"""
+        data = self.coordinator.data
+        return data.light.on or (data.camera_light is not None and data.camera_light.on)
+
+    async def _async_take_still(self) -> bytes | None:
+        stream = self.stream
+        if stream is not None and stream.outputs() and self._stream_healthy():
+            # Being watched: capture and the light are on already, and the stream has the frame.
+            return await stream.async_get_image()
+        if not self.coordinator.has_transport:
+            return None
+        async with self._kick_lock:
+            data = self.coordinator.data
+            model = self.coordinator.hs.model_id
+            # Only lights this model has an entity for, and whose state is known to be off.
+            restore = []
+            if model in ENCLOSED_MODELS and not data.light.on:
+                restore.append("light")
+            if (model in CAMERA_LIGHT_MODELS and data.camera_light is not None
+                    and not data.camera_light.on):
+                restore.append("camera_light")
+            url = await self._async_kick()
+            image = None
+            try:
+                async with asyncio.timeout(STILL_TIMEOUT):
+                    image = await ffmpeg.async_get_image(self.hass, url)
+            except TimeoutError:
+                _LOGGER.debug("no camera frame within %ss for a still", STILL_TIMEOUT)
+            finally:
+                # Unless the stream started being watched meanwhile: then it keeps both.
+                stream = self.stream
+                if stream is None or not stream.outputs():
+                    await self.coordinator.async_send_command("camera_stop")
+                    for command in restore:
+                        await self.coordinator.async_send_command(command, on=False)
+            return image
 
     def _stream_url(self, reported: str | None) -> str:
         """The address Home Assistant opens, for the URL the printer reported (if any).

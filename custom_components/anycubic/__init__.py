@@ -10,6 +10,7 @@ from homeassistant.helpers.device_registry import DeviceEntry
 from .anycubic_local.const import redacted_error
 from .anycubic_local.exceptions import CloudModeError, HandshakeError
 from .anycubic_local.handshake import do_handshake
+from .config_flow import OPTIONS_FLOW_RELOADS
 from .const import DOMAIN, PLATFORMS, ace_suffix
 from .coordinator import AnycubicCoordinator
 
@@ -47,16 +48,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: AnycubicConfigEntry) -> 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # The options (the camera source) are read when the platforms are set up, so a change
-    # takes effect by setting the entry up again. Only a change to the options: this
-    # listener also hears the address being changed, and that flow reloads the entry
-    # itself — reloading here as well would do it twice.
-    loaded_with = dict(entry.options)
+    # takes effect by setting the entry up again. Home Assistant 2025.8 and newer do that
+    # from the options flow, and an update listener alongside is deprecated there (issue
+    # #21). Before that, a listener does it — for a change to the options only: it also
+    # hears the address being changed, and that flow reloads the entry itself.
+    if not OPTIONS_FLOW_RELOADS:
+        loaded_with = dict(entry.options)
 
-    async def _async_reload_on_new_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
-        if dict(entry.options) != loaded_with:
-            await hass.config_entries.async_reload(entry.entry_id)
+        async def _async_reload_on_new_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
+            if dict(entry.options) != loaded_with:
+                await hass.config_entries.async_reload(entry.entry_id)
 
-    entry.async_on_unload(entry.add_update_listener(_async_reload_on_new_options))
+        entry.async_on_unload(entry.add_update_listener(_async_reload_on_new_options))
     return True
 
 

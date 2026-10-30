@@ -10,6 +10,13 @@ from homeassistant.const import CONF_HOST
 from homeassistant.core import callback
 from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig
 
+try:
+    # Home Assistant 2025.8 and newer reload the entry themselves after the options
+    # change, and refuse an entry that has an update listener as well (issue #21).
+    from homeassistant.config_entries import OptionsFlowWithReload as _OptionsFlowBase
+except ImportError:
+    _OptionsFlowBase = OptionsFlow
+
 from .anycubic_local.exceptions import HandshakeError
 from .anycubic_local.handshake import HandshakeResult, do_handshake
 from .const import (
@@ -26,6 +33,10 @@ from .const import (
 # parser, and "%" starts an escape or an IPv6 zone id. Neither is in an IPv4 address or a
 # hostname, which are the two things this field takes.
 _NOT_IN_AN_ADDRESS = frozenset("/:@?#[]%")
+
+# Does the options flow reload the entry itself? If not, async_setup_entry does it with
+# an update listener.
+OPTIONS_FLOW_RELOADS = _OptionsFlowBase is not OptionsFlow
 
 
 def _clean_host(typed: str) -> str | None:
@@ -169,15 +180,16 @@ class AnycubicConfigFlow(ConfigFlow, domain=DOMAIN):
             data_schema=vol.Schema({vol.Required(CONF_HOST, default=shown): str}), errors=errors)
 
 
-class AnycubicOptionsFlow(OptionsFlow):
+class AnycubicOptionsFlow(_OptionsFlowBase):
     """The entry's "Configure" dialog: which camera the camera entity shows.
 
     Spelled so that it runs on every Home Assistant since 2024.9, like the steps above.
     The entry is looked up by `self.handler`, which for an options flow has always been
     the entry's id: handing the entry to the flow is how 2024.9 did it and is refused by
     current versions, and the `config_entry` property that replaced it arrived in 2024.11.
-    The reload that makes a new choice take effect is done by the entry's update listener
-    (see async_setup_entry), for the same reason: OptionsFlowWithReload is newer still.
+    The reload that makes a new choice take effect is OptionsFlowWithReload's where Home
+    Assistant has it (2025.8 on), and the entry's update listener before that (see
+    async_setup_entry).
     """
 
     async def async_step_init(self, user_input=None) -> ConfigFlowResult:
