@@ -971,3 +971,120 @@ async def test_camera_available_follows_only_a_running_stream(rig):
     failing.available = True
     assert cam.available is True
     cam.stream = None
+
+
+# -- Still images (issue #21): the printer has no snapshot, so a still is one frame of a
+# capture started for it, the light put back the way it was, and the frame kept.
+
+
+async def _still_camera(hass):
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "1.2.3.4"})
+    entry.add_to_hass(hass)
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+    coord = entry.runtime_data
+    from custom_components.anycubic.camera import AnycubicCamera
+    cam = AnycubicCamera(coord)
+    cam.hass = hass
+    coord.async_send_command = AsyncMock()
+    return cam, coord
+
+
+async def test_still_starts_capture_then_stops_it_and_puts_the_light_back(hass):
+    cam, coord = await _still_camera(hass)
+    with patch("custom_components.anycubic.camera.ffmpeg.async_get_image",
+               AsyncMock(return_value=b"jpeg-1")) as grab:
+        assert await cam.async_camera_image() == b"jpeg-1"
+    grab.assert_awaited_once()
+    assert grab.await_args.args[1] == "http://1.2.3.4:18088/flv"
+    sent = [(c.args[0], c.kwargs) for c in coord.async_send_command.await_args_list]
+    assert sent[-3:] == [("camera_start", {}), ("camera_stop", {}), ("light", {"on": False})]
+
+
+async def test_still_leaves_a_light_that_was_on(hass):
+    from custom_components.anycubic.anycubic_local.models import LightState
+    cam, coord = await _still_camera(hass)
+    coord.data.light = LightState(on=True)
+    with patch("custom_components.anycubic.camera.ffmpeg.async_get_image",
+               AsyncMock(return_value=b"jpeg-1")):
+        await cam.async_camera_image()
+    sent = [c.args[0] for c in coord.async_send_command.await_args_list]
+    assert sent[-1] == "camera_stop" and "light" not in sent
+
+
+async def test_still_is_kept_until_the_job_changes(hass):
+    from custom_components.anycubic import camera as camera_mod
+    cam, coord = await _still_camera(hass)
+    grab = AsyncMock(side_effect=[b"jpeg-1", b"jpeg-2"])
+    clock = [1000.0]
+    with patch("custom_components.anycubic.camera.ffmpeg.async_get_image", grab), \
+         patch.object(camera_mod, "monotonic", lambda: clock[0]):
+        assert await cam.async_camera_image() == b"jpeg-1"
+        clock[0] += 5                                  # a card asking again soon after
+        assert await cam.async_camera_image() == b"jpeg-1"
+        clock[0] += 3600                               # long after, nothing changed, light off
+        assert await cam.async_camera_image() == b"jpeg-1"
+        assert grab.await_count == 1
+        coord.data.printer.status = "finished"         # the job has changed
+        assert await cam.async_camera_image() == b"jpeg-2"
+
+
+async def test_still_refreshes_while_the_light_is_on_anyway(hass):
+    from custom_components.anycubic import camera as camera_mod
+    from custom_components.anycubic.anycubic_local.models import LightState
+    cam, coord = await _still_camera(hass)
+    coord.data.light = LightState(on=True)
+    grab = AsyncMock(side_effect=[b"jpeg-1", b"jpeg-2"])
+    clock = [1000.0]
+    with patch("custom_components.anycubic.camera.ffmpeg.async_get_image", grab), \
+         patch.object(camera_mod, "monotonic", lambda: clock[0]):
+        assert await cam.async_camera_image() == b"jpeg-1"
+        clock[0] += camera_mod.STILL_REFRESH_INTERVAL - 1
+        assert await cam.async_camera_image() == b"jpeg-1"
+        clock[0] += 2
+        assert await cam.async_camera_image() == b"jpeg-2"
+
+
+async def test_still_failure_does_not_retry_every_request(hass):
+    from custom_components.anycubic import camera as camera_mod
+    cam, coord = await _still_camera(hass)
+    grab = AsyncMock(return_value=None)
+    clock = [1000.0]
+    with patch("custom_components.anycubic.camera.ffmpeg.async_get_image", grab), \
+         patch.object(camera_mod, "monotonic", lambda: clock[0]):
+        assert await cam.async_camera_image() is None
+        clock[0] += 10
+        assert await cam.async_camera_image() is None
+        assert grab.await_count == 1
+        # Capture was still stopped and the light put back after the failed attempt.
+        assert [c.args[0] for c in coord.async_send_command.await_args_list][-2:] == [
+            "camera_stop", "light"]
+
+
+async def test_still_comes_from_a_stream_being_watched(hass):
+    cam, coord = await _still_camera(hass)
+    stream = FakeStream("http://1.2.3.4:18088/flv")
+    stream.play()
+    stream.async_get_image = AsyncMock(return_value=b"from-stream")
+    cam.stream = stream
+    with patch("custom_components.anycubic.camera.ffmpeg.async_get_image", AsyncMock()) as grab:
+        assert await cam.async_camera_image() == b"from-stream"
+    grab.assert_not_awaited()
+    coord.async_send_command.assert_not_awaited()
+
+
+async def test_still_keeps_capture_for_a_viewer_who_arrived_meanwhile(hass):
+    cam, coord = await _still_camera(hass)
+    stream = FakeStream("http://1.2.3.4:18088/flv")
+
+    async def grab(hass_, url):
+        stream.play()                                  # a card opened live view mid-grab
+        cam.stream = stream
+        return b"jpeg-1"
+
+    with patch("custom_components.anycubic.camera.ffmpeg.async_get_image", grab):
+        assert await cam.async_camera_image() == b"jpeg-1"
+    sent = [c.args[0] for c in coord.async_send_command.await_args_list]
+    assert "camera_stop" not in sent[sent.index("camera_start"):] and "light" not in sent

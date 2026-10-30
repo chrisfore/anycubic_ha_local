@@ -147,6 +147,13 @@ async def test_choosing_rinkhals_reloads_the_entry_into_the_other_camera(hass, f
     assert again["data_schema"]({}) == {"camera_source": "rinkhals"}
 
 
+async def test_the_entry_has_no_update_listener(hass, feed):
+    """Issue #21: from 2025.8 the options flow reloads the entry, and Home Assistant
+    deprecates an update listener alongside it (to stop working in 2026.12)."""
+    entry = await _setup(hass)
+    assert entry.update_listeners == []
+
+
 async def test_saving_the_same_source_does_not_reload(hass, feed):
     entry = await _setup(hass, RINKHALS)
     flow = await hass.config_entries.options.async_init(entry.entry_id)
@@ -178,15 +185,20 @@ async def test_a_printer_without_a_camera_has_one_only_on_the_rinkhals_source(ha
     with patch("custom_components.anycubic.do_handshake", return_value=HS_NO_CAMERA), \
          patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt",
                RecordingTransport):
-        hass.config_entries.async_update_entry(entry, options=RINKHALS)
-        await hass.async_block_till_done()
+        await _choose_source(hass, entry, "rinkhals")
         assert _camera_id(hass) is not None
         assert hass.states.get(_camera_id(hass)) is not None
         # Back on the printer's own source there is no camera to show, and the entity is
         # taken away with it, not left behind as one that is never provided again.
-        hass.config_entries.async_update_entry(entry, options={"camera_source": "printer"})
-        await hass.async_block_till_done()
+        await _choose_source(hass, entry, "printer")
     assert _camera_id(hass) is None
+
+
+async def _choose_source(hass, entry, source):
+    """Through the options flow: it is what reloads the entry (issue #21)."""
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    await hass.config_entries.options.async_configure(flow["flow_id"], {"camera_source": source})
+    await hass.async_block_till_done()
 
 
 async def test_diagnostics_name_the_source_and_not_the_address(hass, feed):

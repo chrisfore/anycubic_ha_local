@@ -26,7 +26,8 @@ async def test_sensors_created_and_valued(hass):
         await hass.async_block_till_done()
         coord = entry.runtime_data
         coord._apply("info", {"state": "busy", "temp": {"curr_nozzle_temp": 211},
-                              "project": {"state": "printing", "progress": 55, "pause": 0}})
+                              "project": {"state": "printing", "progress": 55, "pause": 0,
+                                          "print_time": 90}})
         await hass.async_block_till_done()
 
     st = hass.states.get("sensor.anycubic_kobra_s1_max_nozzle_temperature")
@@ -35,6 +36,9 @@ async def test_sensors_created_and_valued(hass):
     assert prog.state == "55"
     printing = hass.states.get("binary_sensor.anycubic_kobra_s1_max_printing")
     assert printing.state == "on"
+    # Issue #22: the elapsed time, in minutes from the printer, shown in hours.
+    elapsed = hass.states.get("sensor.anycubic_kobra_s1_max_elapsed_time")
+    assert elapsed is not None and float(elapsed.state) == 1.5
 
 
 async def test_unload(hass):
