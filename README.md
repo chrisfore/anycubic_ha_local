@@ -259,4 +259,8 @@ Totally optional — bug reports and printer info are just as appreciated. 🙌
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+Copyright (c) 2026 Chris Fore and contributors.
+
+From v1.2.20 on, this integration is licensed under the GNU Affero General Public License v3.0 or later — see [LICENSE](LICENSE).
+
+Releases up to and including v1.2.19 were published under the MIT License, and stay available under it. Code contributed under MIT keeps its MIT notice — see [LICENSE-MIT](LICENSE-MIT).
