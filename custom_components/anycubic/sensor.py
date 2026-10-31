@@ -1,8 +1,12 @@
 """Printer sensors and ACE 2 box + slot sensors."""
 from __future__ import annotations
 
-from homeassistant.components.sensor import SensorEntity
+import math
+import re
+
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import UnitOfMass
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -22,7 +26,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEnt
     coord: AnycubicCoordinator = entry.runtime_data
     enclosed = coord.hs.model_id in ENCLOSED_MODELS
     add([AnycubicSensor(coord, d) for d in PRINTER_SENSORS if enclosed or not d.enclosed_only])
-    add([AnycubicPauseReasonSensor(coord)])
+    add([AnycubicPauseReasonSensor(coord), AnycubicFilamentUsedSensor(coord)])
 
     def ace_sensors(box_id: int) -> list:
         dryer = box_has_dryer(box_id)
@@ -65,6 +69,77 @@ class AnycubicSensor(AnycubicEntity, SensorEntity):
     @property
     def native_value(self):
         return self.entity_description.value_fn(self.coordinator.data.printer)
+
+
+# Filament used (issue #22). The printer reports the job's filament as millimetres fed —
+# measured on a Kobra S1 Max: a job the slicer put at 7.27 m ended at 8177, the rest being
+# purge at colour changes and the prime. Shown in grams, the way filament is bought, from
+# 1.75 mm filament and the material's density. Densities in g/cm³, by the word a material
+# name starts with ("PETG", "TPU for ACE", "PLA+").
+FILAMENT_DIAMETER_MM = 1.75
+MATERIAL_DENSITY = {"PLA": 1.24, "PETG": 1.27, "PET": 1.27, "ABS": 1.04, "ASA": 1.07,
+                    "TPU": 1.21, "PA": 1.14, "PC": 1.20, "HIPS": 1.04, "PVA": 1.23}
+DEFAULT_DENSITY = MATERIAL_DENSITY["PLA"]
+_WORDS = re.compile(r"[A-Za-z]+")
+
+
+def material_density(name: str | None) -> float | None:
+    """The density for a material name, or None if it names none known here."""
+    for word in _WORDS.findall(name or ""):
+        if word.upper() in MATERIAL_DENSITY:
+            return MATERIAL_DENSITY[word.upper()]
+    return None
+
+
+def job_density(data) -> tuple[float, str]:
+    """The density to weigh the job's filament by, and where it was found.
+
+    The file name first: Anycubic's slicer puts the material in it ("…_PETG_0.2_55m.gcode").
+    Then the ACE slot feeding, while one is; the printer forgets it once the job ends.
+    Then the ACE slots holding filament, if they agree. PLA otherwise.
+    """
+    density = material_density(data.printer.filename)
+    if density is not None:
+        return density, "file name"
+    for box in data.ace:
+        slot = box.slots.get(box.loaded_slot)
+        density = material_density(slot.material) if slot else None
+        if density is not None:
+            return density, "loaded slot"
+    found = {material_density(s.material) for box in data.ace for s in box.slots.values() if s.loaded}
+    found.discard(None)
+    if len(found) == 1:
+        return found.pop(), "ACE slots"
+    return DEFAULT_DENSITY, "default"
+
+
+class AnycubicFilamentUsedSensor(AnycubicEntity, SensorEntity):
+    """Filament the job has fed, in grams. Per job, so no long-term statistics: it starts
+    over with each job and can dip during one (retractions)."""
+
+    _attr_translation_key = "filament_used"
+    _attr_icon = "mdi:printer-3d-nozzle"
+    _attr_device_class = SensorDeviceClass.WEIGHT
+    _attr_native_unit_of_measurement = UnitOfMass.GRAMS
+    _attr_suggested_display_precision = 1
+
+    def __init__(self, coordinator: AnycubicCoordinator) -> None:
+        super().__init__(coordinator, "filament_used")
+
+    @property
+    def native_value(self):
+        mm = self.coordinator.data.printer.filament_used
+        if mm is None:
+            return None
+        density, _ = job_density(self.coordinator.data)
+        area_cm2 = math.pi * (FILAMENT_DIAMETER_MM / 20) ** 2
+        return round(mm / 10 * area_cm2 * density, 2)
+
+    @property
+    def extra_state_attributes(self):
+        mm = self.coordinator.data.printer.filament_used
+        density, source = job_density(self.coordinator.data)
+        return {"length_mm": mm, "density": density, "density_from": source}
 
 
 class AnycubicPauseReasonSensor(AnycubicEntity, SensorEntity):
