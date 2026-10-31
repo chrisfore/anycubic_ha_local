@@ -28,6 +28,8 @@ views:
           # chamber for the job anyway). When idle it collapses to a tap-to-view tile,
           # because opening the stream sends startCapture and the printer turns its
           # chamber light on with capture — so idle page views never wake the light.
+          # The idle still is one kept frame: the integration takes a new one only when
+          # the job state changes, switching the light back off if it was off.
           - type: conditional
             conditions:
               - condition: or
@@ -60,14 +62,23 @@ views:
                 entity: sensor.anycubic_kobra_s1_max_status
                 state_not: [preheating, printing, pausing, paused, resuming, resumed]
             card:
-              type: custom:mushroom-template-card
-              entity: camera.anycubic_kobra_s1_max_camera
-              primary: Camera
-              secondary: Tap to view the live feed
-              icon: mdi:cctv
-              icon_color: disabled
-              tap_action:
-                action: more-info
+              type: vertical-stack
+              cards:
+                - type: picture-entity
+                  entity: camera.anycubic_kobra_s1_max_camera
+                  camera_view: auto
+                  show_name: false
+                  show_state: false
+                  tap_action:
+                    action: more-info
+                - type: custom:mushroom-template-card
+                  entity: camera.anycubic_kobra_s1_max_camera
+                  primary: Camera
+                  secondary: Tap to view the live feed
+                  icon: mdi:cctv
+                  icon_color: disabled
+                  tap_action:
+                    action: more-info
 
           # ============================ ACE 2 ============================
           - type: custom:mushroom-title-card
@@ -163,6 +174,7 @@ views:
             entities:
               - entity: number.ace_2_drying_temperature
               - entity: number.ace_2_drying_time
+              - entity: sensor.ace_2_drying_time_remaining
 
           # ============================ Printer ============================
           - type: custom:mushroom-title-card
@@ -279,7 +291,17 @@ views:
                 - entity: sensor.anycubic_kobra_s1_max_current_layer
                 - entity: sensor.anycubic_kobra_s1_max_total_layers
                 - entity: sensor.anycubic_kobra_s1_max_time_remaining
+                - entity: sensor.anycubic_kobra_s1_max_elapsed_time
+                - entity: sensor.anycubic_kobra_s1_max_filament_used
+                - type: conditional
+                  conditions:
+                    - entity: binary_sensor.anycubic_kobra_s1_max_paused
+                      state: "on"
+                  row:
+                    entity: sensor.anycubic_kobra_s1_max_pause_reason
                 - entity: sensor.anycubic_kobra_s1_max_file_name
+                - entity: event.anycubic_kobra_s1_max_print_event
+                  name: Last event
 
           - type: entities
             title: Controls
