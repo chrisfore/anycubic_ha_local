@@ -148,3 +148,53 @@ async def test_empty_ace_report_leaves_the_external_spool_alone(hass):
 
     assert coord.data.external_spool is not None
     assert hass.states.get("sensor.anycubic_kobra_s1_max_external_spool").state == "PETG"
+
+
+async def test_filament_used_is_weighed_by_the_jobs_material(hass):
+    """Issue #22: supplies_usage is millimetres fed. A PETG job the slicer put at 7.27 m
+    ended at 8177 mm on a Kobra S1 Max: 25.0 g at 1.75 mm and 1.27 g/cm³."""
+    entry = MockConfigEntry(domain=DOMAIN, unique_id="SER-1", data={"host": "1.2.3.4"})
+    entry.add_to_hass(hass)
+
+    class FakeTransport:
+        def __init__(s, hs, on_report, **k): pass
+        def connect(s): pass
+        def disconnect(s): pass
+        def query(s, t): pass
+        def publish(s, t, p): pass
+
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", FakeTransport):
+        assert await hass.config_entries.async_setup(entry.entry_id)
+        await hass.async_block_till_done()
+        coord = entry.runtime_data
+        coord._apply("info", {"state": "busy", "project": {
+            "state": "printing", "supplies_usage": 8177,
+            "filename": "case_plate(01)_PETG_0.2_55m24s.gcode"}})
+        await hass.async_block_till_done()
+
+    st = hass.states.get("sensor.anycubic_kobra_s1_max_filament_used")
+    assert st.attributes["unit_of_measurement"] == "g"
+    assert round(float(st.state), 1) == 25.0
+    assert st.attributes["length_mm"] == 8177
+    assert st.attributes["density_from"] == "file name"
+    assert "state_class" not in st.attributes
+
+
+def test_job_density_falls_back_to_the_ace_then_to_pla():
+    from types import SimpleNamespace
+
+    from custom_components.anycubic.anycubic_local.models import AceBox, Slot
+    from custom_components.anycubic.sensor import job_density
+
+    def data(filename, slots, loaded_slot=-1):
+        box = AceBox(id=0, loaded_slot=loaded_slot,
+                     slots={i: Slot(index=i, material=m, loaded=m is not None)
+                            for i, m in enumerate(slots)})
+        return SimpleNamespace(printer=SimpleNamespace(filename=filename), ace=[box])
+
+    assert job_density(data("x.gcode", ["PLA", "TPU for ACE"], loaded_slot=1)) == (
+        1.21, "loaded slot")
+    assert job_density(data("x.gcode", ["PETG", "PETG", None])) == (1.27, "ACE slots")
+    assert job_density(data("x.gcode", ["PETG", "TPU for ACE"])) == (1.24, "default")
+    assert job_density(data(None, [])) == (1.24, "default")

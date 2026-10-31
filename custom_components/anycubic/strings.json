@@ -51,6 +51,7 @@
       "total_layers": { "name": "Total layers" },
       "time_remaining": { "name": "Time remaining" },
       "print_time": { "name": "Elapsed time" },
+      "filament_used": { "name": "Filament used" },
       "filename": { "name": "File name" },
       "firmware": { "name": "Firmware" },
       "ace_humidity": { "name": "Humidity" },
