@@ -7,6 +7,8 @@ cloud account, no rooting**.
 [![hacs](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz)
 [![Open your Home Assistant instance and add this repository to HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=chrisfore&repository=anycubic_ha_local&category=integration)
 [![Stars](https://img.shields.io/github/stars/chrisfore/anycubic_ha_local?style=flat&color=f5c518&label=stars)](https://github.com/chrisfore/anycubic_ha_local/stargazers)
+[![Buy me a beer](https://img.shields.io/badge/%F0%9F%8D%BA%20Buy%20me%20a%20beer-GitHub%20Sponsors-f9dc46)](https://github.com/sponsors/chrisfore)
+[![Venmo](https://img.shields.io/badge/Venmo-%40Chris--Fore--20-f9dc46)](https://venmo.com/u/Chris-Fore-20)
 
 > **Status:** v1.2.15 — validated end-to-end on a Kobra S1 Max and user-validated on a Kobra 4,
 > Kobra 3 and Kobra X; the rest of the family shares the identical protocol. Entities adapt to each
@@ -247,19 +249,8 @@ The most useful thing you can do costs nothing: **[star the repo](https://github
 so more Anycubic owners find it, and tell us which printer and firmware you are running. Every
 model someone confirms makes the integration better for everyone on that machine.
 
-## 🍺 Buy me a beer
-
-This is a free, no-cloud labour of love. If it saved you some hassle and you'd like to say thanks:
-
-- **[Sponsor on GitHub](https://github.com/sponsors/chrisfore)** — 0% fees, it all reaches me.
-- **[Venmo @Chris-Fore-20](https://venmo.com/u/Chris-Fore-20)**
-
-Totally optional — bug reports and printer info are just as appreciated. 🙌
-
 ## License
 
 Copyright (c) 2026 Chris Fore and contributors.
 
 From v1.2.20 on, this integration is licensed under the GNU Affero General Public License v3.0 or later — see [LICENSE](LICENSE).
-
-Releases up to and including v1.2.19 were published under the MIT License, and stay available under it. Code contributed under MIT keeps its MIT notice — see [LICENSE-MIT](LICENSE-MIT).
