@@ -23,7 +23,7 @@ numbers below refer to it).
   3. Phase 2 gate.
   4. Phase 2 code.
   5. Phase 2 live tests.
-  6. Option A, optional and pending the owner.
+  6. Option A (the SSH switch reader) is dropped: step a showed the switch does not follow the door.
 
 ## Versions and minimum Home Assistant
 
@@ -38,7 +38,7 @@ frontend (20240904.0):
 |---|---|
 | `selector: file` (`accept` is required) and `file_upload.process_uploaded_file`, 100 MB cap | present |
 | Script more-info dialog renders script fields, including the file selector (the "Print a file" form) | present |
-| `State.last_reported` (door freshness) | present |
+| `State.last_reported` | present, though no longer needed: the door rule (spec D29) now uses state changes |
 | `async_register_admin_service` | present. It takes no `supports_response`, so the actions return nothing and report by raising |
 | `helpers.storage.Store` | present |
 | `ServiceValidationError` with translation keys (one-line refusals) | present |
@@ -153,7 +153,9 @@ Run the local runbook `research/probe/p0b-2026-11-09/RUNBOOK.md`, steps 0 and a-
 written. Before the session, the verification engineer adds these extensions to it:
 
 1. **b (T2).** Also upload names of 100 and 150 characters, and one with spaces and parentheses.
-   Record what the printer keeps; this sets the name cap.
+   Record what the printer keeps; this sets the name cap. Result: PASSED. All 6 uploads were intact,
+   md5 matched, and HTTP 200 came back with `code` 200; every name was kept exactly; nothing
+   started. The 100-character cap stands.
 2. **c (T3).** Also record:
    - whether `print` reports echo the task id sent;
    - whether a start with a deliberately wrong md5 is refused;
@@ -259,7 +261,11 @@ If T4 shows the motors never drop, or drop later than a realistic cool-down, ski
      unknown start counts as expired. At expiry: `expired`, the button unavailable, and a notice;
    - the press checks in spec order, each with its one-line reason and nothing sent. No timer, no
      retry, no arming;
-   - resume at most once, and watching through `pushing`;
+   - the door rule (D29, D34): with a sensor, a change to `on` after the pause began and `on` at the
+     press; with none, `door_open_confirmed: true`;
+   - a call with no user (an automation) refused;
+   - resume at most once, and watching through `pushing`, stopping on any change of the sensor away
+     from `on`;
    - the results; the flag clears only on `done`;
    - stopping foreign jobs and unexpected resumes;
    - restart and gap handling through the task-id echo (T3).
@@ -272,9 +278,12 @@ If T4 shows the motors never drop, or drop later than a realistic cool-down, ski
      record.
    - Print again ticked restarts the prepared copy only if T3 proved the md5 check (a constant set
      from T3), and refuses when there is no prepared copy; the button never ticks.
+   - New `anycubic.clear_bed` (printer, `door_open_confirmed`), registered admin-only and refusing
+     calls with no user. The field is required when no door sensor is configured.
 7. **Entities and strings.**
    - `button.py`: "Clear the bed", admin-only through the context check, available only in `ready`
-     inside the window.
+     inside the window. With no door sensor, its press is refused with the "use the dashboard" line
+     (spec 7.4).
    - `sensor.py`: "Bed clearing" (enum plus reason).
    - `clear_ready`, `clear_done` and `clear_failed` (`coordinator.py`, `event.py`).
    - `strings.json` and `translations/en.json`: press refusals naming the value to wait for, in °C.
@@ -288,12 +297,21 @@ If T4 shows the motors never drop, or drop later than a realistic cool-down, ski
      - marked foreign job: stopped at any pause;
      - unmarked foreign job with the target 0: stopped unless its layers show it mid-print.
    - **No auto push:** HA never resumes without a press.
-   - **Press checks:** each refuses in order with its line and sends nothing; stale or non-finite
-     readings fail; a non-admin press is refused.
+   - **Press checks:**
+     - each refuses in order with its line and sends nothing;
+     - stale or non-finite readings fail;
+     - a non-admin press, and a call with no user, are refused.
+   - **Door, with a sensor:**
+     - a door left open since before the pause, with no change, is refused;
+     - an event-only sensor passes after a fresh open;
+     - unavailable or unknown counts as closed.
+   - **Door, with none:** the button entity press, and the action without the field, are refused;
+     the action with the field passes the door check.
    - **Window and Stop:** expiry, or an unknown start, gives `expired` plus a notice; Stop at
      `ready` leaves the flag on.
-   - **Pushing:** resume happens once; door, pause or error means `failed`, and so does a lost
-     connection; only a watched completion clears the flag.
+   - **Pushing:** resume happens once; a sensor change away from `on` (including unavailable),
+     a pause or an error means `failed`, and so does a lost connection; only a watched completion
+     clears the flag.
    - **Restarts and the lock:** restart with and without the echo; an unexpected resume means stop;
      the Resume button and the actions are refused under the lock.
    - **Actions:** unticked prints normally; ticked and ineligible is refused with nothing sent; the
@@ -302,10 +320,14 @@ If T4 shows the motors never drop, or drop later than a realistic cool-down, ski
 9. **[DOCS]**
    - README "Clear the bed" section: how it works; what each refusal means; Stop, then "Bed is
      clear" to clear by hand (Stop first, because it moves the head); the motor window; the
-     accepted risks; watch the first ejections; door freshness and the command-line sensor example.
+     accepted risks, including that with no door sensor a closed door is the user's responsibility;
+     watch the first ejections. Also: the door sensor is optional, and event-only contacts work;
+     never automate `clear_bed` or put `door_open_confirmed` in a script.
    - The example script gains the "Allow Clear the bed" tick box (label confirmed by the UX
      reviewer).
-   - The dashboard's "Clear the bed" button and "Bed clearing" sensor.
+   - The dashboard's "Clear the bed" control: a tap action calling `anycubic.clear_bed` with
+     `door_open_confirmed: true` behind the confirmation "Open the printer door before clearing the
+     bed." Plus the "Bed clearing" sensor.
    - An example automation that turns `clear_ready` into a phone push.
 
 **Review R2** covers the whole Phase 2 diff. Checkpoint **C4**.
@@ -314,11 +336,15 @@ If T4 shows the motors never drop, or drop later than a realistic cool-down, ski
 
 In order. A catch container sits in front of the door for every step that can sweep.
 
-1. **T1.** Confirm the door side, if step a has not already. Check the owner's sensor against the
-   30 s bound.
-2. **T9a.** Make a prepared print of the 10 mm square, reaching `ready`.
-   - Press with the door closed, with a stale sensor, and with the bed above its limit. Each must
-     refuse and send nothing.
+1. **T1.** Confirm the door side, if step a did not record it. If a sensor is used, check that it
+   reports a change to open.
+2. **T9a.** Make a prepared print of the 10 mm square, reaching `ready`. These presses must each
+   refuse and send nothing:
+   - with a sensor: the door closed, the door left open since before the pause;
+   - with none: the button entity, and the action without the field;
+   - the bed above its limit.
+
+   The dashboard's confirmation must pass the door check.
    - Then press Stop. Pass: the part stays and the flag stays on.
 3. **T8.**
    - HA restarted mid-pause: recognized only with the task-id echo, otherwise stopped.
@@ -338,36 +364,23 @@ In order. A catch container sits in front of the door for every step that can sw
 Tune the sweep constants from T5. The implementer makes the fixes, with a delta review. **Release
 1.4.0**: all three version files together, and **[DOCS]** release notes. Checkpoint **C5**.
 
-## Option A (last, optional, only on the owner's go)
+## Option A: dropped
 
-1. **Code:**
-   - an options step offered only when SSH answers;
-   - credentials stored in the entry;
-   - the host key pinned on first use and refused on change, with key authentication preferred;
-   - one fixed read command;
-   - a "Door" binary_sensor, read once at the press and every 1-2 s during `pushing`, unavailable
-     on any error or timeout;
-   - the SSH client library added to the manifest `requirements`.
-2. **Tests prove:**
-   - a changed host key is refused;
-   - errors and timeouts make the sensor unavailable;
-   - the command is fixed;
-   - credentials and output are never logged.
-3. Combined review, with security, then **[DOCS]**, then T1 re-run with this sensor, then a release.
+Step a showed that GPIO 104 reads a constant 1 through open and close on the owner's printer, so
+there is nothing to read.
 
 ## Needed from the owner
 
 1. **Phase 1 session.** A go and about 90 minutes for the Phase 1 live session, with the runbook's
    checklist on hand, plus a phone to try the "Print a file" form.
-2. **Door sensor.** One that reports at least every 10 s, chosen before the session. An event-only
-   contact fails the 30 s bound.
+2. **Door sensor, optional.** Any door contact works, event-only ones included. Without one, the
+   dashboard confirmation stands in, and a closed door is the owner's responsibility (D34).
 3. **Risk acceptance.** Written acceptance of the spec's section 9 risks before Phase 2 code starts.
 4. **T4 time.** Up to about 2.5 hours for the long pause, plus about an hour for run 3 if it is
    needed. Mostly unattended.
 5. **Phase 2 session.** A catch container, the door open for the sweep tests, one light sacrificial
    PLA part, and presence to watch.
-6. **Decisions.** Option A, yes or no; the version numbers 1.3.0 and 1.4.0. (D33 is ruled: a tick
-   box.)
+6. **Decisions.** The version numbers 1.3.0 and 1.4.0.
 7. **Close-out.** At runbook Z.4, delete the test files from the printer, or authorize their
    removal.
 8. **Awareness.** The flag is on after every HA restart, integration reload or options change, and
