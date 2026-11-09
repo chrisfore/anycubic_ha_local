@@ -56,12 +56,16 @@ class AnycubicMqtt:
     def __init__(self, hs: HandshakeResult, on_report: Callable[[str, dict], None],
                  client_factory=mqtt.Client, identifiers: tuple[str, ...] | None = None,
                  job_names: Callable[[], Iterable[str | None]] | None = None,
-                 on_reason: Callable[[JobReason], None] | None = None) -> None:
+                 on_reason: Callable[[JobReason], None] | None = None,
+                 on_start_reply: Callable[[dict], None] | None = None) -> None:
         self._hs = hs
         self._on_report = on_report
         # Told why a job paused or stopped. The reason is in the report's envelope, which
         # on_report is never handed, so it is read here (see parse_reason).
         self._on_reason = on_reason
+        # Told how the printer answered a print start: the answer's envelope, where the
+        # code that says yes or no is. Its `data` says nothing about that.
+        self._on_start_reply = on_start_reply
         # What must not reach the log from this session (see runtime_identifiers). The
         # coordinator hands over its own list, which adds the address the user entered.
         # Handed nothing, the transport still scrubs everything its own handshake told it.
@@ -228,6 +232,11 @@ class AnycubicMqtt:
             reason = parse_reason(obj)
             if reason is not None:
                 self._on_reason(reason)
+        if (msg_type == "print" and obj.get("action") == "start"
+                and self._on_start_reply is not None):
+            # The envelope only, in a copy: the code, the state and the message say whether
+            # the printer took the job. Nothing else of the answer is handed on.
+            self._on_start_reply({key: obj.get(key) for key in ("action", "code", "state", "msg")})
         if (msg_type == "light" and obj.get("action") == "control"
                 and obj.get("code") not in (None, 200)):
             # The answer to a light command carries the light object, and the coordinator

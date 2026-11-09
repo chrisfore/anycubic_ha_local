@@ -1,0 +1,22 @@
+print_file:
+  fields:
+    printer:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: anycubic
+    file:
+      required: true
+      selector:
+        file:
+          accept: ".gcode,.3mf"
+
+print_again:
+  fields:
+    printer:
+      required: true
+      selector:
+        device:
+          filter:
+            integration: anycubic

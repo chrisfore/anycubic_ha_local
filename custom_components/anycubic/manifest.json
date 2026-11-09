@@ -3,7 +3,7 @@
   "name": "Anycubic 3D Printer - Local Control - NO Cloud",
   "codeowners": ["@chrisfore"],
   "config_flow": true,
-  "dependencies": ["ffmpeg"],
+  "dependencies": ["ffmpeg", "file_upload"],
   "documentation": "https://github.com/chrisfore/anycubic_ha_local",
   "iot_class": "local_push",
   "issue_tracker": "https://github.com/chrisfore/anycubic_ha_local/issues",

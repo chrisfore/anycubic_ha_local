@@ -27,7 +27,7 @@
   "options": {
     "step": {
       "init": {
-        "data": { "camera_source": "Camera source" }
+        "data": { "camera_source": "Camera source", "door_sensor": "Door sensor" }
       }
     }
   },
@@ -67,7 +67,8 @@
     },
     "binary_sensor": {
       "printing": { "name": "Printing" },
-      "paused": { "name": "Paused" }
+      "paused": { "name": "Paused" },
+      "bed_needs_clearing": { "name": "Bed needs clearing" }
     },
     "switch": {
       "ace_drying": { "name": "Drying" },
@@ -76,7 +77,9 @@
     "button": {
       "pause": { "name": "Pause" },
       "resume": { "name": "Resume" },
-      "stop": { "name": "Stop" }
+      "stop": { "name": "Stop" },
+      "print_again": { "name": "Print again" },
+      "bed_clear": { "name": "Bed is clear" }
     },
     "number": {
       "nozzle_target": { "name": "Nozzle target temperature" },
@@ -117,5 +120,65 @@
         }
       }
     }
+  },
+  "services": {
+    "print_file": {
+      "name": "Print a file",
+      "description": "Sends a sliced file to a printer and starts it.",
+      "fields": {
+        "printer": { "name": "Printer", "description": "The printer to print on." },
+        "file": { "name": "File", "description": "A .gcode, .gcode.3mf or sliced .3mf file, up to 100 MB." }
+      }
+    },
+    "print_again": {
+      "name": "Print again",
+      "description": "Starts the last file sent from Home Assistant again.",
+      "fields": {
+        "printer": { "name": "Printer", "description": "The printer to print on." }
+      }
+    }
+  },
+  "exceptions": {
+    "unknown_printer": { "message": "Choose an Anycubic printer that is set up in Home Assistant." },
+    "model_not_enabled": { "message": "Printing from Home Assistant is not available for this printer model yet." },
+    "printer_unreachable": { "message": "Home Assistant has not heard from the printer for over a minute. Check that it is on and connected." },
+    "submit_in_progress": { "message": "A file is already being sent to this printer. Wait for it to finish." },
+    "printer_busy": { "message": "The printer is busy. Try again when the current job ends." },
+    "bed_not_clear": { "message": "Clear the bed, then press \"Bed is clear\"." },
+    "file_missing": { "message": "The file is no longer available. Choose it again." },
+    "file_unreadable": { "message": "The file could not be read. Choose it again." },
+    "file_type_not_supported": { "message": "Only .gcode, .gcode.3mf and sliced .3mf files can be printed." },
+    "file_name_marked": { "message": "The file name contains \"-ha-pushoff\", which is reserved. Rename the file and send it again." },
+    "file_name_invalid": { "message": "The file name has no usable characters. Rename the file and send it again." },
+    "file_empty": { "message": "The file is empty. Export it from the slicer again." },
+    "file_too_large": { "message": "The file is larger than 100 MB." },
+    "archive_invalid": { "message": "The 3MF file could not be read. Export it from the slicer again." },
+    "archive_too_large": { "message": "The 3MF file is too large to check once unpacked." },
+    "not_sliced": { "message": "The 3MF file is not sliced. Slice it and export the sliced file." },
+    "multi_plate": { "message": "The 3MF file holds more than one plate. Export a single plate." },
+    "wrong_printer_model": { "message": "The file was sliced for a different printer. Slice it for this printer." },
+    "filament_unknown": { "message": "The printer has not reported its filament yet. Try again in a minute." },
+    "multi_filament_needs_unit": { "message": "The file uses more than one filament. Attach an ACE, or slice the file for one filament." },
+    "second_unit_single_only": { "message": "With a second ACE attached, only single-filament files can be printed for now." },
+    "slot_out_of_range": { "message": "The file uses slot {slot}, which the ACE does not have." },
+    "slot_material_unknown": { "message": "The material in slot {slot} is not known. Load the filament or set its type on the printer." },
+    "spool_material_unknown": { "message": "The material on the external spool is not known. Load the filament or set its type on the printer." },
+    "slot_material_mismatch": { "message": "Slot {slot} holds {loaded}, but the file needs {wanted}. Load {wanted} in slot {slot}, or slice the file for {loaded}." },
+    "spool_material_mismatch": { "message": "The external spool holds {loaded}, but the file needs {wanted}. Load {wanted}, or slice the file for {loaded}." },
+    "nothing_to_print_again": { "message": "No file has been sent from Home Assistant yet." },
+    "print_again_marked": { "message": "The last file is a push-off copy. Send the original file again." },
+    "printer_not_answering": { "message": "The printer did not answer. Check that it is on and LAN Mode is on." },
+    "upload_refused": { "message": "The printer refused the upload. Check that LAN Mode is on." },
+    "upload_not_understood": { "message": "The printer could not read the upload. Send the file again." },
+    "upload_file_refused": { "message": "The printer refused this file." },
+    "upload_not_saved": { "message": "The printer could not save the file. Send the file again." },
+    "upload_no_space": { "message": "The printer does not have enough free space for this file. Delete files on the printer, then send it again." },
+    "upload_3mf_refused": { "message": "The printer could not read this 3MF file. Export it from the slicer again." },
+    "upload_failed": { "message": "The upload did not finish. Check the connection and send the file again." },
+    "printer_not_connected": { "message": "Home Assistant is not connected to the printer right now. Try again in a minute." },
+    "start_refused": { "message": "The printer did not start the print: {reason}." },
+    "print_again_refused": { "message": "The printer did not start the last file: {reason}. Send the file again." },
+    "start_unconfirmed": { "message": "The printer did not confirm the start. The job may still start, because large 3MF files take time to unpack." },
+    "clear_while_busy": { "message": "Wait until the printer is on and idle, then press \"Bed is clear\"." }
   }
 }

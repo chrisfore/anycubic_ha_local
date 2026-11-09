@@ -66,3 +66,43 @@ def build(model_id: str, device_id: str, command: str, *, value=None, on=None,
                "timestamp": int(time.time() * 1000) if ts is None else ts,
                "msgid": msgid or str(uuid.uuid4()), "data": data}
     return query_topic(model_id, device_id, mtype), payload
+
+
+# `filetype` in a print start. 1 is what every start seen so far has sent, for G-code; it is
+# sent for archives too until T3 says otherwise (INFERRED).
+FILETYPE_GCODE = 1
+
+
+def build_print_start(model_id: str, device_id: str, *, taskid: str, filename: str,
+                      filesize: int, md5: str, ams_settings: dict,
+                      filetype: int = FILETYPE_GCODE, ts=None, msgid=None):
+    """Return (topic, payload) for print/start: print a file that is already on the printer.
+
+    UNVERIFIED SHAPE (T3). It follows the start this printer has been sent by other clients:
+    the printer looks the base name up in its own file folder, so `filepath` is only "/".
+    `taskid` is fresh for each start, so the printer's reports can be matched to it.
+    `ams_settings` maps the file's filament slots to the multi-color unit's, or says to use
+    the external spool. Task settings: auto-leveling on; vibration compensation, flow
+    calibration, timelapse, the printer's camera detection and drying all off.
+    """
+    data = {
+        "taskid": taskid,
+        "filename": filename,
+        "filepath": "/",
+        "filetype": filetype,
+        "filesize": filesize,
+        "md5": md5,
+        "ams_settings": ams_settings,
+        "task_settings": {
+            "auto_leveling": 1,
+            "vibration_compensation": 0,
+            "flow_calibration": 0,
+            "timelapse": {"status": 0},
+            "ai_settings": {"status": 0},
+            "dry_mode": 0,
+        },
+    }
+    payload = {"type": "print", "action": "start",
+               "timestamp": int(time.time() * 1000) if ts is None else ts,
+               "msgid": msgid or str(uuid.uuid4()), "data": data}
+    return query_topic(model_id, device_id, "print"), payload

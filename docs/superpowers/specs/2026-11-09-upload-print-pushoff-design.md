@@ -53,7 +53,8 @@ retried multipart upload can corrupt the file); anything sent after a guard has 
 Security rules (from the security review; they apply everywhere below)
 - **Numbers and access.** Only finite numbers are accepted, and every guard is "pass if within
   range", so a missing, NaN, infinite or non-numeric value fails. Both actions are registered with
-  `async_register_admin_service`.
+  `async_register_admin_service`, and the "Print again" and "Bed is clear" buttons check in
+  `async_press` that the pressing user is an admin.
 - **Upload token.** While held, it is masked in every log line and error by `redacted_error`'s
   whole-word pass (`redacted()` skips identifiers under 7 characters, and the token may be short).
   Errors carry fixed text and are raised `from None`. Requests use `allow_redirects=False`. The host
@@ -88,7 +89,7 @@ Security rules (from the security review; they apply everywhere below)
 | D16, D17 | Upload via `:18910/gcode_upload`, start via MQTT `print`/`start`; token never logged. Push-off supports `.gcode` and sliced `.3mf`, rewriting the archive consistently | PM |
 | D18, D19 | `M601` after the final nozzle-off and before motors-off, then the sweep, then a Z raise; HA cools, re-checks, then resumes or stops; never re-home Z with a part on the bed. A modified file never sweeps outside HA's control; with no HA it stays paused | PM |
 | D20, D21 | Phase 1 then Phase 2, each gated by named live tests, owner present, bed clear. Submit guards: idle (and 10101), suffix, size, model, bed flag, push-off guards; one-line reason, nothing sent | PM |
-| D22 | Bed flag on at any job seen and after any report gap; cleared only by a watched completed sweep or "Bed is clear" | PM call |
+| D22 | Bed flag on at every entry load, at any job seen and after any in-session report gap; cleared only by a watched completed sweep or "Bed is clear" | PM call; load rule from review fix I1 |
 | D23 | Skirt, raft and any prime or wipe tower also refuse push-off | PM call |
 | D24 | Targets: bed 28 C (PLA) / 25 C (PETG); chamber 30 C; limit 60 min; nozzle at or below 50 C before any part contact | PM call |
 | D25 | "Print again" restarts the printer's copy of the unmodified original; HA keeps no copy | PM call |
@@ -106,7 +107,7 @@ Security rules (from the security review; they apply everywhere below)
   README and the example dashboard.
 - "Print again" (button) reprints the last file sent through HA, never with push-off. "Bed needs
   clearing" (binary sensor) and "Bed is clear" (button, available only while the flag is on and no
-  job is active; the README warns never to automate it).
+  job is active; the README warns never to automate it). Both buttons are admin-only.
 - Phase 2 adds a "Push-off" sensor (`off`, `armed`, `cooling`, `pushing`, `done`, `skipped`,
   `failed`, reason as an attribute), a door-sensor option, and `push_off_done` / `_skipped` /
   `_failed` on the existing print event entity. The Resume button goes unavailable for any pause
@@ -115,14 +116,14 @@ Security rules (from the security review; they apply everywhere below)
   push_off in Phase 2; 7.7), both admin-only. A refusal is HA's error for the call: one plain
   sentence with the fix if there is one ("The printer is busy. Try again when the current job
   ends.").
-- Per-entry store (small JSON, no file contents): bed flag, last report time, last-file and
-  armed-job records.
+- Store (small JSON, no file contents): last-file record; Phase 2 adds the armed-job record.
 
 ## 6. Phase 1: upload, start, print again
 
 ### 6.1 Guards, in order, before anything is sent
 
-1. The model is 20025 or 20029 ("Printing from Home Assistant is not enabled for this model yet.").
+1. The model is 20025 or 20029 ("Printing from Home Assistant is not available for this printer
+   model yet.").
 2. The printer is reachable: a report has arrived within the gap bound (6.4).
 3. No other submission to this printer is in flight. One lock per printer covers upload and start.
 4. The printer is idle: `info` state `free` and no job phase. Drying or loading counts as busy.
@@ -146,7 +147,8 @@ Security rules (from the security review; they apply everywhere below)
    upload, kept in memory only, and handled under the section 3 token rules. The file is POSTed as
    multipart (`filename`, `gcode`) with `X-File-Length`, streamed from disk.
 2. **Upload errors.** The printer's 19001-19011 errors map to one-line reasons ("The printer
-   refused the upload. Is LAN Mode on?"). There is no retry, and a failed upload starts nothing.
+   refused the upload. Check that LAN Mode is on."). There is no retry, and a failed upload starts
+   nothing.
 3. **Start.** Re-check guard 4, then publish `print`/`start` on the integration's existing `web/`
    sender path (INFERRED; T3). The message carries a fresh task id, the printer-side name, size, md5
    and file type, and the 6.1 mapping.
@@ -167,14 +169,14 @@ backups. A file since deleted or overwritten on the printer gets the printer's r
 
 ### 6.4 Bed needs clearing (D10, D22)
 
-The flag is persisted, and it is on if its history is missing. It turns on as soon as HA sees any
-job, whoever started it, and after any report gap longer than the gap bound: 60 s (two missed
-polls), which must stay below the shortest possible job that T3 measures, and shrinks if that job is
-shorter. The time of the last report is stored, so an HA restart or a printer switched off counts as
-a gap. It clears only on a sweep HA watched to completion (7.4) or on "Bed is clear". While it is
-on, both actions refuse: "Clear the bed, then press Bed is clear." Reason: auto-leveling probes the
-nozzle into whatever is left on the bed, and "Print again" from a phone is exactly when nobody sees
-it.
+The flag is not stored. It is set unconditionally every time the entry loads (HA start, reload,
+options change), because a host with no battery-backed clock can misjudge how long it was down. It
+also turns on when HA sees any job, whoever started it, and, within a session, after a report gap
+longer than the gap bound on the monotonic clock: 60 s (two missed polls), kept below the shortest
+job T3 measures. A printer switched off mid-session therefore counts as a gap. It clears only on a
+sweep HA watched to completion (7.4) or on "Bed is clear". While it is on, both actions refuse:
+"Clear the bed, then press Bed is clear." Reason: auto-leveling probes the nozzle into whatever is
+left on the bed, and "Print again" from a phone is exactly when nobody sees it.
 
 ## 7. Phase 2: push-off
 
@@ -281,15 +283,15 @@ stop lands in time is in section 9.
 
 ### 7.5 Recognizing its own files and jobs (D19, D26)
 
-- **Marker.** The copy is named `<stem>-ha-pushoff<original suffix>`, visible on the touchscreen;
-  one per original, overwritten on each submit, so printer storage does not fill.
+- **Marker.** The copy is `<stem>-ha-pushoff<original suffix>`, one per original, overwritten on
+  each submit.
 - **Armed-job record.** HA persists the printer-side name and md5, the time it sent `start`, the
   task id it sent, and the push-off phase. The record binds to the one job that starts within a
   short window after HA's start, with no report gap since, and is retired when that job ends.
 - **After an HA restart or report gap (6.4)**, including HA being down at the pause (the printer
   then just stays paused): a marked job is HA's only if the printer echoes the task id HA sent,
   which T3 establishes. Otherwise it is a marked foreign job, stopped at its first pause (7.4).
-- **"Print again" without push-off** always starts the unmarked original (6.3).
+- **"Print again" without push-off** starts the unmarked original (6.3).
 
 ### 7.6 Telling the owner
 

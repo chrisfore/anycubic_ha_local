@@ -8,7 +8,12 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_HOST
 from homeassistant.core import callback
-from homeassistant.helpers.selector import SelectSelector, SelectSelectorConfig
+from homeassistant.helpers.selector import (
+    EntitySelector,
+    EntitySelectorConfig,
+    SelectSelector,
+    SelectSelectorConfig,
+)
 
 try:
     # Home Assistant 2025.8 and newer reload the entry themselves after the options
@@ -23,7 +28,9 @@ from .const import (
     CAMERA_SOURCE_PRINTER,
     CAMERA_SOURCE_RINKHALS,
     CONF_CAMERA_SOURCE,
+    CONF_DOOR_SENSOR,
     DOMAIN,
+    ENCLOSED_MODELS,
     MODEL_NAMES,
 )
 
@@ -181,7 +188,8 @@ class AnycubicConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class AnycubicOptionsFlow(_OptionsFlowBase):
-    """The entry's "Configure" dialog: which camera the camera entity shows.
+    """The entry's "Configure" dialog: which camera the camera entity shows, and on an
+    enclosed printer, which sensor watches its door.
 
     Spelled so that it runs on every Home Assistant since 2024.9, like the steps above.
     The entry is looked up by `self.handler`, which for an options flow has always been
@@ -193,15 +201,36 @@ class AnycubicOptionsFlow(_OptionsFlowBase):
     """
 
     async def async_step_init(self, user_input=None) -> ConfigFlowResult:
-        if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
         entry = self.hass.config_entries.async_get_entry(self.handler)
+        door_field = _has_a_door(entry)
+        if user_input is not None:
+            options = dict(user_input)
+            # A door sensor chosen while the field was offered is kept when it is not, so
+            # changing the camera on an entry that is not loaded does not lose it.
+            if not door_field and CONF_DOOR_SENSOR in entry.options:
+                options[CONF_DOOR_SENSOR] = entry.options[CONF_DOOR_SENSOR]
+            return self.async_create_entry(title="", data=options)
         current = entry.options.get(CONF_CAMERA_SOURCE, CAMERA_SOURCE_PRINTER)
         # A choice of two, named in strings.json. Nothing is typed here: the feed's
         # address is built from the printer's own (see rinkhals_camera.py).
-        return self.async_show_form(step_id="init", data_schema=vol.Schema({
+        fields = {
             vol.Required(CONF_CAMERA_SOURCE, default=current): SelectSelector(
                 SelectSelectorConfig(
                     options=[CAMERA_SOURCE_PRINTER, CAMERA_SOURCE_RINKHALS],
                     translation_key=CONF_CAMERA_SOURCE)),
-        }))
+        }
+        if door_field:
+            # The door sensor push-off will read (a later phase). Any binary sensor that
+            # says door or opening; offered as a suggestion, so it can also be cleared.
+            fields[vol.Optional(CONF_DOOR_SENSOR, description={
+                "suggested_value": entry.options.get(CONF_DOOR_SENSOR)})] = EntitySelector(
+                    EntitySelectorConfig(domain="binary_sensor",
+                                         device_class=["door", "opening"]))
+        return self.async_show_form(step_id="init", data_schema=vol.Schema(fields))
+
+
+def _has_a_door(entry: ConfigEntry) -> bool:
+    """Is the entry's printer an enclosed one? Known only while the entry is loaded."""
+    coordinator = getattr(entry, "runtime_data", None)
+    hs = getattr(coordinator, "hs", None)
+    return getattr(hs, "model_id", None) in ENCLOSED_MODELS

@@ -28,6 +28,9 @@ PREFIX = "anycubic/anycubicCloud/v1"
 # has another `name`. `temp_dir` sits with these, is a staging directory rather than a
 # name, and is deliberately NOT here.
 #
+# `filepath` is the print start message's path to the file it starts, and a report can give
+# the same key a path that ends in the file's name. So it is masked like the rest.
+#
 # `urls` is deliberately NOT here. Its values hold the printer's address, and fileUploadurl
 # an `s=` token besides, but masking the key would also throw away the scheme, port and
 # path that make a camera debuggable (issue #6). redacted() masks the parts of a URL that
@@ -35,7 +38,7 @@ PREFIX = "anycubic/anycubicCloud/v1"
 SENSITIVE_KEYS: frozenset[str] = frozenset({
     "host", "ip", "filename", "plate_name", "username", "password", "device_id",
     "serial", "broker_host", "deviceId", "mac", "objects_skip_parts", "printerName",
-    "display_filename", "origin3mf", "temp_gcode", "name"})
+    "display_filename", "origin3mf", "temp_gcode", "name", "filepath"})
 
 # The keys above whose value is the job's file name or a path to it. A payload that has one
 # has said what is printing, and redacted() then scrubs that name by VALUE out of the rest
@@ -47,7 +50,7 @@ SENSITIVE_KEYS: frozenset[str] = frozenset({
 # scrubbed out of the whole payload. The model name they carry is found from the file name
 # instead (see _job_patterns).
 JOB_NAME_KEYS: frozenset[str] = frozenset({
-    "filename", "display_filename", "origin3mf", "temp_gcode", "plate_name"})
+    "filename", "display_filename", "origin3mf", "temp_gcode", "plate_name", "filepath"})
 
 REDACTED = "**REDACTED**"
 
@@ -168,7 +171,9 @@ def redacted_error(err: BaseException, identifiers=()) -> str:
 
     An identifier the redactor leaves alone in a payload for being short is masked here
     wherever it stands as a word of its own: a printer entered as "kobra" is an ordinary
-    word in a model name and the address in "cannot resolve kobra". And the result is
+    word in a model name and the address in "cannot resolve kobra". The same pass is what
+    keeps a secret out while it is held, such as the printer's upload token: it is handed
+    over in `identifiers` like an address, and masked whatever its length. And the result is
     checked. If any identifier is still in it, or it is empty, or it could not be made at
     all, the kind of error is all that is said. Never empty: Home Assistant fills an empty
     message in from the exception it was raised from, which is the text this keeps out.

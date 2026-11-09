@@ -19,6 +19,29 @@ CAMERA_SOURCE_PRINTER = "printer"
 CAMERA_SOURCE_RINKHALS = "rinkhals"
 MANUFACTURER = "Anycubic"
 
+# Printing from Home Assistant (the print_file and print_again actions, "Print again", "Bed
+# is clear" and "Bed needs clearing"). Only the Kobra S1 and S1 Max, one firmware family,
+# until another model is validated with diagnostics. Push-off (a later phase) is narrower.
+PRINT_MODELS: frozenset[str] = frozenset({"20025", "20029"})
+PUSH_OFF_MODELS: frozenset[str] = frozenset({"20029"})
+
+# Longest silence from the printer, in seconds, that is not a gap. Two missed polls. After a
+# longer one nobody can say what happened at the printer, so the bed counts as not clear.
+# It must stay below the shortest job the printer can run, or a whole job could fit inside
+# a silence this short.
+REPORT_GAP_BOUND = 60
+
+# Longest printer-side file name, in characters, suffix and push-off marker included.
+PRINTER_NAME_CAP = 100
+# What a push-off copy of a file is named with. Reserved: an original that already carries
+# it, in any case, is refused, so a copy can always be told from an original.
+PUSH_OFF_MARKER = "-ha-pushoff"
+
+# How recent, in seconds, a door sensor's last report must be to count (push-off, later).
+DOOR_FRESHNESS = 30
+# The option naming that sensor: a binary_sensor of device class door or opening.
+CONF_DOOR_SENSOR = "door_sensor"
+
 # Printer modelId -> name. IDs verified across multiple on-printer sources (Rinkhals api.cfg,
 # mann1x, TigerTag, 1coderookie). The Kobra 3 / S1 / X generation (20024-20030) speaks the same
 # signed LAN handshake + field schema as the validated S1 Max — Kobra X confirmed from user

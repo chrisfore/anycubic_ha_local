@@ -84,14 +84,15 @@ frontend (20240904.0):
    - `coordinator.py`: await that answer with a timeout. 10101 gets one retry after about 1.5 s,
      then is refused as busy. Other codes give their catalog text. No answer means a short status
      watch, then "may still start".
-6. **Persistent state.** New `store.py`: a per-entry HA `Store` holding the bed flag, the time of
-   the last report (delayed save), and the last-file record; Phase 2 adds the armed-job record. It
-   is loaded in `async_setup_entry` before the platforms.
+6. **Persistent state.** New `store.py`: a per-entry HA `Store` holding only the last-file record;
+   Phase 2 adds the armed-job record. It is loaded in `async_setup_entry` before the platforms.
+   The bed flag and report times are never stored.
 7. **Bed flag (spec 6.4).** `coordinator.py`. The flag:
+   - is set unconditionally every time the entry loads (review fix I1: a host with no
+     battery-backed clock can misjudge downtime);
    - is on when any job phase is seen;
-   - is on after any report gap over the bound, checked in the poll cycle and at startup against
-     the stored time;
-   - is on when the store is missing;
+   - is on after any in-session report gap over the bound, measured on the monotonic clock in the
+     poll cycle;
    - clears only through the "Bed is clear" press, or Phase 2's watched completed sweep.
 8. **Actions.**
    - New `actions.py` and `services.yaml`. `__init__.py` gains `async_setup`, which registers
@@ -103,7 +104,8 @@ frontend (20240904.0):
    - No `push_off` field yet.
 9. **Entities, created on Phase 1 models only.**
    - `button.py`: "Print again" (available when a record exists and the printer is idle) and "Bed
-     is clear" (available when the flag is on and no job is active).
+     is clear" (available when the flag is on and no job is active). Both are admin-only through a
+     context user check in `async_press`.
    - `binary_sensor.py`: "Bed needs clearing".
 10. **Options and diagnostics.**
     - `config_flow.py`: the door-sensor picker (binary_sensor, device class door or opening),
@@ -126,16 +128,16 @@ frontend (20240904.0):
       token under 7 characters.
     - **Start reply:** 10101 is retried once, then refused as busy; other codes give their text;
       no reply gives "may still start".
-    - **Bed flag:** turns on for a job from any source, after a gap (live, and across a restart from
-      the stored time), and with the store missing; clears only on the button; the button is
-      unavailable during a job; both actions refuse while the flag is on.
+    - **Bed flag:** on at every entry load (start, reload, options change); on for a job from any
+      source; on after an in-session gap on the monotonic clock; never stored; clears only on the
+      button; the button is unavailable during a job; both actions refuse while the flag is on.
     - **Print again:** re-runs guards, starts the recorded name, never uploads, and refuses marked
       names.
-    - **Access and redaction:** a non-admin call is refused; `filepath` is masked; the file being
-      sent is scrubbed from log lines.
+    - **Access and redaction:** a non-admin action call and a non-admin press of either button are
+      refused; `filepath` is masked; the file being sent is scrubbed from log lines.
 13. **[DOCS]** README section "Print from Home Assistant":
     - enabled models (S1, S1 Max), and that others stay off until validated with diagnostics;
-    - admin only, and the 100 MB cap;
+    - actions and both buttons are admin-only, and the 100 MB cap;
     - the bed flag, with the warning never to automate "Bed is clear";
     - the door-sensor option and its freshness need.
 
@@ -344,5 +346,6 @@ Checkpoint **C5**.
 5. **Decisions.** Option A, yes or no. The version numbers 1.3.0 and 1.4.0.
 6. **Close-out.** At runbook Z.4, delete the test files from the printer, or authorize their
    removal.
-7. **Awareness.** Under the gap rule, the flag is on after every HA restart or printer power-off,
-   so "Bed is clear" must be pressed before the next HA print, unless P1-C is ruled in.
+7. **Awareness.** The flag is on after every HA restart, integration reload or options change, and
+   after a printer power-off mid-session, so "Bed is clear" must be pressed before the next HA
+   print, unless P1-C is ruled in.

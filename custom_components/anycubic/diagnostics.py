@@ -7,13 +7,31 @@ from typing import Any
 from homeassistant.components.diagnostics import async_redact_data
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
+from homeassistant.util import dt as dt_util
 
 from .anycubic_local.const import SENSITIVE_KEYS, redacted
-from .const import CAMERA_SOURCE_PRINTER, CONF_CAMERA_SOURCE
+from .const import CAMERA_SOURCE_PRINTER, CONF_CAMERA_SOURCE, CONF_DOOR_SENSOR, PRINT_MODELS
 from .coordinator import AnycubicCoordinator
 
 # Shared with the inbound-report debug log, so a key only has to be classified once.
 TO_REDACT = SENSITIVE_KEYS
+
+
+def _print_from_ha(hass: HomeAssistant, entry: ConfigEntry,
+                   coordinator: AnycubicCoordinator) -> dict[str, Any]:
+    """Printing from Home Assistant, as far as a bug report needs it. No file names, and
+    not which sensor watches the door: an entity id is named by the user."""
+    door = entry.options.get(CONF_DOOR_SENSOR)
+    state = hass.states.get(door) if door else None
+    age = None if state is None else (dt_util.utcnow() - state.last_reported).total_seconds()
+    return {
+        "enabled": coordinator.hs.model_id in PRINT_MODELS,
+        "bed_needs_clearing": coordinator.bed_needs_clearing,
+        "last_guard_outcome": coordinator.last_guard_outcome,
+        "has_last_file": coordinator.last_file is not None,
+        "door_sensor_configured": bool(door),
+        "door_reading_age_s": None if age is None else round(age, 1),
+    }
 
 
 async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
@@ -64,6 +82,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ConfigE
                               "hours": coordinator.drying_hours(box_id)}
                 for box_id in sorted({0, *(box.id for box in data.ace)})
             },
+            "print_from_ha": _print_from_ha(hass, entry, coordinator),
         },
         coordinator.redaction_identifiers,
     ), TO_REDACT)

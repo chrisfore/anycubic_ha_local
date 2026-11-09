@@ -4,24 +4,32 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import secrets
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import timedelta
 
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.exceptions import ConfigEntryAuthFailed
+from homeassistant.exceptions import (
+    ConfigEntryAuthFailed,
+    HomeAssistantError,
+    ServiceValidationError,
+)
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .anycubic_local import mqtt as mqtt_mod
-from .anycubic_local.commands import build as build_command
+from .anycubic_local.commands import build as build_command, build_print_start
 from .anycubic_local.const import (
     JOB_PHASES,
     LIGHT_TYPE_CAMERA,
     PAUSED_PHASES,
     QUERY_TYPES,
+    REASON_TEXT,
+    STATE_FREE,
     STOPPED_PHASES,
     query_topic,
     redacted,
@@ -55,10 +63,12 @@ from .const import (
     BUILTIN_ACE_MODELS,
     DEFAULT_QUERY_INTERVAL,
     DOMAIN,
+    REPORT_GAP_BOUND,
     ace_device_model,
     ace_device_name,
     ace_suffix,
 )
+from .store import LastFile, PrintState, PrintStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -97,6 +107,29 @@ MAX_RECOVERIES_BEFORE_UNAVAILABLE = 2
 # thousand of them from six days (issue #15). The first attempt of an outage is still a
 # WARNING; after that one is repeated at that level this often, and the rest are DEBUG.
 RECOVERY_LOG_REMINDER = 3600.0
+
+# Starting a print (async_start_print). The printer answers a start on the `print` topic, with
+# a code: 200 took it, 10101 says the previous task is still active. A busy answer is tried
+# once more after a short wait, as other clients do. With no answer at all, a short watch for
+# the job follows, asking for `info` now and then: a large 3MF can take a while to unpack
+# before the job shows.
+START_REPLY_TIMEOUT = 10.0
+START_BUSY_RETRY_DELAY = 1.5
+START_WATCH_TIMEOUT = 20.0
+START_WATCH_QUERY_EVERY = 5.0
+START_ACCEPTED = 200
+START_BUSY = 10101
+# Any job phase, its end included: a job that has finished or stopped still left something
+# on the bed. A busy printer with no job (drying, loading filament) is in none of these.
+_JOB_SEEN = JOB_PHASES | STOPPED_PHASES | {"finished"}
+
+
+def _after_colon(reason: str) -> str:
+    """A reason as it reads after a colon: "Filament broken" becomes "filament broken".
+
+    A first word in capitals stays as it is, so "ACE Pro response timeout" keeps its name.
+    """
+    return reason[:1].lower() + reason[1:] if reason[1:2].islower() else reason
 
 
 @dataclass
@@ -185,6 +218,29 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # The fault an error event was fired for. A pause is reported twice, pausing and
         # paused, with the same code; it is one fault.
         self._error_code: int | None = None
+        # The ids of the multi-material units attached right now, as the last report that
+        # said so gave them. data.ace keeps every box ever seen, so it cannot say this.
+        self.attached_box_ids: frozenset[int] = frozenset()
+
+        # Printing from Home Assistant (see actions.py). The bed flag and the last file are
+        # in print_state; only the last file is kept across restarts. The defaults are the
+        # safe ones, so the bed needs clearing.
+        self.print_state = PrintState()
+        self._print_store: PrintStore | None = None
+        # Monotonic time of the last report. Kept apart from _last_report, which the session
+        # watchdog winds forward when it reconnects: a gap must not be hidden by that.
+        self._report_at: float | None = None
+        # One submission at a time to this printer, upload and start together.
+        self.submit_lock = asyncio.Lock()
+        # The file being sent, for the redactor (see _job_names), and the secrets held while
+        # it is sent (see redaction_identifiers).
+        self._sending: tuple[str, ...] = ()
+        self._held_secrets: tuple[str, ...] = ()
+        # The answer a start is waiting for (see async_start_print).
+        self._start_reply: asyncio.Future[dict] | None = None
+        # How the last submission went: the refusal's key, or how the start ended. For
+        # diagnostics; never a name.
+        self.last_guard_outcome: str | None = None
 
     def _build_and_connect(self):
         """Construct the transport (paho client + blocking tls_set) and connect.
@@ -194,7 +250,8 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         """
         transport = self._factory(self.hs, on_report=self._on_report,
                                   identifiers=self.redaction_identifiers,
-                                  job_names=self._job_names, on_reason=self._on_reason)
+                                  job_names=self._job_names, on_reason=self._on_reason,
+                                  on_start_reply=self._on_start_reply)
         try:
             transport.connect()
             for t in (*QUERY_TYPES, *_CONNECT_ONLY_QUERY_TYPES):
@@ -303,6 +360,11 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         #
         # Which one fired is logged, because they have different causes and a user's
         # debug log is the only way to tell them apart from here (issue #9).
+        #
+        # First, before a recovery winds any clock forward: a silence longer than the gap
+        # bound means nobody knows what happened at the printer, so the bed needs clearing.
+        if self._report_gap():
+            self._raise_bed_flag("no report within the gap bound")
         if self._transport is None:
             await self._async_recover("no transport")
         elif not getattr(self._transport, "connected", True):
@@ -325,6 +387,21 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
     def _on_reason(self, reason: JobReason) -> None:
         """Called on the paho network thread, as _on_report is, and marshalled the same way."""
         self.hass.loop.call_soon_threadsafe(self._apply_reason, reason)
+
+    def _on_start_reply(self, envelope: dict) -> None:
+        """Called on the paho network thread with a print start's answer, marshalled the same way."""
+        self.hass.loop.call_soon_threadsafe(self._apply_start_reply, envelope)
+
+    @callback
+    def _apply_start_reply(self, envelope: dict) -> None:
+        # Only an answer with a code says yes or no. Another client's start is answered on
+        # the same topic, and one arriving while ours waits is taken for ours: the answer
+        # names no file to tell them apart by. That needs another client starting a job
+        # within the same few seconds, and the job is seen either way.
+        code = envelope.get("code")
+        waiter = self._start_reply
+        if type(code) is int and waiter is not None and not waiter.done():
+            waiter.set_result(envelope)
 
     @callback
     def _apply_reason(self, reason: JobReason) -> None:
@@ -453,18 +530,44 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         reports. Read from the live handshake on every use rather than kept, so a
         re-handshake cannot leave the list describing a session that is gone. (Not the
         device registry's "identifiers": these are strings to keep out of anything shared.)
+
+        While a file is being sent, the secrets held for it (the printer's upload token)
+        are on the list as well; see `holding`.
         """
-        return runtime_identifiers(self.hs, self.host)
+        return (*runtime_identifiers(self.hs, self.host), *self._held_secrets)
 
     def _job_names(self) -> tuple[str, ...]:
         """What is printing, for redacted() to scrub by value (see its `job_names`).
 
         A report that names the job is scrubbed on its own evidence. This covers what does
         not: a report of another type, a command. Also called from the transport, on paho's
-        thread, each time it logs a report; it only reads one attribute.
+        thread, each time it logs a report; it only reads two attributes. While a file is
+        being sent, its names are here too (see `submitting`).
         """
         name = self.data.printer.filename
-        return (name,) if name else ()
+        return ((name,) if name else ()) + self._sending
+
+    @contextmanager
+    def submitting(self, *names: str | None) -> Iterator[None]:
+        """Scrub these file names out of every log line while the block runs."""
+        self._sending = tuple(n for n in names if n)
+        try:
+            yield
+        finally:
+            self._sending = ()
+
+    @contextmanager
+    def holding(self, held: Iterable[str]) -> Iterator[None]:
+        """Treat these values as identifiers while the block runs, and forget them after.
+
+        For the printer's upload token: redacted_error masks an identifier wherever it
+        stands as a word, however short, and _error_text hands it every identifier there is.
+        """
+        self._held_secrets = tuple(s for s in held if s)
+        try:
+            yield
+        finally:
+            self._held_secrets = ()
 
     def _error_text(self, err: Exception) -> str:
         """An exception's text for a message Home Assistant logs at its normal level.
@@ -481,6 +584,10 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             _LOGGER.debug("dropping command %s: no transport", command)
             return
         topic, payload = build_command(self.hs.model_id, self.hs.device_id, command, **kwargs)
+        await self._async_publish(command, topic, payload)
+
+    async def _async_publish(self, command: str, topic: str, payload: dict) -> None:
+        """Publish a built command, with one redacted debug line saying what went out."""
         body = json.dumps(payload)
         # The only record of what we actually put on the wire. A report is easy to observe
         # (it moves an entity); a command the printer silently discards left no trace at
@@ -500,7 +607,12 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
                               json.dumps(redacted(payload, ids, names)))
             except Exception:  # noqa: BLE001
                 _LOGGER.debug("publish %s: the line could not be written; sent as usual", command)
-        await self.hass.async_add_executor_job(self._transport.publish, topic, body)
+        transport = self._transport
+        if transport is None:
+            # A recovery failed while this was being built. Nothing to publish into.
+            _LOGGER.debug("dropping command %s: no transport", command)
+            return
+        await self.hass.async_add_executor_job(transport.publish, topic, body)
 
     @callback
     def _apply(self, msg_type: str, data: dict) -> None:
@@ -509,12 +621,19 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         self._last_report = time.monotonic()
         recovered, self._recoveries = self._recoveries, 0
         self.seen_report_types.add(msg_type)
+        # The first report after a silence longer than the gap bound: whatever happened at
+        # the printer meanwhile, nobody saw it. Judged before this report counts as the last.
+        if self._report_gap():
+            self._raise_bed_flag("report after a gap")
+        self._report_at = self._last_report
         if msg_type == "info":
             self.data.printer = parse_info(data)
             features = data.get("features")
             if isinstance(features, dict):
                 self.raw_features = features
             self._track_status()
+            if self._job_seen():
+                self._raise_bed_flag("a job was reported")
         elif msg_type == "tempature":
             # Not a typo — the firmware's wire string. Folded rather than parsed into a
             # fresh state: it carries only temperatures, and is the fastest-moving source
@@ -528,6 +647,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             # to progress/layer/remaining-time by the same margin `tempature` beats it to
             # temperatures. Command acks share this topic and are ignored by the fold.
             if apply_progress(self.data.printer, data):
+                self._raise_bed_flag("a job's progress was reported")
                 self._request_file_details()
         elif msg_type == "multiColorBox":
             self.raw_multicolorbox = data
@@ -545,6 +665,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             # the next poll, so what was known is kept.
             if boxes or not data.get("multi_color_box"):
                 self.ace_present = bool(boxes)
+                self.attached_box_ids = frozenset(box["id"] for box in boxes)
             if boxes:
                 # An ACE unit is attached, so the bare spool holder is not in use. Reconnecting
                 # the ACE sends no closing `extfilbox` — the reports simply stop (confirmed on a
@@ -707,3 +828,172 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             device = self.registered_device((DOMAIN, f"{self.hs.serial}_{ace_suffix(box.id)}"))
             if device is not None and (device.name != name or device.model != model):
                 registry.async_update_device(device.id, name=name, model=model)
+
+    # ------------------------------------------------------- printing from Home Assistant
+    #
+    # The actions and buttons are in actions.py and button.py. What lives here is what has to
+    # watch every report: whether the bed needs clearing, whether the printer is reachable
+    # and idle, and the printer's answer to a start.
+
+    async def async_load_print_state(self, store: PrintStore) -> None:
+        """Take up the last file on record, before the session starts.
+
+        Every load starts with the bed needing clearing, whatever is on record: Home
+        Assistant was not watching while it was down, and no stored time can say for how
+        long, since the host's clock may be wrong until it syncs.
+        """
+        self._print_store = store
+        self.print_state = await store.async_load()
+        self.print_state.bed_flag = True
+
+    async def async_save_print_state(self) -> None:
+        """Write the remembered state out now: on unload, so that a reload reads it fresh."""
+        if self._print_store is not None:
+            await self._print_store.async_save(self.print_state)
+
+    @callback
+    def _schedule_print_save(self) -> None:
+        if self._print_store is not None:
+            self._print_store.async_schedule_save(self.print_state)
+
+    def report_age(self) -> float | None:
+        """Seconds since the printer's last report in this session; None before the first."""
+        return None if self._report_at is None else time.monotonic() - self._report_at
+
+    def _report_gap(self) -> bool:
+        """Has the printer been silent, in this session, for longer than the gap bound?
+
+        Before the session's first report that is a gap too. On the monotonic clock only, so
+        a wall clock that jumps can neither hide a gap nor invent one.
+        """
+        age = self.report_age()
+        return age is None or age > REPORT_GAP_BOUND
+
+    @property
+    def reachable(self) -> bool:
+        """Has the printer reported within the gap bound?"""
+        age = self.report_age()
+        return age is not None and age <= REPORT_GAP_BOUND
+
+    @property
+    def idle(self) -> bool:
+        """Is the printer free, with no job in any phase, and no attached unit drying?"""
+        printer = self.data.printer
+        if (printer.raw_state != STATE_FREE or printer.status in JOB_PHASES
+                or printer.printing or printer.paused):
+            return False
+        return not (self.ace_present and any(
+            box.drying_active for box in self.data.ace if box.id in self.attached_box_ids))
+
+    def _job_seen(self) -> bool:
+        printer = self.data.printer
+        return printer.printing or printer.paused or printer.status in _JOB_SEEN
+
+    @property
+    def bed_needs_clearing(self) -> bool:
+        return self.print_state.bed_flag
+
+    @property
+    def bed_clear_allowed(self) -> bool:
+        """Can "Bed is clear" be pressed: the flag is on and the printer is known to be idle."""
+        return self.print_state.bed_flag and self.reachable and self.idle
+
+    @callback
+    def _raise_bed_flag(self, why: str) -> None:
+        if self.print_state.bed_flag:
+            return
+        self.print_state.bed_flag = True
+        _LOGGER.debug("the bed needs clearing: %s", why)
+        self.async_update_listeners()
+
+    @callback
+    def async_mark_bed_clear(self) -> None:
+        """The user says the bed is clear: the only thing that turns the flag off."""
+        if not self.print_state.bed_flag:
+            return
+        if not (self.reachable and self.idle):
+            raise ServiceValidationError(translation_domain=DOMAIN,
+                                         translation_key="clear_while_busy")
+        self.print_state.bed_flag = False
+        self.async_update_listeners()
+
+    @property
+    def last_file(self) -> LastFile | None:
+        return self.print_state.last_file
+
+    @callback
+    def async_set_last_file(self, record: LastFile) -> None:
+        self.print_state.last_file = record
+        self._schedule_print_save()
+        self.async_update_listeners()
+
+    async def async_start_print(self, *, name: str, size: int, md5: str, filetype: int,
+                                ams_settings: dict, again: bool = False) -> None:
+        """Start a file that is already on the printer, and hear that it started.
+
+        Returns once the printer has taken the job, or once a job is seen. Raises when the
+        printer refuses, when it stays busy, and when it says nothing and no job appears.
+        `again` is for Print again, whose refusal tells the user to send the file again.
+        """
+        if self._transport is None:
+            raise HomeAssistantError(translation_domain=DOMAIN,
+                                     translation_key="printer_not_connected")
+        taskid = str(100_000_000 + secrets.randbelow(900_000_000))
+        for attempt in (1, 2):
+            topic, payload = build_print_start(
+                self.hs.model_id, self.hs.device_id, taskid=taskid, filename=name,
+                filesize=size, md5=md5, filetype=filetype, ams_settings=ams_settings)
+            answer = await self._async_send_start(topic, payload)
+            if answer is None:
+                break
+            code = answer["code"]
+            if code == START_ACCEPTED:
+                self._raise_bed_flag("a print was started")
+                return
+            if code == START_BUSY and attempt == 1:
+                await asyncio.sleep(START_BUSY_RETRY_DELAY)
+                if self.idle:
+                    continue
+            if code == START_BUSY:
+                raise HomeAssistantError(translation_domain=DOMAIN,
+                                         translation_key="printer_busy")
+            # The code itself is for a debug log, not for the user.
+            _LOGGER.debug("the printer refused a print start with code %s", code)
+            raise HomeAssistantError(
+                translation_domain=DOMAIN,
+                translation_key="print_again_refused" if again else "start_refused",
+                translation_placeholders={
+                    "reason": _after_colon(REASON_TEXT.get(code, "no reason given"))})
+        if await self._async_job_appears():
+            self._raise_bed_flag("a job was seen after a start")
+            return
+        raise HomeAssistantError(translation_domain=DOMAIN, translation_key="start_unconfirmed")
+
+    async def _async_send_start(self, topic: str, payload: dict) -> dict | None:
+        """Publish one start and wait for its answer; None if none comes in time."""
+        waiter: asyncio.Future[dict] = self.hass.loop.create_future()
+        self._start_reply = waiter
+        try:
+            await self._async_publish("print_start", topic, payload)
+            async with asyncio.timeout(START_REPLY_TIMEOUT):
+                return await waiter
+        except TimeoutError:
+            return None
+        finally:
+            self._start_reply = None
+
+    async def _async_job_appears(self) -> bool:
+        """Watch for a job for a short while, asking for `info` now and then."""
+        loop = self.hass.loop
+        deadline = loop.time() + START_WATCH_TIMEOUT
+        ask_at = loop.time()
+        while not self._job_seen():
+            now = loop.time()
+            if now >= deadline:
+                return False
+            transport = self._transport
+            if now >= ask_at and transport is not None:
+                await self.hass.async_add_executor_job(transport.query, "info")
+                ask_at = now + START_WATCH_QUERY_EVERY
+            await asyncio.sleep(min(0.5, deadline - now))
+        return True

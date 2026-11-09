@@ -726,3 +726,20 @@ def test_a_working_tls_setup_logs_nothing(caplog, monkeypatch):
     with caplog.at_level("DEBUG", logger=m.__name__):
         _client()
     assert not [r for r in caplog.records if "TLS" in r.getMessage()]
+
+
+def test_a_print_start_answer_hands_its_envelope_over_and_nothing_else():
+    hs = HandshakeResult("1.2.3.4", 9883, "u", "p", "DEV", "20029", "SER")
+    replies, reports = [], []
+    client = m.AnycubicMqtt(hs, on_report=lambda t, d: reports.append(t),
+                            client_factory=FakeClient, on_start_reply=replies.append)
+    topic = "anycubic/anycubicCloud/v1/printer/public/20029/DEV/print/report"
+    client._handle(None, None, _msg(topic, {
+        "type": "print", "action": "start", "state": "failed", "code": 10101,
+        "msg": "previous task still active", "data": {"filename": "secret.gcode"}}))
+    # Another answer on the same topic is not a start's.
+    client._handle(None, None, _msg(topic, {
+        "type": "print", "action": "pause", "state": "paused", "code": 200, "data": None}))
+    assert replies == [{"action": "start", "code": 10101, "state": "failed",
+                        "msg": "previous task still active"}]
+    assert reports == ["print"]                 # the report itself is applied as before

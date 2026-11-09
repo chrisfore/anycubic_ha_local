@@ -5,16 +5,29 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_HOST
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.device_registry import DeviceEntry
+from homeassistant.helpers.typing import ConfigType
 
+from .actions import async_setup_actions
 from .anycubic_local.const import redacted_error
 from .anycubic_local.exceptions import CloudModeError, HandshakeError
 from .anycubic_local.handshake import do_handshake
 from .config_flow import OPTIONS_FLOW_RELOADS
 from .const import DOMAIN, PLATFORMS, ace_suffix
 from .coordinator import AnycubicCoordinator
+from .store import PrintStore
 
 type AnycubicConfigEntry = ConfigEntry[AnycubicCoordinator]
+
+# Set up from the UI only; nothing is read from configuration.yaml.
+CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register the print_file and print_again actions, once for all printers."""
+    async_setup_actions(hass)
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: AnycubicConfigEntry) -> bool:
@@ -29,6 +42,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: AnycubicConfigEntry) -> 
     except (HandshakeError, OSError) as err:
         raise ConfigEntryNotReady(redacted_error(err, (entry.data[CONF_HOST],))) from err
     coordinator = AnycubicCoordinator(hass, hs, host=entry.data[CONF_HOST])
+    # Before the session starts, so the last file on record is there for the first report,
+    # and the bed needs clearing from the start.
+    await coordinator.async_load_print_state(PrintStore(hass, entry.entry_id))
     try:
         await coordinator.async_start()
     except OSError as err:
@@ -64,7 +80,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: AnycubicConfigEntry) -> 
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: AnycubicConfigEntry) -> bool:
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        # Written now rather than after the usual short delay: an entry that is reloaded
+        # reads it straight back.
+        await entry.runtime_data.async_save_print_state()
+    return unloaded
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: AnycubicConfigEntry) -> None:
+    """A printer that is removed takes what was remembered about it along."""
+    await PrintStore(hass, entry.entry_id).async_remove()
 
 
 async def async_remove_config_entry_device(
