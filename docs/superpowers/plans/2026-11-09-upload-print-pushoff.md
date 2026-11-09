@@ -189,133 +189,155 @@ together. **[DOCS]** release notes. Checkpoint **C3**.
 
 Phase 2 code does not start until both hold:
 
-1. **The owner accepts in writing** the spec's section 9 owner-accepted risks.
-2. **T4 passes.** The verification engineer adds runbook step "d2" and runs it with hand-made
-   files: the 10x10x0.6 mm PLA square carrying the spec 7.2 block, with no sweep. That block is:
-   bed and chamber off; lift to the part plus 10 mm and park over the chute; `M117`; `M601`; a
-   final Z raise. The file runs once as `.gcode` and once as a hand-rewritten `.gcode.3mf`, with
-   the pause held 60 minutes. Record every T4 item in spec section 9, and run the optional
-   extrusion-error experiment if time allows.
+1. **The owner accepts in writing** the spec's section 9 owner-accepted risks. D33 (automatic vs per
+   print) only sets one constant and the example script, so it can wait until the release.
+2. **T4 passes.** The verification engineer adds runbook step "d2" and runs it with hand-made files:
+   the 10x10x0.6 mm PLA square carrying the spec 7.2 block, with no sweep.
+   - Run 1 withholds HA's nozzle command, as if HA were down. Hold the pause until the motors or
+     homing drop, or for 2 hours at most. Record when each drops, what the 140 C nozzle does, and
+     the bed's cooling curve. End with Stop and record its moves.
+   - Run 2: nozzle target 0 at the pause, then a cold resume. Run it once as `.gcode` and once as a
+     hand-rewritten `.gcode.3mf`.
+   - Run 3, only if run 1's window is shorter than a realistic cool-down. Extend the runbook's
+     `M190 S40` step (e) into the spec 7.8 block, and record:
+     - the in-file M190 cooling wait and how long it takes;
+     - whether it heats the chamber;
+     - whether the reheat at the chute oozes onto the bed;
+     - the nozzle's time from 140 C to 50 C;
+     - that the motors stay held through the wait.
+   - Record every T4 item in spec section 9.
 
-These T4 outcomes stop the plan and go back to the owner:
+These outcomes stop the plan and go back to the owner:
 - RESUME reheats above 50 C, or does not run clean.
-- Homing is lost during the pause, and the idle timeout leaves no workable cool-down limit.
+- The motor window ends before the bed cools to its limit, and run 3 does not clear the spec 7.8
+  fallback.
+- The nozzle holds 140 C indefinitely with HA down: the owner accepts that, or Phase 2 is redesigned.
 
-If the rewritten archive is refused, push-off ships for `.gcode` only.
+If the rewritten archive is refused, clearing ships for `.gcode` only.
 
 ## Phase 2: code
 
+**Conditional step P2-C.** This step applies only if T4 run 1 shows a short window and run 3 passes.
+It builds the spec 7.8 block variant instead of the default block, picking M190 or `G4` from run 3,
+in `sweep.py` and `printfile.py`. It also changes `clearing.py`:
+- While the in-file cool-down runs, the state is `armed`, and its reason gives HA's estimate.
+- HA stops the job if the M190 wait passes the limit set from T4.
+- `ready` and the button start only once the nozzle reads 50 C or less.
+
+Its tests prove:
+- the block order, including the hold ending before the reheat and the reheat before `M601`;
+- the stop when the wait passes the limit;
+- the button stays unavailable until the nozzle reaches 50 C.
+
+If T4 shows the motors never drop, or drop later than a realistic cool-down, skip this step.
+
+
 1. **File checks.** `anycubic_local/printfile.py`:
-   - brim, skirt and tower scan (case-insensitive, both `;TYPE:` and `; FEATURE:`);
-   - the `brim_type` fast path, and `raft_layers`;
+   - brim, skirt and tower scan (case-insensitive, `;TYPE:` and `; FEATURE:`);
+   - `brim_type` fast path and `raft_layers`;
    - the bed is heated, and the file has no `M600`/`M601` of its own;
-   - materials by used slot and leading word, and PETG on a textured plate;
-   - footprints from polygons and plate boxes, and `max_z_height`;
+   - materials by used slot and leading word, and PETG only on a textured plate;
+   - footprints and `max_z_height`;
    - end-code recognition.
 2. **Sweep planner.** New `anycubic_local/sweep.py`:
-   - the S1 Max profile: travel limits, chute park, the purge line at Y 352, the bed area, and the
-     door side, set from T1;
-   - the park, the columns, the descent points, the sweep and the final raise;
+   - the S1 Max profile: travel limits, chute park, purge line at Y 352, bed area, door side from
+     T1;
+   - park, columns, descent points, sweep and final raise;
    - every coordinate checked, and Z at most 253 including PAUSE's 2 mm;
-   - it returns either the block or a refusal reason.
+   - it returns the block or a refusal reason.
 
-   The tunables (sweep height, column spacing, margins, speeds, minimum part height) start inside
-   the research ranges and are fixed after T5.
+   The tunables start inside the research ranges and are fixed after T5.
 3. **File change.** `anycubic_local/printfile.py`:
-   - block insertion (spec 7.2);
-   - a streaming `.gcode` copy;
-   - the `.3mf` rewrite: only the plate member and its md5 sidecar change, the sidecar keeps its
-     case, and every other member stays byte-identical;
+   - block insertion (spec 7.2) and a streaming `.gcode` copy;
+   - the `.3mf` rewrite: only the plate member and its same-case md5 sidecar change;
    - the marked name;
    - everything in the executor, under the section 3 archive rules.
-4. **State machine.** New `pushoff.py`:
-   - the armed-job record, in the store;
-   - pause classification and the resume lock, as in spec 7.4:
-     - an armed or marked job, or a bed target of 0 or unknown, means the lock;
-     - armed with the bed target at 0 starts the sequence;
-     - armed with the bed target unknown waits, then stops when the timer runs out;
-     - a foreign job is stopped if marked OR its signature matches;
-     - layer data only narrows the stop of an unmarked job;
-   - cooling: nozzle target 0, optional chamber fan, fast polling;
-   - temperature and door freshness, with the door's `last_reported` within 30 s;
-   - resume at most once, and watching during pushing;
-   - the results, and clearing the flag on `done`;
-   - persistent notification and `push_off_*` events;
-   - restart and gap handling through the task-id echo, per T3.
-5. **Resume lock.** `coordinator.py`: `resume` is refused under the lock unless the state machine
-   sends it. `button.py`: Resume's availability follows the lock.
+4. **Clearing state machine.** New `clearing.py`:
+   - the armed-job record, kept in the store;
+   - pause classification and the resume lock (spec 7.4);
+   - `ready`: nozzle target 0 (per T4), fast polling, notice and `clear_ready`;
+   - the motor window: from T4, less a margin, on the monotonic clock from the pause HA saw. An
+     unknown start counts as expired. At expiry: `expired`, the button unavailable, and a notice;
+   - the press checks in spec order, each with its one-line reason and nothing sent. No timer, no
+     retry, no arming;
+   - resume at most once, and watching through `pushing`;
+   - the results; the flag clears only on `done`;
+   - stopping foreign jobs and unexpected resumes;
+   - restart and gap handling through the task-id echo (T3).
+5. **Resume lock.** `coordinator.py`: `resume` is refused under the lock unless the press path sends
+   it. `button.py`: Resume follows the lock. Stop is unchanged.
 6. **Actions.** `actions.py` and `services.yaml`:
-   - `push_off` on `print_file`: the 7.1 guards, including door freshness at submit; upload the
-     original, then the marked copy; start the marked copy; arm the record.
-   - `push_off` on `print_again` (7.7): refused unless T3 proved the md5 check, held as a constant
-     set from T3.
+   - The preparation field on `print_file` and `print_again` defaults to one constant (D33).
+   - Explicit and ineligible: refused, nothing sent. Default and ineligible: printed unprepared, with
+     a notice.
+   - A prepared submit uploads the original, then the prepared copy, starts the copy, and arms the
+     record.
+   - Print again restarts the prepared copy only if T3 proved the md5 check, held as a constant set
+     from T3.
 7. **Entities and strings.**
-   - `sensor.py`: "Push-off" (enum plus reason).
-   - The event types `push_off_done`, `push_off_skipped` and `push_off_failed` (`coordinator.py`,
-     `event.py`).
-   - `strings.json`, `translations/en.json`, and push-off state in `diagnostics.py`.
+   - `button.py`: "Clear the bed", admin-only through the context check, available only in `ready`
+     inside the window.
+   - `sensor.py`: "Bed clearing" (enum plus reason).
+   - `clear_ready`, `clear_done` and `clear_failed` (`coordinator.py`, `event.py`).
+   - `strings.json` and `translations/en.json`: press refusals naming the value to wait for, in °C.
+   - Clearing state in `diagnostics.py`.
 8. **Offline tests.** They must prove:
-   - **Scans:** both label styles and any case; the fast path; raft; unheated bed; own
-     `M600`/`M601`; material families; unknown used slots count as all listed slots; the PETG
-     plate rule.
-   - **Planner:** every coordinate within limits; Z at most 253 including PAUSE's lift; no homing,
-     probing or extrusion; the descent behind the parts and the purge line; a refusal when the
-     geometry does not fit.
-   - **File change:** the insertion point is found, or refused when there is movement before
-     `M84`; the block order; a `.gcode` otherwise unchanged; a `.3mf` with only the plate member and
-     its sidecar changed.
-   - **State machine:**
-     - armed with the bed target 0 and no layer data starts cooling;
-     - armed with a bed target above 0 is left alone with the lock on;
-     - armed with the bed target unknown stops when the timer runs out;
-     - a marked foreign job is stopped at any pause;
-     - an unmarked foreign job with the bed target 0 is stopped unless its layers show it
-       mid-print;
-     - the Resume button and the actions are refused under the lock;
-     - a stale, restored or unknown door means skip;
-     - stale or non-finite temperatures never count as cool;
-     - timer expiry means skip;
-     - resume happens once;
-     - door, pause or error during pushing means stop and `failed`, and a lost connection means
-       `failed`;
-     - only a watched completion clears the flag;
-     - a restart with and without the task-id echo;
-     - an unexpected resume during cooling means stop.
-   - **Actions:** each push-off guard refuses with nothing sent; the original uploads before the
-     marked copy; `print_again` with push-off refuses with no marked copy, or with no T3 md5 proof.
+   - **Scans, planner and file change:** the scans, limits, block order and archive rules, as above.
+   - **Pause handling:**
+     - armed with the bed target 0 and no layer data: `ready`;
+     - armed with the target above 0: left alone, lock on;
+     - target unknown: button unavailable until a fresh reading;
+     - marked foreign job: stopped at any pause;
+     - unmarked foreign job with the target 0: stopped unless its layers show it mid-print.
+   - **No auto push:** HA never resumes without a press.
+   - **Press checks:** each refuses in order with its line and sends nothing; stale or non-finite
+     readings fail; a non-admin press is refused.
+   - **Window and Stop:** expiry, or an unknown start, gives `expired` plus a notice; Stop at
+     `ready` leaves the flag on.
+   - **Pushing:** resume happens once; door, pause or error means `failed`, and so does a lost
+     connection; only a watched completion clears the flag.
+   - **Restarts and the lock:** restart with and without the echo; an unexpected resume means stop;
+     the Resume button and the actions are refused under the lock.
+   - **Actions:** explicit and ineligible is refused with nothing sent; default and ineligible
+     prints unprepared with a notice; the original uploads before the copy; Print again picks the
+     copy only with the T3 md5 proof.
 9. **[DOCS]**
-   - README push-off section: the owner-accepted risks in plain words; watch the first ejections;
-     door freshness (event-only contacts fail it, and a polled command-line sensor in the user's
-     own configuration, reading the door switch, meets it).
-   - The example script gains the push-off toggle.
-   - An example automation turns `push_off_*` events into a phone push.
+   - README "Clear the bed" section: how it works; what each refusal means; Stop, then "Bed is
+     clear" to clear by hand (Stop first, because it moves the head); the motor window; the
+     accepted risks; watch the first ejections; door freshness and the command-line sensor example.
+   - The example script, per D33.
+   - The dashboard's "Clear the bed" button and "Bed clearing" sensor.
+   - An example automation that turns `clear_ready` into a phone push.
 
 **Review R2** covers the whole Phase 2 diff. Checkpoint **C4**.
 
 ## Phase 2: live tests
 
-They run in this order, with a catch container in front of the door for every step that can sweep:
+In order. A catch container sits in front of the door for every step that can sweep.
 
-1. **T1.** Confirm the door side, if step a has not already done so, and check the owner's sensor
-   against the 30 s bound.
-2. **T9a.** A push-off print of the 10 mm square with the door closed at push time. Pass: skipped,
-   stopped, notified, flag on.
+1. **T1.** Confirm the door side, if step a has not already. Check the owner's sensor against the
+   30 s bound.
+2. **T9a.** Make a prepared print of the 10 mm square, reaching `ready`.
+   - Press with the door closed, with a stale sensor, and with the bed above its limit. Each must
+     refuse and send nothing.
+   - Then press Stop. Pass: the part stays and the flag stays on.
 3. **T8.**
-   - HA restarted mid-pause: the job is recognized only with the task-id echo, otherwise stopped.
-   - The marked file started from the touchscreen: stopped, never swept.
-   - An unexpected touchscreen Resume during cooling, with the door open: stopped.
-4. **T5, air sweep, with T9b.** A sweep 20 mm above an empty bed, using a file the verification
-   engineer builds offline by calling the planner with that height (the product has no such
-   setting). T9b closes the door during the air sweep and records the stop latency and the exit
-   routine's path.
-5. **T5, sacrificial part.** One light sacrificial PLA part, with the door open and the owner
-   watching. Pass: the part lands in the container, not inside the chamber; no firmware pause; the
-   purge-line result is recorded. A part that lands inside the chamber sends Phase 2 back to the
+   - HA restarted mid-pause: recognized only with the task-id echo, otherwise stopped.
+   - A prepared file started from the touchscreen: stopped, never swept.
+   - A touchscreen Resume during `ready`, with the door open: stopped.
+4. **T5 air sweep, with T9b.** A press with the door open runs a sweep 20 mm above an empty bed. The
+   file is built offline by the verification engineer, calling the planner with that height; the
+   product has no such setting. T9b closes the door mid-sweep and records the stop latency and the
+   exit routine's path.
+5. **T5 sacrificial part.** One light sacrificial PLA part, a press with the door open, and the
+   owner watching. Pass: the part lands in the container, not inside the chamber; no firmware
+   pause; the purge-line result is recorded. Landing inside the chamber sends Phase 2 back to the
    owner.
+6. **Window expiry**, if the window is short enough to wait out: the button goes unavailable and the
+   notice is sent.
 
-The sweep constants are tuned from T5, the implementer makes the fixes, and they get a delta
-review. **Release 1.4.0** sets all three version files together; **[DOCS]** release notes.
-Checkpoint **C5**.
+Tune the sweep constants from T5. The implementer makes the fixes, with a delta review. **Release
+1.4.0**: all three version files together, and **[DOCS]** release notes. Checkpoint **C5**.
 
 ## Option A (last, optional, only on the owner's go)
 
@@ -324,8 +346,8 @@ Checkpoint **C5**.
    - credentials stored in the entry;
    - the host key pinned on first use and refused on change, with key authentication preferred;
    - one fixed read command;
-   - a polled "Door" binary_sensor, fast during cooling and pushing, unavailable on any error or
-     timeout;
+   - a "Door" binary_sensor, read once at the press and every 1-2 s during `pushing`, unavailable
+     on any error or timeout;
    - the SSH client library added to the manifest `requirements`.
 2. **Tests prove:**
    - a changed host key is refused;
@@ -341,11 +363,17 @@ Checkpoint **C5**.
 2. **Door sensor.** One that reports at least every 10 s, chosen before the session. An event-only
    contact fails the 30 s bound.
 3. **Risk acceptance.** Written acceptance of the spec's section 9 risks before Phase 2 code starts.
-4. **Phase 2 session.** A catch container, the door open for the sweep tests, one light sacrificial
+4. **T4 time.** Up to about 2.5 hours for the long pause, plus about an hour for run 3 if it is
+   needed. Mostly unattended.
+5. **Phase 2 session.** A catch container, the door open for the sweep tests, one light sacrificial
    PLA part, and presence to watch.
-5. **Decisions.** Option A, yes or no. The version numbers 1.3.0 and 1.4.0.
-6. **Close-out.** At runbook Z.4, delete the test files from the printer, or authorize their
+6. **Decisions.**
+   - D33: prepare every eligible print automatically, or keep a per-print "Allow Clear the bed"
+     toggle.
+   - Option A, yes or no.
+   - The version numbers 1.3.0 and 1.4.0.
+7. **Close-out.** At runbook Z.4, delete the test files from the printer, or authorize their
    removal.
-7. **Awareness.** The flag is on after every HA restart, integration reload or options change, and
+8. **Awareness.** The flag is on after every HA restart, integration reload or options change, and
    after a printer power-off mid-session, so "Bed is clear" must be pressed before the next HA
    print, unless P1-C is ruled in.
