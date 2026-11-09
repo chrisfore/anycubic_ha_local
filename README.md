@@ -32,6 +32,8 @@ and the more printers and firmware versions in use, the faster problems get spot
 
 ### Control
 - **Print:** pause, resume, stop.
+- **Print a file** (Kobra S1 / S1 Max): send a sliced file from Home Assistant and start it, or print the
+  last one again — see **Print from Home Assistant**.
 - **Temperatures & fans:** nozzle / bed target temperature, part-cooling / auxiliary / chamber fans.
 - **Print speed:** silent / standard / sport.
 
@@ -120,10 +122,10 @@ Home Assistant. Or find it manually:
 | --- | --- |
 | `sensor` | Status, Pause reason, Nozzle/Bed/Chamber temperature, Progress, Current/Total layer, Time remaining, File name, Firmware |
 | `event` | Print event (started / paused / resumed / finished / stopped / error) |
-| `binary_sensor` | Printing, Paused |
+| `binary_sensor` | Printing, Paused, Bed needs clearing (S1 / S1 Max) |
 | `camera` | Camera |
 | `light` | Chamber light |
-| `button` | Pause, Resume, Stop |
+| `button` | Pause, Resume, Stop, Print again and Bed is clear (S1 / S1 Max) |
 | `number` | Nozzle/Bed target temperature, Part-cooling/Auxiliary/Chamber fan |
 | `select` | Print speed (silent / standard / sport) |
 | ACE `sensor` | Humidity, Box temperature, Drying time remaining, Loaded slot, Slot 1–4 (material/color/remaining as attributes) |
@@ -180,11 +182,114 @@ automation:
           message: "{{ state_attr('event.anycubic_kobra_3_print_event', 'reason') }}"
 ```
 
+## Print from Home Assistant
+
+Pick a sliced file on a phone or computer, in Home Assistant, and the printer prints it — no trip to
+the printer's screen.
+
+**Only the Kobra S1 and S1 Max can do this for now.** On any other model the entities below are not
+created and the actions refuse. To have another model added, see
+*[My printer isn't listed](#my-printer-isnt-listed--help-me-add-it)*.
+
+- **Print a file** (action `anycubic.print_file`) — choose the printer and a file. It is sent to the
+  printer and started.
+- **Print again** (button, and action `anycubic.print_again`) — starts the last file sent from Home
+  Assistant again, from the copy still on the printer. Home Assistant keeps no copy of the file, only
+  its name and a few details, and remembers them across restarts. If the file has since been deleted
+  from the printer, the printer refuses and you send the file again.
+- **Bed needs clearing** (binary sensor) and **Bed is clear** (button) — see below.
+
+Both actions and both buttons are for Home Assistant **administrators** only.
+
+**Files:** `.gcode`, `.gcode.3mf` and sliced `.3mf`, up to **100 MB**. A `.3mf` must be sliced and hold
+a single plate. Slice for the printer you send to: a file that names a different printer is refused (a
+file that names none goes ahead). On the printer the file keeps its name, except that anything other
+than letters, digits, spaces and `. _ ( ) + -` becomes `_`, and a very long name is shortened.
+
+**Filament:** with an ACE, filament N in the file prints from ACE slot N, and every slot the file
+uses must hold a material of the same family the file asks for (PLA, PETG, …). Without an ACE the
+file must use one filament, printed from the external spool. Either way the loaded material must be
+set on the printer, or the start is refused.
+
+Home Assistant checks everything first and sends nothing if a check fails. Each refusal is one plain
+sentence, shown as the error for the action (a script also keeps it in its trace):
+
+| Refusal | What it means |
+| --- | --- |
+| Printing from Home Assistant is not available for this printer model yet | Not an S1 or S1 Max |
+| Choose an Anycubic printer that is set up in Home Assistant | The device picked is not a printer, an ACE for example |
+| Home Assistant has not heard from the printer for over a minute, or is not connected to it | The printer is off or not connected. Try again in a minute |
+| The printer is busy | A print is running or paused, the printer is preparing one, or an attached ACE is drying |
+| A file is already being sent to this printer | Wait for that upload to finish |
+| Clear the bed, then press "Bed is clear" | See **Bed needs clearing** below |
+| A problem with the file: no longer available, unreadable, empty, over 100 MB, the wrong type, or an unusable name | Choose or export the file again. A name containing `-ha-pushoff` is reserved: rename the file |
+| The 3MF file is not sliced, holds more than one plate, cannot be read, or is too large once unpacked | Slice it, export a single plate, or export it again |
+| The file was sliced for a different printer | Slice it for this printer |
+| The printer has not reported its filament yet, or a material is not known | Wait a minute, or set the filament type on the printer |
+| The file uses more than one filament with no ACE attached, a slot the ACE does not have, or a material other than the one loaded | Attach an ACE, load the material, or slice for what is loaded. With a second ACE attached, only single-filament files print for now |
+| The printer did not answer, refused or could not read the upload, could not save it, has no free space, or the upload did not finish | Nothing was started. Check that the printer is on, LAN Mode is on and there is space, then send the file again |
+| The printer did not start the print | The file is on the printer. **Print again** tries it again without sending it |
+| The printer did not confirm the start | Check the printer before trying again: the job may still start, because large 3MF files take time to unpack |
+
+### Bed needs clearing
+
+Starting a print makes the printer probe the bed with its nozzle, so anything left on the bed gets
+hit. Home Assistant cannot see the bed, so it asks you.
+
+**Bed needs clearing** turns on when any print starts, whoever started it, and after any silence of
+more than a minute from the printer (it was switched off, say). It also turns on **after every Home
+Assistant restart, integration reload or options change**, because nobody was watching the printer
+in between. While it is on, **Print a file** and **Print again** refuse. Take the part off the bed,
+then press **Bed is clear**; that button works only while the printer is idle.
+
+> **Never automate "Bed is clear".** It is your word that the bed is empty, and nothing checks it. An
+> automation or script can press it, so do not write one that does: a press with a part still on the
+> bed, followed by a print, drives the nozzle into the part.
+
+**Door sensor (optional).** On the S1 and S1 Max, **Configure** offers a **Door sensor**: any binary
+sensor of device class door or opening. Nothing in this version acts on it. It only lets **Download
+diagnostics** show whether one is chosen and how old its last reading is.
+
+### Example script
+
+The **Print a file** form is a script that passes its two fields to the action. Add it to
+`configuration.yaml` (or to `scripts.yaml`, without the `script:` line), then open the script from a
+dashboard button and pick the printer and the file:
+
+```yaml
+script:
+  anycubic_print_a_file:
+    alias: Print a file
+    icon: mdi:file-upload
+    fields:
+      printer:
+        name: Printer
+        required: true
+        selector:
+          device:
+            filter:
+              integration: anycubic
+      file:
+        name: File
+        required: true
+        selector:
+          file:
+            accept: ".gcode,.3mf"
+    sequence:
+      - action: anycubic.print_file
+        data:
+          printer: "{{ printer }}"
+          file: "{{ file }}"
+```
+
 ## Example dashboard
 
 [`dashboards/anycubic_dashboard.yaml`](dashboards/anycubic_dashboard.yaml) — camera on top, the ACE 2
 filament slots (tinted with each slot's real color) below it, then the printer status and all the
-controls. It uses the [Mushroom](https://github.com/piitaya/lovelace-mushroom) and
+controls, including **Print a file**, **Print again**, **Bed is clear** and the bed status for the
+S1 / S1 Max. The file starts with a commented copy of the script above, which the **Print a file**
+button opens. It uses
+the [Mushroom](https://github.com/piitaya/lovelace-mushroom) and
 [card-mod](https://github.com/thomasloven/lovelace-card-mod) frontend cards (install both from HACS),
 and assumes the default device names — adjust the entity-ID prefixes if you renamed a device.
 
