@@ -189,8 +189,7 @@ together. **[DOCS]** release notes. Checkpoint **C3**.
 
 Phase 2 code does not start until both hold:
 
-1. **The owner accepts in writing** the spec's section 9 owner-accepted risks. D33 (automatic vs per
-   print) only sets one constant and the example script, so it can wait until the release.
+1. **The owner accepts in writing** the spec's section 9 owner-accepted risks.
 2. **T4 passes.** The verification engineer adds runbook step "d2" and runs it with hand-made files:
    the 10x10x0.6 mm PLA square carrying the spec 7.2 block, with no sweep.
    - Run 1 withholds HA's nozzle command, as if HA were down. Hold the pause until the motors or
@@ -267,13 +266,12 @@ If T4 shows the motors never drop, or drop later than a realistic cool-down, ski
 5. **Resume lock.** `coordinator.py`: `resume` is refused under the lock unless the press path sends
    it. `button.py`: Resume follows the lock. Stop is unchanged.
 6. **Actions.** `actions.py` and `services.yaml`:
-   - The preparation field on `print_file` and `print_again` defaults to one constant (D33).
-   - Explicit and ineligible: refused, nothing sent. Default and ineligible: printed unprepared, with
-     a notice.
+   - The "Allow Clear the bed" tick box (D33, off by default) on `print_file` and `print_again`;
+     ticked and ineligible: refused, nothing sent.
    - A prepared submit uploads the original, then the prepared copy, starts the copy, and arms the
      record.
-   - Print again restarts the prepared copy only if T3 proved the md5 check, held as a constant set
-     from T3.
+   - Print again ticked restarts the prepared copy only if T3 proved the md5 check (a constant set
+     from T3), and refuses when there is no prepared copy; the button never ticks.
 7. **Entities and strings.**
    - `button.py`: "Clear the bed", admin-only through the context check, available only in `ready`
      inside the window.
@@ -298,14 +296,15 @@ If T4 shows the motors never drop, or drop later than a realistic cool-down, ski
      connection; only a watched completion clears the flag.
    - **Restarts and the lock:** restart with and without the echo; an unexpected resume means stop;
      the Resume button and the actions are refused under the lock.
-   - **Actions:** explicit and ineligible is refused with nothing sent; default and ineligible
-     prints unprepared with a notice; the original uploads before the copy; Print again picks the
-     copy only with the T3 md5 proof.
+   - **Actions:** unticked prints normally; ticked and ineligible is refused with nothing sent; the
+     original uploads before the copy; Print again ticked picks the copy only with the T3 md5 proof
+     and refuses without one; the button starts the original.
 9. **[DOCS]**
    - README "Clear the bed" section: how it works; what each refusal means; Stop, then "Bed is
      clear" to clear by hand (Stop first, because it moves the head); the motor window; the
      accepted risks; watch the first ejections; door freshness and the command-line sensor example.
-   - The example script, per D33.
+   - The example script gains the "Allow Clear the bed" tick box (label confirmed by the UX
+     reviewer).
    - The dashboard's "Clear the bed" button and "Bed clearing" sensor.
    - An example automation that turns `clear_ready` into a phone push.
 
@@ -367,11 +366,8 @@ Tune the sweep constants from T5. The implementer makes the fixes, with a delta 
    needed. Mostly unattended.
 5. **Phase 2 session.** A catch container, the door open for the sweep tests, one light sacrificial
    PLA part, and presence to watch.
-6. **Decisions.**
-   - D33: prepare every eligible print automatically, or keep a per-print "Allow Clear the bed"
-     toggle.
-   - Option A, yes or no.
-   - The version numbers 1.3.0 and 1.4.0.
+6. **Decisions.** Option A, yes or no; the version numbers 1.3.0 and 1.4.0. (D33 is ruled: a tick
+   box.)
 7. **Close-out.** At runbook Z.4, delete the test files from the printer, or authorize their
    removal.
 8. **Awareness.** The flag is on after every HA restart, integration reload or options change, and

@@ -1,8 +1,8 @@
 # Upload, print, and push the part off
 
 Status: design, revised 2026-11-09 for the owner's "Clear the bed" redesign of Phase 2; Phase 1 is
-built and section 6 is unchanged. Open owner decisions: how prints are prepared (7.7) and the
-optional built-in door reader (section 8). Grounded in a read-only probe of the owner's Kobra S1 Max
+built and section 6 is unchanged. Open owner decision: the optional built-in door reader (section
+8). Grounded in a read-only probe of the owner's Kobra S1 Max
 (firmware 2.7.1.4 with Rinkhals); INFERRED marks anything unproven, each with a live test (10).
 
 ## 1. Intent
@@ -100,13 +100,13 @@ Security rules (from the security review; they apply everywhere below)
 | D30 | Resume lock: for any pause in an armed job, in a marked job, or with the bed target 0 or unknown, only the press path may resume; the Resume button goes unavailable | Security |
 | D31 | No auto push. A prepared print that finishes shows a "Clear the bed" button; a press runs the door and other checks and pushes only if all pass. Replaces D3 (push-off ticked per print) and the automatic push of D4/D5 (bed and chamber cool, the head pushes the parts out of the open door, closed door means no push); their checks become press checks | Owner |
 | D32 | Press checks (7.4) refuse with what to wait for; no retry and no "push when cool" arming; a motor window ends the button; Stop is unchanged | PM |
-| D33 | Prepare every eligible HA print automatically, or keep a per-print "Allow Clear the bed" toggle. One default either way (7.7) | Open, owner |
+| D33 | "Tick box": preparation is a per-print toggle, "Allow Clear the bed" (label to be confirmed by the UX reviewer), off by default; Print again follows the same field (7.7) | Owner |
 
 ## 5. What the user sees
 
 - "Print a file" on the printer card opens a form with the file field (`selector: file`, accepting
-  `.gcode` and `.3mf`). The form is an example script whose fields feed the integration's action. It
-  ships in the README and the example dashboard. Phase 2 may add one field (7.7).
+  `.gcode` and `.3mf`). The form is an example script whose fields feed the integration's action,
+  shipped in the README and the example dashboard. Phase 2 adds the "Allow Clear the bed" tick box.
 - "Print again" (button) reprints the last file sent through HA. "Bed needs clearing" (binary
   sensor) and "Bed is clear" (button, available only while the flag is on and no job is active; the
   README warns never to automate it). Both buttons are admin-only.
@@ -115,8 +115,8 @@ Security rules (from the security review; they apply everywhere below)
   door-source option, and `clear_ready` / `clear_done` / `clear_failed` on the print event entity.
   The Resume button goes unavailable under the resume lock (7.4).
 - Actions: `anycubic.print_file` (printer, file) and `anycubic.print_again` (printer), admin-only;
-  Phase 2 gives both the preparation field (7.7). A refusal is HA's error for the call: one plain
-  sentence with the fix ("The printer is busy. Try again when the current job ends.").
+  Phase 2 gives both the "Allow Clear the bed" tick box (7.7). A refusal is HA's error for the call:
+  one plain sentence with the fix ("The printer is busy. Try again when the current job ends.").
 - Store (small JSON, no file contents): last-file record; Phase 2 adds the armed-job record.
 
 ## 6. Phase 1: upload, start, print again
@@ -183,9 +183,8 @@ left on the bed, and "Print again" from a phone is exactly when nobody sees it.
 
 ### 7.1 Eligibility at submit (after 6.1)
 
-A print is prepared for clearing (7.2) only if all of these hold. If preparation was asked for
-explicitly (the per-print variant of 7.7), a failed check refuses the print with one line and sends
-nothing (D21). If it was applied by default, the print goes ahead unprepared and HA says why.
+A print is prepared for clearing (7.2) only when "Allow Clear the bed" is ticked (7.7) and all of
+these hold. A ticked print that fails one is refused with one line, and nothing is sent (D21).
 
 - **Model.** The printer is model 20029, and the file's model reads as this printer.
 - **Door source.** On an enclosed model, a configured door source is usable now (an Option B sensor
@@ -293,21 +292,22 @@ Moonraker, slicer, OctoPrint-compatible port) makes HA send `stop` at once (sect
 ### 7.6 Telling the owner
 
 A persistent notification names the printer and the reason for `ready`, `expired` and `failed`, for
-every foreign job HA stops, and for every print that goes ahead unprepared under the default. The
+every foreign job HA stops. The
 `ready` notice replaces the old skipped-push notice. Events `clear_ready`, `clear_done` and
 `clear_failed` (also used for `expired`) carry `reason`; the README's example automation turns
 `clear_ready` into a phone push.
 
-### 7.7 Preparation default and Print again (D33, open)
+### 7.7 The tick box and Print again (D33)
 
-One constant sets the default of the action's preparation field; the code is the same either way.
-Automatic: every eligible HA print is prepared, and the form has no second field. Per print: the
-form keeps a toggle, renamed "Allow Clear the bed", off by default. A prepared print ends paused at
-the chute; to clear by hand, press Stop, remove the part once the head is still, then press "Bed is
-clear". Print again follows the same default, restarting the last prepared copy of the same original
-after re-running the 7.1 checks that do not need the file, or else the original. Restarting a
-prepared copy ships only if T3 proves the printer checks the md5 at start (otherwise a same-named
-file could stand in for HA's copy).
+Preparation is a per-print tick box, "Allow Clear the bed" (the UX reviewer confirms the label with
+the Phase 2 strings), off by default, on the form and on both actions. Unticked, the print is a
+normal Phase 1 print. A prepared print ends paused at the chute; to clear by hand, press Stop,
+remove the part once the head is still, then press "Bed is clear". Print again follows the same
+field. Ticked, it restarts the last prepared copy of the same original after re-running the 7.1
+checks that do not need the file; with no prepared copy it refuses ("Send the file again with Allow
+Clear the bed ticked."). Unticked, and from the "Print again" button, which has no tick, it starts
+the original. Restarting a prepared copy ships only if T3 proves the printer checks the md5 at start
+(otherwise a same-named file could stand in for HA's copy).
 
 ### 7.8 Conditional fallback: cool-down inside the file (only if T4 calls for it)
 
