@@ -82,7 +82,7 @@ def build_print_start(model_id: str, device_id: str, *, taskid: str, filename: s
     the printer looks the base name up in its own file folder, so `filepath` is only "/".
     `taskid` is fresh for each start, so the printer's reports can be matched to it.
     `ams_settings` maps the file's filament slots to the multi-color unit's, or says to use
-    the external spool. Task settings: auto-leveling on; vibration compensation, flow
+    the external spool. Task settings: auto-leveling, vibration compensation, flow
     calibration, timelapse, the printer's camera detection and drying all off.
     """
     data = {
@@ -94,7 +94,8 @@ def build_print_start(model_id: str, device_id: str, *, taskid: str, filename: s
         "md5": md5,
         "ams_settings": ams_settings,
         "task_settings": {
-            "auto_leveling": 1,
+            # Off: a start with leveling on hung on the printer, waiting on a 10 C bed preheat.
+            "auto_leveling": 0,
             "vibration_compensation": 0,
             "flow_calibration": 0,
             "timelapse": {"status": 0},

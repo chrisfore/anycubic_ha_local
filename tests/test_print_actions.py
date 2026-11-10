@@ -186,7 +186,7 @@ async def test_a_file_is_checked_uploaded_started_and_recorded(env):
     assert data["filetype"] == 1
     assert data["taskid"].isdigit() and len(data["taskid"]) == 9
     assert data["task_settings"] == {
-        "auto_leveling": 1, "vibration_compensation": 0, "flow_calibration": 0,
+        "auto_leveling": 0, "vibration_compensation": 0, "flow_calibration": 0,
         "timelapse": {"status": 0}, "ai_settings": {"status": 0}, "dry_mode": 0}
     assert data["ams_settings"] == {"use_ams": True, "ams_box_mapping": [{
         "paint_index": 0, "ams_index": 0, "paint_color": [255, 0, 0, 255],
