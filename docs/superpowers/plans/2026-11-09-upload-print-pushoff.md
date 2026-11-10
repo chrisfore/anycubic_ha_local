@@ -81,16 +81,18 @@ frontend (20240904.0):
      start command in the local runbook kit (`research/probe/`, git-ignored; never committed).
    - `anycubic_local/mqtt.py`: hand the envelope of a `print`/`start` answer (action, code, state,
      msg) to a new callback, the way `on_reason` is handed its envelope today.
-   - `coordinator.py`: await that answer with a timeout. 10101 gets one retry after about 1.5 s,
-     then is refused as busy. Other codes give their catalog text. No answer means a short status
-     watch, then "may still start".
+   - `coordinator.py`: send the start once and await the answer with a timeout. 10101 is refused
+     as busy with no retry, because a refused start corrupts the printer's job record (T6). Other
+     codes give their catalog text. No answer means a short status watch, then "may still start".
+     The start sends `auto_leveling` 0, because 1 hung on a 10 C preheat (T7.3). (As built in
+     1.3.0b2.)
 6. **Persistent state.** New `store.py`: a per-entry HA `Store` holding only the last-file record;
    Phase 2 adds the armed-job record. It is loaded in `async_setup_entry` before the platforms.
    The bed flag and report times are never stored.
 7. **Bed flag (spec 6.4).** `coordinator.py`. The flag:
    - is set unconditionally every time the entry loads (review fix I1: a host with no
      battery-backed clock can misjudge downtime);
-   - is on when any job phase is seen;
+   - is on for any info state other than `free`, and for a current job in any status;
    - is on after any in-session report gap over the bound, measured on the monotonic clock in the
      poll cycle;
    - clears only through the "Bed is clear" press, or Phase 2's watched completed sweep.
@@ -126,8 +128,8 @@ frontend (20240904.0):
       redirects are not followed; each printer error code maps to its text; there is no retry.
     - **Token:** the token never appears in logs, diagnostics or exception chains, including a
       token under 7 characters.
-    - **Start reply:** 10101 is retried once, then refused as busy; other codes give their text;
-      no reply gives "may still start".
+    - **Start reply:** 10101 is refused as busy with no retry; other codes give their text; no
+      reply gives "may still start".
     - **Bed flag:** on at every entry load (start, reload, options change); on for a job from any
       source; on after an in-session gap on the monotonic clock; never stored; clears only on the
       button; the button is unavailable during a job; both actions refuse while the flag is on.
@@ -147,42 +149,34 @@ frontend (20240904.0):
 
 **Review R1** covers the whole Phase 1 diff. Checkpoint **C1**.
 
-## Phase 1: live tests
+## Phase 1: live tests (done, 1.3.0b2)
 
-Run the local runbook `research/probe/p0b-2026-11-09/RUNBOOK.md`, steps 0 and a-f, then Z, as
-written. Before the session, the verification engineer adds these extensions to it:
+These were run from the local runbook `research/probe/p0b-2026-11-09/RUNBOOK.md`. The results are
+in spec section 10:
+- T2: PASS.
+- T3: PASS, with the task id echoed and a wrong md5 accepted.
+- T6: the 10101 refusal corrupts the job record, so the retry was removed.
+- T7.1-7.4, 7.6 and 7.7: PASS. 7.5 was skipped, because the picker hides `.stl`.
 
-1. **b (T2).** Also upload names of 100 and 150 characters, and one with spaces and parentheses.
-   Record what the printer keeps; this sets the name cap. Result: PASSED. All 6 uploads were intact,
-   md5 matched, and HTTP 200 came back with `code` 200; every name was kept exactly; nothing
-   started. The 100-character cap stands.
-2. **c (T3).** Also record:
-   - whether `print` reports echo the task id sent;
-   - whether a start with a deliberately wrong md5 is refused;
-   - the start-to-finish time of the m117 job (the shortest job);
-   - any last-job identity (`last_project` fields, task id, job start time), and whether the same
-     identity is still reported after an HA restart.
-3. **a (T1, part).** Also read the age of the owner's chosen HA door sensor's `last_reported`
-   through the open/close sequence.
-4. **d (early T4 evidence).** Run as written. Its results feed the Phase 2 gate.
-5. **New step T7.** With the Phase 1 build installed on the owner's HA:
-   - the owner opens "Print a file" on a phone, sees the file field, and sends the m117 file; the
-     job starts and the flag turns on;
-   - "Bed is clear" is unavailable during the job and works after it;
-   - "Print again" starts the file;
-   - busy, wrong suffix and flag-on refusals send nothing.
+Step a showed the door switch is dead, and the door side is confirmed as Y 0 by camera. Checkpoint
+**C2** is done (c2e6cfb, 9cf5c29).
 
-Pass = the spec's section 10 Phase 1 gate. Failures go back to the Phase 1 implementer, with a delta
-review. Checkpoint **C2**.
+**Step P1-U, success confirmation, for the UX reviewer.** A successful send shows nothing today.
+`actions.py` adds one persistent notification per printer on a confirmed start ("Printing <file>."),
+replaced by the next one; it covers both actions and the Print again button. Tests prove that it
+appears only after a confirmed start, and never on a refusal.
 
-**Conditional step P1-C**, only if T3 shows a last-job identity that survives an HA restart. It
-relaxes the gap rule to "flag only if that identity changed across the gap".
-- Files: `coordinator.py`, and `store.py`, which keeps the identity.
-- Tests prove: an unchanged identity across a gap leaves the flag as it was; a changed or missing
-  identity turns the flag on.
+**Conditional step P1-C**, restricted. `last_project` survives an HA restart but is cleared by a
+printer reboot (T3). P1-C therefore applies to HA restarts and reloads only: HA stores the flag and
+the last task id, and at load keeps the stored flag only while the printer still reports the same
+`last_project` task id and is free.
+- Files: `coordinator.py`, and `store.py`.
+- A missing identity (a printer reboot), a changed one, or a printer that is not free turns the
+  flag on.
+- Tests prove all three cases, plus that an unchanged identity keeps the stored flag.
 
-This relaxes a safety rule, so it is built only after the PM rules it in, and it goes through the
-security review.
+This step partly reverses fix I1 and relaxes a safety rule. It is built only after the PM rules it
+in, and it goes through the security review.
 
 **Release 1.3.0.** Set the version in `manifest.json`, `pyproject.toml` and the README status line
 together. **[DOCS]** release notes. Checkpoint **C3**.
@@ -193,45 +187,37 @@ Phase 2 code does not start until both hold:
 
 1. **The owner accepts in writing** the spec's section 9 owner-accepted risks.
 2. **T4 passes.** The verification engineer adds runbook step "d2" and runs it with hand-made files:
-   the 10x10x0.6 mm PLA square carrying the spec 7.2 block, with no sweep.
-   - Run 1 withholds HA's nozzle command, as if HA were down. Hold the pause until the motors or
-     homing drop, or for 2 hours at most. Record when each drops, what the 140 C nozzle does, and
-     the bed's cooling curve. End with Stop and record its moves.
-   - Run 2: nozzle target 0 at the pause, then a cold resume. Run it once as `.gcode` and once as a
-     hand-rewritten `.gcode.3mf`.
+   the 10x10x0.6 mm PLA square carrying the spec 7.2 block.
+   - Run 1: hold the pause until the motors or homing drop, or for 2 hours at most. Record when each
+     drops, what the 140 C nozzle does, and the bed's cooling curve. End with Stop and record its
+     moves.
+   - Run 2: once as `.gcode` and once as a hand-rewritten `.gcode.3mf`. Resume, and record:
+     - the nozzle temperature at PAUSE's retract;
+     - whether in-file `M109 S50` waits for cooling, or else the `G4` time from 140 to 50 C;
+     - that nothing touches the part above 50 C.
    - Run 3, only if run 1's window is shorter than a realistic cool-down. Extend the runbook's
-     `M190 S40` step (e) into the spec 7.8 block, and record:
-     - the in-file M190 cooling wait and how long it takes;
-     - whether it heats the chamber;
-     - whether the reheat at the chute oozes onto the bed;
-     - the nozzle's time from 140 C to 50 C;
-     - that the motors stay held through the wait.
-   - Record every T4 item in spec section 9.
+     `M190 S40` step into the spec 7.8 block, and record whether the reheat at the chute oozes onto
+     the bed, and that the motors stay held through the wait.
 
 These outcomes stop the plan and go back to the owner:
-- RESUME reheats above 50 C, or does not run clean.
-- The motor window ends before the bed cools to its limit, and run 3 does not clear the spec 7.8
+- The motor window ends before the bed cools to its limit, and run 3 does not clear the 7.8
   fallback.
-- The nozzle holds 140 C indefinitely with HA down: the owner accepts that, or Phase 2 is redesigned.
+- The nozzle holds 140 C indefinitely: the owner accepts that, or Phase 2 is redesigned.
 
 If the rewritten archive is refused, clearing ships for `.gcode` only.
 
 ## Phase 2: code
 
-**Conditional step P2-C.** This step applies only if T4 run 1 shows a short window and run 3 passes.
-It builds the spec 7.8 block variant instead of the default block, picking M190 or `G4` from run 3,
-in `sweep.py` and `printfile.py`. It also changes `clearing.py`:
-- While the in-file cool-down runs, the state is `armed`, and its reason gives HA's estimate.
-- HA stops the job if the M190 wait passes the limit set from T4.
-- `ready` and the button start only once the nozzle reads 50 C or less.
+**Conditional step P2-C.** This step applies only if T4 run 1 shows a short window and run 3
+passes. It builds the spec 7.8 block variant (M190 or `G4`, chosen from run 3) in `sweep.py` and
+`printfile.py`. In `clearing.py`, while the in-file cool-down runs the state is `armed`, with HA's
+estimate as the reason, and HA stops the job if the M190 wait passes the limit set from T4.
 
 Its tests prove:
-- the block order, including the hold ending before the reheat and the reheat before `M601`;
-- the stop when the wait passes the limit;
-- the button stays unavailable until the nozzle reaches 50 C.
+- the block order: the hold ends, then the reheat, then `M104 S0`, then `M601`;
+- the job is stopped when the wait passes the limit.
 
 If T4 shows the motors never drop, or drop later than a realistic cool-down, skip this step.
-
 
 1. **File checks.** `anycubic_local/printfile.py`:
    - brim, skirt and tower scan (case-insensitive, `;TYPE:` and `; FEATURE:`);
@@ -249,14 +235,17 @@ If T4 shows the motors never drop, or drop later than a realistic cool-down, ski
 
    The tunables start inside the research ranges and are fixed after T5.
 3. **File change.** `anycubic_local/printfile.py`:
-   - block insertion (spec 7.2) and a streaming `.gcode` copy;
+   - block insertion (spec 7.2) and a streaming `.gcode` copy. The block has no `M117`. It cools the
+     nozzle in the file after `M601` (`M109 S50` or a `G4` dwell, per T4 run 2);
    - the `.3mf` rewrite: only the plate member and its same-case md5 sidecar change;
    - the marked name;
    - everything in the executor, under the section 3 archive rules.
 4. **Clearing state machine.** New `clearing.py`:
    - the armed-job record, kept in the store;
    - pause classification and the resume lock (spec 7.4);
-   - `ready`: nozzle target 0 (per T4), fast polling, notice and `clear_ready`;
+   - `ready`: fast polling, notice and `clear_ready`. HA sends no nozzle command, because a target
+     sent while paused is ignored;
+   - the second-pause limit (spec 7.4): notify once when an armed job resumes from an earlier pause;
    - the motor window: from T4, less a margin, on the monotonic clock from the pause HA saw. An
      unknown start counts as expired. At expiry: `expired`, the button unavailable, and a notice;
    - the press checks in spec order, each with its one-line reason and nothing sent. No timer, no
@@ -276,8 +265,8 @@ If T4 shows the motors never drop, or drop later than a realistic cool-down, ski
      ticked and ineligible: refused, nothing sent.
    - A prepared submit uploads the original, then the prepared copy, starts the copy, and arms the
      record.
-   - Print again ticked restarts the prepared copy only if T3 proved the md5 check (a constant set
-     from T3), and refuses when there is no prepared copy; the button never ticks.
+   - Print again ticked is refused, because T3 showed md5 is not checked at start; unticked, and the
+     button, restart the original.
    - New `anycubic.clear_bed` (printer, `door_open_confirmed`), registered admin-only and refusing
      calls with no user. The field is required when no door sensor is configured.
 7. **Entities and strings.**
@@ -289,13 +278,15 @@ If T4 shows the motors never drop, or drop later than a realistic cool-down, ski
    - `strings.json` and `translations/en.json`: press refusals naming the value to wait for, in °C.
    - Clearing state in `diagnostics.py`.
 8. **Offline tests.** They must prove:
-   - **Scans, planner and file change:** the scans, limits, block order and archive rules, as above.
+   - **Scans, planner and file change:** the scans, limits and archive rules, as above. The block
+     has no `M117`, and the nozzle cooling comes before any move that can touch a part.
    - **Pause handling:**
      - armed with the bed target 0 and no layer data: `ready`;
      - armed with the target above 0: left alone, lock on;
      - target unknown: button unavailable until a fresh reading;
      - marked foreign job: stopped at any pause;
-     - unmarked foreign job with the target 0: stopped unless its layers show it mid-print.
+     - unmarked foreign job with the target 0: stopped unless its layers show it mid-print;
+     - an armed job resuming from an earlier pause: one notice, and no `ready` afterwards.
    - **No auto push:** HA never resumes without a press.
    - **Press checks:**
      - each refuses in order with its line and sends nothing;
@@ -315,8 +306,8 @@ If T4 shows the motors never drop, or drop later than a realistic cool-down, ski
    - **Restarts and the lock:** restart with and without the echo; an unexpected resume means stop;
      the Resume button and the actions are refused under the lock.
    - **Actions:** unticked prints normally; ticked and ineligible is refused with nothing sent; the
-     original uploads before the copy; Print again ticked picks the copy only with the T3 md5 proof
-     and refuses without one; the button starts the original.
+     original uploads before the copy; Print again ticked is refused; the button starts the
+     original.
 9. **[DOCS]**
    - README "Clear the bed" section: how it works; what each refusal means; Stop, then "Bed is
      clear" to clear by hand (Stop first, because it moves the head); the motor window; the
@@ -336,8 +327,8 @@ If T4 shows the motors never drop, or drop later than a realistic cool-down, ski
 
 In order. A catch container sits in front of the door for every step that can sweep.
 
-1. **T1.** Confirm the door side, if step a did not record it. If a sensor is used, check that it
-   reports a change to open.
+1. **T1.** The door side is settled: Y 0, seen on camera. If a sensor is used, check that it reports
+   a change to open.
 2. **T9a.** Make a prepared print of the 10 mm square, reaching `ready`. These presses must each
    refuse and send nothing:
    - with a sensor: the door closed, the door left open since before the pause;
@@ -371,18 +362,16 @@ there is nothing to read.
 
 ## Needed from the owner
 
-1. **Phase 1 session.** A go and about 90 minutes for the Phase 1 live session, with the runbook's
-   checklist on hand, plus a phone to try the "Print a file" form.
-2. **Door sensor, optional.** Any door contact works, event-only ones included. Without one, the
+1. **Door sensor, optional.** Any door contact works, event-only ones included. Without one, the
    dashboard confirmation stands in, and a closed door is the owner's responsibility (D34).
-3. **Risk acceptance.** Written acceptance of the spec's section 9 risks before Phase 2 code starts.
-4. **T4 time.** Up to about 2.5 hours for the long pause, plus about an hour for run 3 if it is
+2. **Risk acceptance.** Written acceptance of the spec's section 9 risks before Phase 2 code starts.
+3. **T4 time.** Up to about 2.5 hours for the long pause, plus about an hour for run 3 if it is
    needed. Mostly unattended.
-5. **Phase 2 session.** A catch container, the door open for the sweep tests, one light sacrificial
+4. **Phase 2 session.** A catch container, the door open for the sweep tests, one light sacrificial
    PLA part, and presence to watch.
-6. **Decisions.** The version numbers 1.3.0 and 1.4.0.
-7. **Close-out.** At runbook Z.4, delete the test files from the printer, or authorize their
+5. **Decisions.** The version numbers 1.3.0 and 1.4.0.
+6. **Close-out.** At runbook Z.4, delete the test files from the printer, or authorize their
    removal.
-8. **Awareness.** The flag is on after every HA restart, integration reload or options change, and
+7. **Awareness.** The flag is on after every HA restart, integration reload or options change, and
    after a printer power-off mid-session, so "Bed is clear" must be pressed before the next HA
    print, unless P1-C is ruled in.
