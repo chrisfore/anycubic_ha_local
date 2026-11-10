@@ -40,11 +40,10 @@ PLA_GCODE = ("; HEADER_BLOCK_START\n; filament: 1\n; HEADER_BLOCK_END\nG1 X1\n"
 class Transport:
     """Records every publish. Answers a print start with the next item in `replies`: a code,
     None for no answer, or a list of raw answers. Reports a job when asked for `info` if
-    `job_on_query` is set, and right after a busy answer if `busy_after_reply` is."""
+    `job_on_query` is set."""
 
     replies: list = []
     job_on_query = False
-    busy_after_reply = False
     last = None
 
     def __init__(self, hs, on_report, **kwargs):
@@ -72,9 +71,6 @@ class Transport:
                 self._on_start_reply({"action": "start", "code": reply,
                                       "state": "printing" if reply == 200 else "failed",
                                       "msg": "the printer's own words"})
-                if type(self).busy_after_reply:
-                    self._on_report("info", {"state": "busy",
-                                             "project": {"state": "printing", "pause": 0}})
 
     def starts(self):
         return [(topic, body) for topic, body in self.published if body.get("action") == "start"]
@@ -83,10 +79,9 @@ class Transport:
 @pytest.fixture(autouse=True)
 def quick_start(monkeypatch):
     monkeypatch.setattr(coord_mod, "START_REPLY_TIMEOUT", 0.2)
-    monkeypatch.setattr(coord_mod, "START_BUSY_RETRY_DELAY", 0.01)
     monkeypatch.setattr(coord_mod, "START_WATCH_TIMEOUT", 0.3)
     monkeypatch.setattr(coord_mod, "START_WATCH_QUERY_EVERY", 0.05)
-    Transport.replies, Transport.job_on_query, Transport.busy_after_reply = [200], False, False
+    Transport.replies, Transport.job_on_query = [200], False
 
 
 async def _setup(hass, hs=HS, options=None, entry_id=None):
@@ -280,7 +275,9 @@ REFUSALS = [
     ("printer_unreachable", "a.gcode", PLA_GCODE, _silent),
     ("printer_busy", "a.gcode", PLA_GCODE, _busy),
     ("printer_busy", "a.gcode", PLA_GCODE,
-     lambda c: c._apply("info", {"state": "busy", "project": None})),
+     # As seen live after a refused start: busy, no job, the last project "failed".
+     lambda c: c._apply("info", {"state": "busy", "project": None,
+                                 "last_project": {"state": "failed"}})),
     ("printer_busy", "a.gcode", PLA_GCODE, _drying),
     ("bed_not_clear", "a.gcode", PLA_GCODE, lambda c: c._raise_bed_flag("test")),
     ("file_type_not_supported", "a.stl", PLA_GCODE, None),
@@ -425,29 +422,24 @@ async def test_the_s1_max_has_the_new_entities(env):
 # ------------------------------------------------- the start and its answer
 
 
-async def test_a_busy_answer_is_tried_once_more_then_refused(env):
-    Transport.replies = [10101, 10101]
+async def test_a_busy_answer_is_refused_and_never_tried_again(env):
+    """Each refused start damages the printer's record of the job that is running."""
+    Transport.replies = [10101, 200]          # a second start would have been taken
     with pytest.raises(HomeAssistantError) as err:
         await _print_file(env, _stage(env, "a.gcode", PLA_GCODE))
     assert err.value.translation_key == "printer_busy"
-    starts = Transport.last.starts()
-    assert len(starts) == 2
-    assert starts[0][1]["data"]["taskid"] == starts[1][1]["data"]["taskid"]
-    assert starts[0][1]["msgid"] != starts[1][1]["msgid"]
+    await env.hass.async_block_till_done()
+    assert len(Transport.last.starts()) == 1
+    assert Transport.replies == [200], "a second start was sent"
     assert not env.coord.bed_needs_clearing
+    assert env.coord.last_guard_outcome == "printer_busy"
 
 
-async def test_a_busy_answer_then_a_yes_starts(env):
+async def test_print_again_on_a_busy_answer_is_not_tried_again_either(env):
+    await _sent_once(env)
     Transport.replies = [10101, 200]
-    await _print_file(env, _stage(env, "a.gcode", PLA_GCODE))
-    assert len(Transport.last.starts()) == 2
-    assert env.coord.last_guard_outcome == "started"
-
-
-async def test_a_busy_answer_is_not_retried_once_the_printer_is_seen_busy(env):
-    Transport.replies, Transport.busy_after_reply = [10101, 200], True
     with pytest.raises(HomeAssistantError) as err:
-        await _print_file(env, _stage(env, "a.gcode", PLA_GCODE))
+        await _print_again(env)
     assert err.value.translation_key == "printer_busy"
     assert len(Transport.last.starts()) == 1
 

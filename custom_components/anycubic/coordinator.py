@@ -109,12 +109,11 @@ MAX_RECOVERIES_BEFORE_UNAVAILABLE = 2
 RECOVERY_LOG_REMINDER = 3600.0
 
 # Starting a print (async_start_print). The printer answers a start on the `print` topic, with
-# a code: 200 took it, 10101 says the previous task is still active. A busy answer is tried
-# once more after a short wait, as other clients do. With no answer at all, a short watch for
-# the job follows, asking for `info` now and then: a large 3MF can take a while to unpack
-# before the job shows.
+# a code: 200 took it, 10101 says the previous task is still active. Every start is sent once
+# only, a busy answer included (see async_start_print for why). With no answer at all, a
+# short watch for the job follows, asking for `info` now and then: a large 3MF can take a
+# while to unpack before the job shows.
 START_REPLY_TIMEOUT = 10.0
-START_BUSY_RETRY_DELAY = 1.5
 START_WATCH_TIMEOUT = 20.0
 START_WATCH_QUERY_EVERY = 5.0
 START_ACCEPTED = 200
@@ -632,8 +631,8 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             if isinstance(features, dict):
                 self.raw_features = features
             self._track_status()
-            if self._job_seen():
-                self._raise_bed_flag("a job was reported")
+            if self._bed_may_hold_something(data):
+                self._raise_bed_flag("the printer was busy, or a job was reported")
         elif msg_type == "tempature":
             # Not a typo — the firmware's wire string. Folded rather than parsed into a
             # fresh state: it carries only temperatures, and is the fastest-moving source
@@ -889,6 +888,20 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         printer = self.data.printer
         return printer.printing or printer.paused or printer.status in _JOB_SEEN
 
+    def _bed_may_hold_something(self, info: dict) -> bool:
+        """Does this `info` report leave any doubt that the bed is as it was?
+
+        Anything but "free" counts, busy work with no print included, and so does a current
+        job in any status. Seen on the printer: after a refused start it reported "busy" with
+        no job and the last project "failed", while a real job ran on. A clear bed costs one
+        more "Bed is clear" press; a missed job costs a nozzle driven into a part. The last
+        project of a free printer is the previous job, already seen, and does not count, or
+        the flag could never be cleared.
+        """
+        project = info.get("project")
+        return (self.data.printer.raw_state != STATE_FREE or self._job_seen()
+                or (isinstance(project, dict) and bool(project)))
+
     @property
     def bed_needs_clearing(self) -> bool:
         return self.print_state.bed_flag
@@ -932,29 +945,27 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         """Start a file that is already on the printer, and hear that it started.
 
         Returns once the printer has taken the job, or once a job is seen. Raises when the
-        printer refuses, when it stays busy, and when it says nothing and no job appears.
+        printer refuses, when it is busy, and when it says nothing and no job appears.
         `again` is for Print again, whose refusal tells the user to send the file again.
         """
         if self._transport is None:
             raise HomeAssistantError(translation_domain=DOMAIN,
                                      translation_key="printer_not_connected")
         taskid = str(100_000_000 + secrets.randbelow(900_000_000))
-        for attempt in (1, 2):
-            topic, payload = build_print_start(
-                self.hs.model_id, self.hs.device_id, taskid=taskid, filename=name,
-                filesize=size, md5=md5, filetype=filetype, ams_settings=ams_settings)
-            answer = await self._async_send_start(topic, payload)
-            if answer is None:
-                break
+        topic, payload = build_print_start(
+            self.hs.model_id, self.hs.device_id, taskid=taskid, filename=name,
+            filesize=size, md5=md5, filetype=filetype, ams_settings=ams_settings)
+        answer = await self._async_send_start(topic, payload)
+        if answer is not None:
             code = answer["code"]
             if code == START_ACCEPTED:
                 self._raise_bed_flag("a print was started")
                 return
-            if code == START_BUSY and attempt == 1:
-                await asyncio.sleep(START_BUSY_RETRY_DELAY)
-                if self.idle:
-                    continue
             if code == START_BUSY:
+                # Never tried again. Seen on the printer: a refused start overwrites its
+                # record of the job that is running, which then reads as failed under the
+                # refused task's id and never reports finishing. A second start would do
+                # that damage twice.
                 raise HomeAssistantError(translation_domain=DOMAIN,
                                          translation_key="printer_busy")
             # The code itself is for a debug log, not for the user.

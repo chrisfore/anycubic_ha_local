@@ -133,8 +133,14 @@ def test_a_garbled_last_file_record_is_dropped():
     ("info", {"state": "busy", "project": {"state": "finished"}}),
     ("info", {"state": "busy", "project": {"state": "stoped"}}),
     ("print", {"taskid": "-1", "progress": 3, "filename": "someone_elses.gcode"}),
-], ids=["printing", "preheating", "leveling", "paused", "finished", "stopped", "progress"])
-async def test_a_job_from_any_source_turns_it_on(hass, msg_type, report):
+    # As seen live after a refused start, while a real job ran on.
+    ("info", {"state": "busy", "project": None, "last_project": {"state": "failed"}}),
+    ("info", {"state": "busy", "project": {"state": "failed"}}),
+    ("info", {"state": "busy", "project": None}),                  # busy, no print
+    ("info", {"state": "free", "project": {"state": "something new"}}),
+], ids=["printing", "preheating", "leveling", "paused", "finished", "stopped", "progress",
+        "busy-no-job-last-failed", "busy-failed", "busy-no-job", "free-with-a-job"])
+async def test_a_job_from_any_source_or_a_busy_printer_turns_it_on(hass, msg_type, report):
     coord = (await _setup(hass)).runtime_data
     _clear(coord)
     coord._apply(msg_type, report)
@@ -143,11 +149,15 @@ async def test_a_job_from_any_source_turns_it_on(hass, msg_type, report):
     assert hass.states.get(FLAG).state == "on"
 
 
-async def test_an_idle_printer_or_one_busy_with_no_job_leaves_it_off(hass):
+async def test_a_free_printer_leaves_it_off_whatever_its_last_job_was(hass):
     coord = (await _setup(hass)).runtime_data
     _clear(coord)
     for msg_type, report in (("info", {"state": "free", "project": None}),
-                             ("info", {"state": "busy", "project": None}),
+                             # The previous job, already seen: or the flag never clears.
+                             ("info", {"state": "free", "project": None,
+                                       "last_project": {"state": "finished"}}),
+                             ("info", {"state": "free", "project": None,
+                                       "last_project": {"state": "failed"}}),
                              ("tempature", {"curr_hotbed_temp": 30}),
                              ("multiColorBox", {"multi_color_box": []}),
                              ("print", {"taskid": "-1"})):           # an answer, not progress
