@@ -27,7 +27,7 @@
   "options": {
     "step": {
       "init": {
-        "data": { "camera_source": "Camera source", "door_sensor": "Door sensor" }
+        "data": { "camera_source": "Camera source" }
       }
     }
   },

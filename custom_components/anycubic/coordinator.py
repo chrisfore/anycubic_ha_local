@@ -118,6 +118,8 @@ START_WATCH_TIMEOUT = 20.0
 START_WATCH_QUERY_EVERY = 5.0
 START_ACCEPTED = 200
 START_BUSY = 10101
+# The state a taken start is answered with. A 200 with it says the job is running.
+START_PRINTING = "printing"
 # Any job phase, its end included: a job that has finished or stopped still left something
 # on the bed. A busy printer with no job (drying, loading filament) is in none of these.
 _JOB_SEEN = JOB_PHASES | STOPPED_PHASES | {"finished"}
@@ -941,10 +943,11 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         self.async_update_listeners()
 
     async def async_start_print(self, *, name: str, size: int, md5: str, filetype: int,
-                                ams_settings: dict, again: bool = False) -> None:
+                                ams_settings: dict, again: bool = False) -> bool:
         """Start a file that is already on the printer, and hear that it started.
 
-        Returns once the printer has taken the job, or once a job is seen. Raises when the
+        Returns once the printer has taken the job, or once a job is seen: True only when
+        the printer itself confirmed it, with a 200 and the state "printing". Raises when the
         printer refuses, when it is busy, and when it says nothing and no job appears.
         `again` is for Print again, whose refusal tells the user to send the file again.
         """
@@ -960,7 +963,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             code = answer["code"]
             if code == START_ACCEPTED:
                 self._raise_bed_flag("a print was started")
-                return
+                return answer.get("state") == START_PRINTING
             if code == START_BUSY:
                 # Never tried again. Seen on the printer: a refused start overwrites its
                 # record of the job that is running, which then reads as failed under the
@@ -977,7 +980,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
                     "reason": _after_colon(REASON_TEXT.get(code, "no reason given"))})
         if await self._async_job_appears():
             self._raise_bed_flag("a job was seen after a start")
-            return
+            return False
         raise HomeAssistantError(translation_domain=DOMAIN, translation_key="start_unconfirmed")
 
     async def _async_send_start(self, topic: str, payload: dict) -> dict | None:

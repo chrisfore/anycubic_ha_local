@@ -170,7 +170,8 @@ async def test_the_form_strings_exist_in_both_files():
     for name in ("strings.json", "translations/en.json"):
         strings = json.loads((base / name).read_text())
         step = strings["options"]["step"]["init"]
-        assert step["data"] == {"camera_source": "Camera source", "door_sensor": "Door sensor"}
+        # No door sensor label while that option is not offered (DOOR_SENSOR_OPTION_ENABLED).
+        assert step["data"] == {"camera_source": "Camera source"}
         assert "description" not in step and "data_description" not in step
         assert strings["selector"]["camera_source"]["options"] == {
             "printer": "Printer camera", "rinkhals": "Rinkhals camera"}

@@ -2,7 +2,8 @@
 
 Both are for admins only. The guards run in a fixed order, under one lock per printer, and
 every refusal is one plain line raised before anything is sent: no upload and no message to
-the printer. A failure after that point says what failed, in fixed text.
+the printer. A failure after that point says what failed, in fixed text. A start the printer
+confirms is said in one notification per printer.
 
 Guards, in order: 1 the model may print from Home Assistant; 2 the printer has reported
 within the gap bound; 3 nothing else is being sent to it; 4 it is idle; 5 the bed is clear;
@@ -14,8 +15,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import voluptuous as vol
+from homeassistant.components import persistent_notification
 from homeassistant.components.file_upload import process_uploaded_file
-from homeassistant.config_entries import ConfigEntryState
+from homeassistant.config_entries import SOURCE_IGNORE, ConfigEntry, ConfigEntryState
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv, device_registry as dr
@@ -24,6 +26,7 @@ from homeassistant.helpers.service import async_register_admin_service
 
 from .anycubic_local import upload
 from .anycubic_local.commands import FILETYPE_GCODE
+from .anycubic_local.models import display_filename
 from .anycubic_local.printfile import (
     FileRefused,
     inspect_file,
@@ -58,6 +61,12 @@ _WHITE = (255, 255, 255)
 
 # What diagnostics show for a submission that got all the way to a running job.
 OUTCOME_STARTED = "started"
+
+# The confirmation of a start the printer confirmed: one notification per printer, each
+# replacing the one before, titled with the printer's name. A constant, as strings.json has
+# no place for a notification's text.
+STARTED_MESSAGE = "Started printing {name}"
+_STARTED_NOTIFICATION_ID = DOMAIN + "_print_started_{entry_id}"
 
 
 def _one_device(value) -> str:
@@ -107,26 +116,38 @@ def _coordinator(hass: HomeAssistant, device_id: str | None) -> AnycubicCoordina
     """The printer behind a device: a loaded entry of this integration, and its printer.
 
     A multi-color unit is a device of this integration too, but not a printer. With no
-    device named, the one printer there is, if there is exactly one: with none or several,
-    which one is meant is for the user to say.
+    device named, the one printer set up, if there is exactly one: with none or several,
+    which one is meant is for the user to say. Every enabled printer counts, connected or
+    not, so that a print meant for one that is offline never starts on another. A printer
+    that is set up but not loaded is refused as not connected, named or not.
     """
     if device_id is None:
-        loaded = [entry for entry in hass.config_entries.async_entries(DOMAIN)
-                  if entry.state is ConfigEntryState.LOADED]
-        if len(loaded) != 1:
+        entries = [entry for entry in hass.config_entries.async_entries(DOMAIN)
+                   if entry.disabled_by is None and entry.source != SOURCE_IGNORE]
+        if len(entries) != 1:
             raise _refusal("printer_not_chosen")
-        return loaded[0].runtime_data
+        return _loaded(entries[0])
     device = dr.async_get(hass).async_get(device_id)
     if device is not None:
         for entry_id in device.config_entries:
             entry = hass.config_entries.async_get_entry(entry_id)
-            if (entry is None or entry.domain != DOMAIN
-                    or entry.state is not ConfigEntryState.LOADED):
+            if entry is None or entry.domain != DOMAIN:
+                continue
+            if entry.state is not ConfigEntryState.LOADED:
+                # Its printer's device carries the entry's unique id, the serial.
+                if entry.unique_id and (DOMAIN, entry.unique_id) in device.identifiers:
+                    raise _refusal("printer_not_connected")
                 continue
             coordinator: AnycubicCoordinator = entry.runtime_data
             if (DOMAIN, coordinator.hs.serial) in device.identifiers:
                 return coordinator
     raise _refusal("unknown_printer")
+
+
+def _loaded(entry: ConfigEntry) -> AnycubicCoordinator:
+    if entry.state is not ConfigEntryState.LOADED:
+        raise _refusal("printer_not_connected")
+    return entry.runtime_data
 
 
 async def async_print_file(hass: HomeAssistant, device_id: str | None, file_id: str) -> None:
@@ -240,9 +261,10 @@ async def _async_submit_file(hass: HomeAssistant, coordinator: AnycubicCoordinat
                 materials={k: v[:_LONGEST_MATERIAL] for k, v in facts.materials.items()},
                 colors=dict(facts.colors), model_named=model_named is True))
             _check_printer(coordinator)
-            await coordinator.async_start_print(
-                name=name.original, size=facts.size, md5=facts.md5, filetype=FILETYPE_GCODE,
-                ams_settings=ams_settings)
+            if await coordinator.async_start_print(
+                    name=name.original, size=facts.size, md5=facts.md5,
+                    filetype=FILETYPE_GCODE, ams_settings=ams_settings):
+                _notify_started(coordinator, name.original)
 
 
 async def _async_start_again(coordinator: AnycubicCoordinator) -> None:
@@ -261,9 +283,27 @@ async def _async_start_again(coordinator: AnycubicCoordinator) -> None:
         ams_settings = _filament_mapping(coordinator, record.used_slots, record.materials,
                                          record.colors)
         with coordinator.submitting(record.name):
-            await coordinator.async_start_print(
-                name=record.name, size=record.size, md5=record.md5, filetype=record.filetype,
-                ams_settings=ams_settings, again=True)
+            if await coordinator.async_start_print(
+                    name=record.name, size=record.size, md5=record.md5,
+                    filetype=record.filetype, ams_settings=ams_settings, again=True):
+                _notify_started(coordinator, record.name)
+
+
+@callback
+def _notify_started(coordinator: AnycubicCoordinator, name: str) -> None:
+    """Say that the printer confirmed the start of `name`, replacing the last such word.
+
+    The file is named as the user reads it, with no path. An underscore is escaped, as the
+    notification is shown as Markdown and a name like "_part_.gcode" would turn italic.
+    """
+    device = coordinator.registered_device((DOMAIN, coordinator.hs.serial))
+    title = (device and (device.name_by_user or device.name)) or MODEL_NAMES.get(
+        coordinator.hs.model_id, "Anycubic printer")
+    shown = (display_filename(name) or "").replace("_", "\\_")
+    persistent_notification.async_create(
+        coordinator.hass, STARTED_MESSAGE.format(name=shown), title=title,
+        notification_id=_STARTED_NOTIFICATION_ID.format(
+            entry_id=coordinator.config_entry.entry_id))
 
 
 def _check_file_model(coordinator: AnycubicCoordinator, models) -> bool | None:

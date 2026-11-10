@@ -41,6 +41,11 @@ PUSH_OFF_MARKER = "-ha-pushoff"
 DOOR_FRESHNESS = 30
 # The option naming that sensor: a binary_sensor of device class door or opening.
 CONF_DOOR_SENSOR = "door_sensor"
+# Is that option offered? Off until push-off, the only thing that reads it, is built. While
+# off, the options form does not show it and diagnostics do not read it; a sensor already
+# chosen stays in the entry's options, unused. Turning it on also needs the field's label,
+# "Door sensor", back under options.step.init.data in strings.json and translations/en.json.
+DOOR_SENSOR_OPTION_ENABLED = False
 
 # Printer modelId -> name. IDs verified across multiple on-printer sources (Rinkhals api.cfg,
 # mann1x, TigerTag, 1coderookie). The Kobra 3 / S1 / X generation (20024-20030) speaks the same

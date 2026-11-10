@@ -10,7 +10,7 @@ cloud account, no rooting**.
 [![Buy me a beer](https://img.shields.io/badge/%F0%9F%8D%BA%20Buy%20me%20a%20beer-GitHub%20Sponsors-f9dc46)](https://github.com/sponsors/chrisfore)
 [![Venmo](https://img.shields.io/badge/Venmo-%40Chris--Fore--20-f9dc46)](https://venmo.com/u/Chris-Fore-20)
 
-> **Status:** v1.2.15 — validated end-to-end on a Kobra S1 Max and user-validated on a Kobra 4,
+> **Status:** v1.3.0 — validated end-to-end on a Kobra S1 Max and user-validated on a Kobra 4,
 > Kobra 3 and Kobra X; the rest of the family shares the identical protocol. Entities adapt to each
 > model (see **Supported printers**).
 
@@ -214,7 +214,8 @@ file must use one filament, printed from the external spool. Either way the load
 set on the printer, or the start is refused.
 
 **Start:** the print starts without the printer's auto-leveling step. The start is sent only once: a
-start the printer refuses as busy is never tried again.
+start the printer refuses as busy is never tried again. After a confirmed start, Home Assistant shows
+one **Started printing** notification per printer, replaced by the next one.
 
 Home Assistant checks everything first and sends nothing if a check fails. Each refusal is one plain
 sentence, shown as the error for the action (a script also keeps it in its trace):
@@ -252,10 +253,6 @@ then press **Bed is clear**; that button works only while the printer is idle.
 > **Never automate "Bed is clear".** It is your word that the bed is empty, and nothing checks it. An
 > automation or script can press it, so do not write one that does: a press with a part still on the
 > bed, followed by a print, drives the nozzle into the part.
-
-**Door sensor (optional).** On the S1 and S1 Max, **Configure** offers a **Door sensor**: any binary
-sensor of device class door or opening. Nothing in this version acts on it. It only lets **Download
-diagnostics** show whether one is chosen and how old its last reading is.
 
 ### Example script
 

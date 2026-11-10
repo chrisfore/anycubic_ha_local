@@ -12,13 +12,20 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from homeassistant.components import persistent_notification as pn
 from homeassistant.components.file_upload import FileUploadData
+from homeassistant.config_entries import ConfigEntryDisabler, ConfigEntryState
 from homeassistant.core import Context
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError, Unauthorized
 from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.anycubic import actions as actions_mod, coordinator as coord_mod
+from custom_components.anycubic import (
+    actions as actions_mod,
+    config_flow as config_flow_mod,
+    coordinator as coord_mod,
+    diagnostics as diagnostics_mod,
+)
 from custom_components.anycubic.anycubic_local import upload as upload_mod
 from custom_components.anycubic.anycubic_local.const import REDACTED, redacted
 from custom_components.anycubic.anycubic_local.handshake import HandshakeResult
@@ -378,15 +385,65 @@ async def test_with_one_printer_the_printer_can_be_left_out(env):
     assert len(Transport.last.starts()) == 2
 
 
-async def test_with_no_printer_loaded_one_must_be_chosen(env):
+async def _refused_unnamed(env, key, file_id=None):
+    for service, data in (("print_file", {"file": file_id or _stage(env, "a.gcode", PLA_GCODE)}),
+                          ("print_again", {})):
+        with pytest.raises(ServiceValidationError) as err:
+            await env.hass.services.async_call(DOMAIN, service, data, blocking=True)
+        assert err.value.translation_key == key
+
+
+async def test_the_one_printer_not_loaded_is_not_connected_and_none_must_be_chosen(env):
     s1 = Transport.last
     assert await env.hass.config_entries.async_unload(env.entry.entry_id)
     file_id = _stage(env, "a.gcode", PLA_GCODE)
-    for service, data in (("print_file", {"file": file_id}), ("print_again", {})):
-        with pytest.raises(ServiceValidationError) as err:
-            await env.hass.services.async_call(DOMAIN, service, data, blocking=True)
-        assert err.value.translation_key == "printer_not_chosen"
+    await _refused_unnamed(env, "printer_not_connected", file_id)
     assert _gone(env, file_id), "the uploaded file was left behind"
+    # With no printer set up at all, there is none to use.
+    assert await env.hass.config_entries.async_remove(env.entry.entry_id)
+    await _refused_unnamed(env, "printer_not_chosen")
+    env.fetch.assert_not_awaited()
+    assert s1.starts() == []
+
+
+async def test_an_offline_second_printer_still_means_one_must_be_chosen(env):
+    """A print meant for B, which is retrying its setup, must not start on A."""
+    s1 = Transport.last
+    other = MockConfigEntry(domain=DOMAIN, unique_id="SER-B", data={"host": "printer-b.example"})
+    other.add_to_hass(env.hass)
+    with patch("custom_components.anycubic.do_handshake", side_effect=OSError("refused")):
+        await env.hass.config_entries.async_setup(other.entry_id)
+        await env.hass.async_block_till_done()
+        assert other.state is ConfigEntryState.SETUP_RETRY
+        await _refused_unnamed(env, "printer_not_chosen")
+        assert await env.hass.config_entries.async_unload(other.entry_id)
+    env.fetch.assert_not_awaited()
+    assert s1.starts() == []
+
+
+async def test_a_disabled_printer_does_not_count(env):
+    MockConfigEntry(domain=DOMAIN, unique_id="SER-B", data={"host": "printer-b.example"},
+                    disabled_by=ConfigEntryDisabler.USER).add_to_hass(env.hass)
+    await env.hass.services.async_call(DOMAIN, "print_file",
+                                       {"file": _stage(env, "a.gcode", PLA_GCODE)}, blocking=True)
+    assert len(Transport.last.starts()) == 1
+
+
+async def test_a_chosen_printer_that_is_not_loaded_is_not_connected(env):
+    env.coord._apply("multiColorBox", {"multi_color_box": [_boxes(("PLA", [1, 2, 3]))]})
+    await env.hass.async_block_till_done()
+    unit = dr.async_get(env.hass).async_get_device(identifiers={(DOMAIN, "SER-1_ace0")})
+    s1 = Transport.last
+    assert await env.hass.config_entries.async_unload(env.entry.entry_id)
+    for device_id, key in ((env.device, "printer_not_connected"), (unit.id, "unknown_printer")):
+        file_id = _stage(env, "a.gcode", PLA_GCODE)
+        with pytest.raises(ServiceValidationError) as err:
+            await _print_file(SimpleNamespace(hass=env.hass, device=device_id), file_id)
+        assert err.value.translation_key == key
+        assert _gone(env, file_id)
+        with pytest.raises(ServiceValidationError) as err:
+            await _print_again(SimpleNamespace(hass=env.hass, device=device_id))
+        assert err.value.translation_key == key
     env.fetch.assert_not_awaited()
     assert s1.starts() == []
 
@@ -624,6 +681,62 @@ async def test_the_print_again_button_follows_the_record_and_the_printer(env):
     assert env.hass.states.get(entity).state == "unavailable"
 
 
+# ------------------------------------------------- the start confirmation
+
+
+def _notes(hass):
+    return {key: (note["title"], note["message"])
+            for key, note in pn._async_get_or_create_notifications(hass).items()}
+
+
+async def test_a_confirmed_start_is_said_in_one_notification_per_printer(env):
+    note_id = f"{DOMAIN}_print_started_{env.entry.entry_id}"
+    await _sent_once(env)
+    assert _notes(env.hass) == {
+        note_id: ("Anycubic Kobra S1 Max", "Started printing Desk bracket.gcode")}
+    # Print again replaces it, under the name the user gave the printer.
+    dr.async_get(env.hass).async_update_device(env.device, name_by_user="Garage printer")
+    env.coord.print_state.last_file = dataclasses.replace(
+        env.coord.last_file, name=".3mf_temp/_Desk_ bracket.gcode")
+    await _print_again(env)
+    assert _notes(env.hass) == {
+        note_id: ("Garage printer", "Started printing \\_Desk\\_ bracket.gcode")}
+    # And so does the Print again button.
+    pn.async_dismiss(env.hass, note_id)
+    env.coord._apply("info", {"state": "free", "project": None})
+    env.coord.async_mark_bed_clear()
+    Transport.replies = [200]
+    await env.hass.async_block_till_done()
+    await env.hass.services.async_call(
+        "button", "press", {"entity_id": "button.anycubic_kobra_s1_max_print_again"},
+        blocking=True)
+    assert len(Transport.last.starts()) == 2
+    assert _notes(env.hass) == {
+        note_id: ("Garage printer", "Started printing \\_Desk\\_ bracket.gcode")}
+
+
+async def test_a_start_the_printer_did_not_confirm_is_not_said(env):
+    env.coord._raise_bed_flag("test")                        # a guard refuses
+    with pytest.raises(ServiceValidationError):
+        await _print_file(env, _stage(env, "a.gcode", PLA_GCODE))
+    env.coord.async_mark_bed_clear()
+    for reply in (10101, 10115, None):                       # busy, refused, no answer
+        Transport.replies = [reply]
+        with pytest.raises(HomeAssistantError):
+            await _print_file(env, _stage(env, "a.gcode", PLA_GCODE))
+    # Taken, but not in the words of a running job.
+    Transport.replies = [[{"action": "start", "code": 200, "state": "failed"}]]
+    await _print_file(env, _stage(env, "a.gcode", PLA_GCODE))
+    env.coord._apply("info", {"state": "free", "project": None})
+    env.coord.async_mark_bed_clear()
+    # No answer, and a job seen: it started, but the printer did not say so.
+    Transport.replies, Transport.job_on_query = [None], True
+    await _print_file(env, _stage(env, "a.gcode", PLA_GCODE))
+    assert env.coord.last_guard_outcome == "started"
+    assert len(Transport.last.starts()) == 5
+    assert _notes(env.hass) == {}
+
+
 # ------------------------------------------------- access and redaction
 
 
@@ -713,7 +826,28 @@ async def test_diagnostics_say_how_it_went_and_name_nothing(env):
 # ------------------------------------------------- the door sensor option
 
 
-async def test_the_door_sensor_is_offered_on_enclosed_printers_only(hass):
+async def test_the_door_sensor_is_not_offered_and_one_kept_from_before_is_inert(hass):
+    from custom_components.anycubic.diagnostics import async_get_config_entry_diagnostics
+
+    hass.states.async_set("binary_sensor.printer_door", "off", {"device_class": "door"})
+    entry = await _setup(hass, options={"door_sensor": "binary_sensor.printer_door"})
+    flow = await hass.config_entries.options.async_init(entry.entry_id)
+    assert "door_sensor" not in flow["data_schema"].schema
+    with patch("custom_components.anycubic.do_handshake", return_value=HS), \
+         patch("custom_components.anycubic.coordinator.mqtt_mod.AnycubicMqtt", Transport):
+        await hass.config_entries.options.async_configure(flow["flow_id"],
+                                                          {"camera_source": "printer"})
+        await hass.async_block_till_done()
+    assert entry.options["door_sensor"] == "binary_sensor.printer_door"     # kept, unused
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+    assert diag["print_from_ha"]["door_sensor_configured"] is False
+    assert diag["print_from_ha"]["door_reading_age_s"] is None
+
+
+async def test_the_door_sensor_is_offered_on_enclosed_printers_only_once_enabled(
+        hass, monkeypatch):
+    monkeypatch.setattr(config_flow_mod, "DOOR_SENSOR_OPTION_ENABLED", True)
+    monkeypatch.setattr(diagnostics_mod, "DOOR_SENSOR_OPTION_ENABLED", True)
     hass.states.async_set("binary_sensor.printer_door", "off", {"device_class": "door"})
     entry = await _setup(hass)
     flow = await hass.config_entries.options.async_init(entry.entry_id)

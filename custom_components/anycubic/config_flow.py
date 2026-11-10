@@ -30,6 +30,7 @@ from .const import (
     CONF_CAMERA_SOURCE,
     CONF_DOOR_SENSOR,
     DOMAIN,
+    DOOR_SENSOR_OPTION_ENABLED,
     ENCLOSED_MODELS,
     MODEL_NAMES,
 )
@@ -188,8 +189,8 @@ class AnycubicConfigFlow(ConfigFlow, domain=DOMAIN):
 
 
 class AnycubicOptionsFlow(_OptionsFlowBase):
-    """The entry's "Configure" dialog: which camera the camera entity shows, and on an
-    enclosed printer, which sensor watches its door.
+    """The entry's "Configure" dialog: which camera the camera entity shows, and, once
+    DOOR_SENSOR_OPTION_ENABLED is on, which sensor watches an enclosed printer's door.
 
     Spelled so that it runs on every Home Assistant since 2024.9, like the steps above.
     The entry is looked up by `self.handler`, which for an options flow has always been
@@ -202,7 +203,8 @@ class AnycubicOptionsFlow(_OptionsFlowBase):
 
     async def async_step_init(self, user_input=None) -> ConfigFlowResult:
         entry = self.hass.config_entries.async_get_entry(self.handler)
-        door_field = _has_a_door(entry)
+        # Not offered until push-off reads it (see DOOR_SENSOR_OPTION_ENABLED).
+        door_field = DOOR_SENSOR_OPTION_ENABLED and _has_a_door(entry)
         if user_input is not None:
             options = dict(user_input)
             # A door sensor chosen while the field was offered is kept when it is not, so

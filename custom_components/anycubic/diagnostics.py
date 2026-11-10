@@ -10,7 +10,13 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .anycubic_local.const import SENSITIVE_KEYS, redacted
-from .const import CAMERA_SOURCE_PRINTER, CONF_CAMERA_SOURCE, CONF_DOOR_SENSOR, PRINT_MODELS
+from .const import (
+    CAMERA_SOURCE_PRINTER,
+    CONF_CAMERA_SOURCE,
+    CONF_DOOR_SENSOR,
+    DOOR_SENSOR_OPTION_ENABLED,
+    PRINT_MODELS,
+)
 from .coordinator import AnycubicCoordinator
 
 # Shared with the inbound-report debug log, so a key only has to be classified once.
@@ -20,8 +26,11 @@ TO_REDACT = SENSITIVE_KEYS
 def _print_from_ha(hass: HomeAssistant, entry: ConfigEntry,
                    coordinator: AnycubicCoordinator) -> dict[str, Any]:
     """Printing from Home Assistant, as far as a bug report needs it. No file names, and
-    not which sensor watches the door: an entity id is named by the user."""
-    door = entry.options.get(CONF_DOOR_SENSOR)
+    not which sensor watches the door: an entity id is named by the user.
+
+    While the door option is not offered (DOOR_SENSOR_OPTION_ENABLED), a sensor left in the
+    options from before is not read: the two door fields say none is configured."""
+    door = entry.options.get(CONF_DOOR_SENSOR) if DOOR_SENSOR_OPTION_ENABLED else None
     state = hass.states.get(door) if door else None
     age = None if state is None else (dt_util.utcnow() - state.last_reported).total_seconds()
     return {
