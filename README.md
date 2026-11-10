@@ -191,15 +191,17 @@ the printer's screen.
 created and the actions refuse. To have another model added, see
 *[My printer isn't listed](#my-printer-isnt-listed--help-me-add-it)*.
 
-- **Print a file** (action `anycubic.print_file`) — choose the printer and a file. It is sent to the
-  printer and started.
+- **Print a file** (action `anycubic.print_file`) — choose a file, and the printer if you have more
+  than one. The file is sent to the printer and started.
 - **Print again** (button, and action `anycubic.print_again`) — starts the last file sent from Home
   Assistant again, from the copy still on the printer. Home Assistant keeps no copy of the file, only
   its name and a few details, and remembers them across restarts. If the file has since been deleted
   from the printer, the printer refuses and you send the file again.
 - **Bed needs clearing** (binary sensor) and **Bed is clear** (button) — see below.
 
-Both actions and both buttons are for Home Assistant **administrators** only.
+Both actions and both buttons are for Home Assistant **administrators** only. The `printer` field of
+both actions is optional: with exactly one Anycubic printer set up it is used automatically, and with
+more than one, an action called without it refuses with "Choose a printer."
 
 **Files:** `.gcode`, `.gcode.3mf` and sliced `.3mf`, up to **100 MB**. A `.3mf` must be sliced and hold
 a single plate. Slice for the printer you send to: a file that names a different printer is refused (a
@@ -211,15 +213,19 @@ uses must hold a material of the same family the file asks for (PLA, PETG, …).
 file must use one filament, printed from the external spool. Either way the loaded material must be
 set on the printer, or the start is refused.
 
+**Start:** the print starts without the printer's auto-leveling step. The start is sent only once: a
+start the printer refuses as busy is never tried again.
+
 Home Assistant checks everything first and sends nothing if a check fails. Each refusal is one plain
 sentence, shown as the error for the action (a script also keeps it in its trace):
 
 | Refusal | What it means |
 | --- | --- |
 | Printing from Home Assistant is not available for this printer model yet | Not an S1 or S1 Max |
+| Choose a printer | No printer was given, and more than one is set up. Pick one |
 | Choose an Anycubic printer that is set up in Home Assistant | The device picked is not a printer, an ACE for example |
 | Home Assistant has not heard from the printer for over a minute, or is not connected to it | The printer is off or not connected. Try again in a minute |
-| The printer is busy | A print is running or paused, the printer is preparing one, or an attached ACE is drying |
+| The printer is busy | A print is running or paused, the printer is preparing one, or an attached ACE is drying. Wait for it to end; nothing is retried |
 | A file is already being sent to this printer | Wait for that upload to finish |
 | Clear the bed, then press "Bed is clear" | See **Bed needs clearing** below |
 | A problem with the file: no longer available, unreadable, empty, over 100 MB, the wrong type, or an unusable name | Choose or export the file again. A name containing `-ha-pushoff` is reserved: rename the file |
@@ -233,10 +239,11 @@ sentence, shown as the error for the action (a script also keeps it in its trace
 
 ### Bed needs clearing
 
-Starting a print makes the printer probe the bed with its nozzle, so anything left on the bed gets
-hit. Home Assistant cannot see the bed, so it asks you.
+Every start makes the printer lower its nozzle onto the bed to find the bed height, so anything left
+on the bed gets hit. Home Assistant cannot see the bed, so it asks you.
 
-**Bed needs clearing** turns on when any print starts, whoever started it, and after any silence of
+**Bed needs clearing** turns on whenever the printer reports anything but idle (a print, whoever
+started it, or any other busy state, such as after a start it refused), and after any silence of
 more than a minute from the printer (it was switched off, say). It also turns on **after every Home
 Assistant restart, integration reload or options change**, because nobody was watching the printer
 in between. While it is on, **Print a file** and **Print again** refuse. Take the part off the bed,
@@ -254,7 +261,8 @@ diagnostics** show whether one is chosen and how old its last reading is.
 
 The **Print a file** form is a script that passes its two fields to the action. Add it to
 `configuration.yaml` (or to `scripts.yaml`, without the `script:` line), then open the script from a
-dashboard button and pick the printer and the file:
+dashboard button and pick the file. The printer is optional: leave it empty with one printer, or set
+a default for the Printer field in the script editor and the form pre-fills it.
 
 ```yaml
 script:
@@ -264,7 +272,7 @@ script:
     fields:
       printer:
         name: Printer
-        required: true
+        required: false
         selector:
           device:
             filter:
@@ -277,9 +285,9 @@ script:
             accept: ".gcode,.3mf"
     sequence:
       - action: anycubic.print_file
-        data:
-          printer: "{{ printer }}"
-          file: "{{ file }}"
+        data: >-
+          {{ {'file': file, 'printer': printer} if printer is defined and printer
+             else {'file': file} }}
 ```
 
 ## Example dashboard
@@ -288,8 +296,7 @@ script:
 filament slots (tinted with each slot's real color) below it, then the printer status and all the
 controls, including **Print a file**, **Print again**, **Bed is clear** and the bed status for the
 S1 / S1 Max. The file starts with a commented copy of the script above, which the **Print a file**
-button opens. It uses
-the [Mushroom](https://github.com/piitaya/lovelace-mushroom) and
+button opens. It uses the [Mushroom](https://github.com/piitaya/lovelace-mushroom) and
 [card-mod](https://github.com/thomasloven/lovelace-card-mod) frontend cards (install both from HACS),
 and assumes the default device names — adjust the entity-ID prefixes if you renamed a device.
 

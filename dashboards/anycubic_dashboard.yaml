@@ -17,7 +17,9 @@
 # Printing a file (Kobra S1 / S1 Max only). The "Print a file" tile in the Printer section
 # opens the script below, so create the script first: copy it, without the leading "# ",
 # into scripts.yaml (or into configuration.yaml under "script:"). The script's fields are
-# the fields of the anycubic.print_file action.
+# the fields of the anycubic.print_file action. The printer is optional: with one Anycubic
+# printer, leave it empty. To have the form pre-fill it, set a default for the Printer
+# field in the script editor.
 #
 # anycubic_print_a_file:
 #   alias: Print a file
@@ -25,7 +27,7 @@
 #   fields:
 #     printer:
 #       name: Printer
-#       required: true
+#       required: false
 #       selector:
 #         device:
 #           filter:
@@ -38,9 +40,9 @@
 #           accept: ".gcode,.3mf"
 #   sequence:
 #     - action: anycubic.print_file
-#       data:
-#         printer: "{{ printer }}"
-#         file: "{{ file }}"
+#       data: >-
+#         {{ {'file': file, 'printer': printer} if printer is defined and printer
+#            else {'file': file} }}
 
 
 title: Anycubic
@@ -285,34 +287,25 @@ views:
                     text: Stop this print?
 
           # Printing from Home Assistant (Kobra S1 / S1 Max). "Print a file" opens the script
-          # from the top of this file. The bed tile follows the "Bed needs clearing" sensor.
+          # from the top of this file. The Bed tile follows the "Bed needs clearing" sensor.
           # Press "Bed is clear" only after taking the part off the bed, and never automate it.
+          # Both the tile and its icon ask for confirmation before a button is pressed.
           - type: horizontal-stack
             cards:
               - type: custom:mushroom-template-card
                 entity: script.anycubic_print_a_file
                 primary: Print a file
                 icon: mdi:file-upload
-                icon_color: blue
+                color: blue
                 tap_action:
                   action: more-info
+                icon_tap_action:
+                  action: more-info
               - type: custom:mushroom-template-card
-                entity: binary_sensor.anycubic_kobra_s1_max_bed_needs_clearing
-                primary: >-
-                  {{ 'Bed needs clearing' if is_state('binary_sensor.anycubic_kobra_s1_max_bed_needs_clearing','on')
-                     else 'Bed is clear' }}
-                icon: >-
-                  {{ 'mdi:printer-3d-nozzle-alert' if is_state('binary_sensor.anycubic_kobra_s1_max_bed_needs_clearing','on')
-                     else 'mdi:check-bold' }}
-                icon_color: >-
-                  {{ 'orange' if is_state('binary_sensor.anycubic_kobra_s1_max_bed_needs_clearing','on')
-                     else 'green' }}
-          - type: custom:mushroom-chips-card
-            alignment: center
-            chips:
-              - type: entity
                 entity: button.anycubic_kobra_s1_max_print_again
-                content_info: none
+                primary: Print again
+                icon: mdi:repeat
+                color: blue
                 tap_action:
                   action: perform-action
                   perform_action: button.press
@@ -320,10 +313,44 @@ views:
                     entity_id: button.anycubic_kobra_s1_max_print_again
                   confirmation:
                     text: Print the last file again?
-              - type: entity
-                entity: button.anycubic_kobra_s1_max_bed_is_clear
-                content_info: none
+                icon_tap_action:
+                  action: perform-action
+                  perform_action: button.press
+                  target:
+                    entity_id: button.anycubic_kobra_s1_max_print_again
+                  confirmation:
+                    text: Print the last file again?
+          - type: horizontal-stack
+            cards:
+              - type: custom:mushroom-template-card
+                entity: binary_sensor.anycubic_kobra_s1_max_bed_needs_clearing
+                primary: Bed
+                secondary: >-
+                  {{ 'Needs clearing' if is_state(entity, 'on')
+                     else 'Clear' if is_state(entity, 'off') else 'Unknown' }}
+                icon: >-
+                  {{ 'mdi:printer-3d-nozzle-alert' if is_state(entity, 'on')
+                     else 'mdi:printer-3d-nozzle' }}
+                color: >-
+                  {{ 'orange' if is_state(entity, 'on')
+                     else 'green' if is_state(entity, 'off') else 'disabled' }}
                 tap_action:
+                  action: more-info
+                icon_tap_action:
+                  action: more-info
+              - type: custom:mushroom-template-card
+                entity: button.anycubic_kobra_s1_max_bed_is_clear
+                primary: Bed is clear
+                icon: mdi:check-bold
+                color: blue
+                tap_action:
+                  action: perform-action
+                  perform_action: button.press
+                  target:
+                    entity_id: button.anycubic_kobra_s1_max_bed_is_clear
+                  confirmation:
+                    text: Is the bed empty?
+                icon_tap_action:
                   action: perform-action
                   perform_action: button.press
                   target:
