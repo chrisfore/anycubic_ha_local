@@ -75,7 +75,7 @@ def test_the_part_fan_runs_for_the_cooling_and_is_off_before_the_sweep():
 def test_a_timed_dwell_can_stand_in_for_the_cooling_wait():
     commands = _commands(_block(cooling=sweep.Dwell(420)))
     assert "M109 S50" not in commands
-    assert commands[commands.index("M601") + 1:][:4] == ["M106 S255", "G4 S420", "M106 S0", "G90"]
+    assert commands[commands.index("M601") + 1:][:4] == ["M106 S255", "G4 P420000", "M106 S0", "G90"]
 
 
 @pytest.mark.parametrize("seconds", [0, -5, 3601, float("nan"), float("inf"), True, "60"])
@@ -231,7 +231,7 @@ def test_the_writer_itself_refuses_any_line_outside_travel_or_over_the_ceiling()
 def test_cooling_can_be_a_wait_followed_by_a_dwell():
     commands = _commands(_block(cooling=(sweep.CoolTo(50), sweep.Dwell(300))))
     after = commands[commands.index("M601") + 1:]
-    assert after[:6] == ["M106 S255", "M109 S50", "M104 S0", "G4 S300", "M106 S0", "G90"]
+    assert after[:6] == ["M106 S255", "M109 S50", "M104 S0", "G4 P300000", "M106 S0", "G90"]
     _refused("clear_out_of_reach", cooling=())
     _refused("clear_out_of_reach", cooling=(sweep.CoolTo(50), "G28"))
     _refused("clear_out_of_reach", cooling=sweep.CoolTo(60))

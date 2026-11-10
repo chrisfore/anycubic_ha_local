@@ -179,7 +179,8 @@ def _cooling_lines(profile: SweepProfile, cooling) -> list[str]:
             seconds = None if isinstance(step.seconds, str) else finite_number(step.seconds)
             if seconds is None or not 0 < seconds <= MAX_DWELL_SECONDS:
                 raise FileRefused("clear_out_of_reach")
-            lines.append(f"G4 S{int(seconds)}")
+            # In milliseconds: the form every firmware takes. Klipper reads no S on G4.
+            lines.append(f"G4 P{int(seconds * 1000)}")
         else:
             raise FileRefused("clear_out_of_reach")
     return [*lines, "M106 S0"]
