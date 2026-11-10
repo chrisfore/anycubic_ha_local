@@ -641,3 +641,132 @@ def clearing_families(facts: FileFacts) -> tuple[str, ...]:
     if not families or not families <= CLEARING_FAMILIES:
         raise FileRefused("clear_material")
     return tuple(sorted(families))
+
+
+# ------------------------------------------------------------------ Clear the bed: the copy
+
+# What a block line may be: a comment, or one of the commands the sweep planner writes.
+# Checked again here, where the block meets a file, so that nothing else is ever inserted.
+_BLOCK_LINE = re.compile(
+    r"(?:;[^\r\n]*|M140 S0|M141 S0|M104 S0|G90|M601|M106 S(?:0|255)|M109 S\d{1,2}"
+    r"|G4 S\d{1,4}|G1 Z\d{1,3}\.\d\d F\d{1,5}|G1 X-?\d{1,3}\.\d\d Y-?\d{1,3}\.\d\d F\d{1,5})")
+_NOZZLE_OFF = re.compile(rb"M104\s+S0+(?:\.0*)?\s*(?:;.*)?", re.IGNORECASE)
+
+
+def _block_bytes(block: Iterable[str], newline: bytes) -> bytes:
+    lines = list(block)
+    if not lines or not all(isinstance(line, str) and _BLOCK_LINE.fullmatch(line)
+                            for line in lines):
+        raise FileRefused("clear_unreadable")
+    return b"".join(line.encode("ascii", "replace") + newline for line in lines)
+
+
+def _insert(chunks: Iterable[bytes], scan: ClearScan, block: bytes) -> Iterator[bytes]:
+    """The stream with the block put in at the scan's insert point.
+
+    The line that ends there must still be the nozzle-off line the scan found: if it is
+    not, this is not the file that was scanned, and nothing is written past that point.
+    """
+    seen, tail, done = 0, b"", False
+    for chunk in chunks:
+        if done:
+            yield chunk
+            continue
+        if seen + len(chunk) < scan.insert_at:
+            seen += len(chunk)
+            tail = (tail + chunk)[-_LONGEST_LINE:]
+            yield chunk
+            continue
+        cut = scan.insert_at - seen
+        head = chunk[:cut]
+        last = (tail + head)[-_LONGEST_LINE:]
+        if not last.endswith(b"\n") or not _NOZZLE_OFF.fullmatch(
+                last[:-1].rsplit(b"\n", 1)[-1].strip()):
+            raise FileRefused("clear_end_code")
+        yield head
+        yield block
+        yield chunk[cut:]
+        done = True
+    if not done:
+        raise FileRefused("clear_end_code")
+
+
+def _copy_gcode(src: Path, dst: Path, scan: ClearScan, block: bytes) -> None:
+    with dst.open("wb") as out:
+        for chunk in _insert(_file_chunks(src), scan, block):
+            out.write(chunk)
+
+
+def _fresh_entry(info: zipfile.ZipInfo) -> zipfile.ZipInfo:
+    """A new entry with the old one's name, time, packing and attributes, and nothing else
+    of its header: the old one's flags and extras describe bytes that are not copied."""
+    if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+        raise FileRefused("archive_invalid")
+    entry = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+    entry.compress_type = info.compress_type
+    entry.external_attr = info.external_attr
+    entry.create_system = info.create_system
+    entry.comment = info.comment
+    return entry
+
+
+def _copy_archive(src: Path, dst: Path, scan: ClearScan, block: bytes, member_cap: int,
+                  total_cap: int) -> None:
+    with zipfile.ZipFile(src) as archive:
+        plate = _one_plate(archive)
+        budget = _Budget(member_cap, total_cap)
+        # The plate's new md5 first: the file that carries it may come before the plate.
+        digest = hashlib.md5(usedforsecurity=False)
+        with archive.open(plate) as fh:
+            for chunk in _insert(budget.chunks(fh), scan, block):
+                digest.update(chunk)
+        sidecar = (plate.filename + ".md5").casefold()
+        with zipfile.ZipFile(dst, "w") as out:
+            for info in archive.infolist():
+                with archive.open(info) as fh, out.open(_fresh_entry(info), "w",
+                                                        force_zip64=True) as to:
+                    if info is plate:
+                        for chunk in _insert(iter(partial(fh.read, CHUNK_BYTES), b""),
+                                             scan, block):
+                            to.write(chunk)
+                    elif info.filename.casefold() == sidecar:
+                        old = b"".join(budget.chunks(fh)).decode("ascii", "replace")
+                        text = old.strip()
+                        new = digest.hexdigest()
+                        if text and text == text.upper() and not text.isdigit():
+                            new = new.upper()
+                        to.write((new + old[len(old.rstrip()):]).encode("ascii"))
+                    else:
+                        for chunk in budget.chunks(fh):
+                            to.write(chunk)
+
+
+def write_prepared_copy(src: Path, dst: Path, kind: str, scan: ClearScan,
+                        block: Iterable[str], *, member_cap: int = MEMBER_CAP,
+                        total_cap: int = TOTAL_CAP) -> tuple[int, str]:
+    """Write `dst`: `src` with the block inserted after its last nozzle-off line.
+
+    Returns the copy's size and md5. Blocking: run it in an executor. In an archive only the
+    plate changes, and the md5 file beside it, which keeps its case; every other member
+    keeps its bytes, its place and its packing. Whatever goes wrong, no copy is left behind.
+    """
+    try:
+        data = _block_bytes(block, scan.newline)
+        try:
+            if kind == KIND_GCODE:
+                _copy_gcode(src, dst, scan, data)
+            else:
+                _copy_archive(src, dst, scan, data, member_cap, total_cap)
+        except FileRefused:
+            raise
+        except OSError:
+            raise FileRefused("file_unreadable") from None
+        except _UNREADABLE:
+            raise FileRefused("archive_invalid") from None
+        return _md5_of(dst)
+    except BaseException:
+        try:
+            dst.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
