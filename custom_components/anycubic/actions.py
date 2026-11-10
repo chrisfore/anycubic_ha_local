@@ -70,10 +70,10 @@ def _one_device(value) -> str:
 
 
 PRINT_FILE_SCHEMA = vol.Schema({
-    vol.Required(ATTR_PRINTER): _one_device,
+    vol.Optional(ATTR_PRINTER): _one_device,
     vol.Required(ATTR_FILE): cv.string,
 })
-PRINT_AGAIN_SCHEMA = vol.Schema({vol.Required(ATTR_PRINTER): _one_device})
+PRINT_AGAIN_SCHEMA = vol.Schema({vol.Optional(ATTR_PRINTER): _one_device})
 
 
 def _refusal(key: str, **placeholders) -> ServiceValidationError:
@@ -91,10 +91,10 @@ def async_setup_actions(hass: HomeAssistant) -> None:
     """Register both actions, once, for every printer."""
 
     async def _print_file(call: ServiceCall) -> None:
-        await async_print_file(hass, call.data[ATTR_PRINTER], call.data[ATTR_FILE])
+        await async_print_file(hass, call.data.get(ATTR_PRINTER), call.data[ATTR_FILE])
 
     async def _print_again(call: ServiceCall) -> None:
-        await async_print_again(hass, _coordinator(hass, call.data[ATTR_PRINTER]))
+        await async_print_again(hass, _coordinator(hass, call.data.get(ATTR_PRINTER)))
 
     async_register_admin_service(hass, DOMAIN, SERVICE_PRINT_FILE, _print_file,
                                  schema=PRINT_FILE_SCHEMA)
@@ -103,11 +103,19 @@ def async_setup_actions(hass: HomeAssistant) -> None:
 
 
 @callback
-def _coordinator(hass: HomeAssistant, device_id: str) -> AnycubicCoordinator:
+def _coordinator(hass: HomeAssistant, device_id: str | None) -> AnycubicCoordinator:
     """The printer behind a device: a loaded entry of this integration, and its printer.
 
-    A multi-color unit is a device of this integration too, but not a printer.
+    A multi-color unit is a device of this integration too, but not a printer. With no
+    device named, the one printer there is, if there is exactly one: with none or several,
+    which one is meant is for the user to say.
     """
+    if device_id is None:
+        loaded = [entry for entry in hass.config_entries.async_entries(DOMAIN)
+                  if entry.state is ConfigEntryState.LOADED]
+        if len(loaded) != 1:
+            raise _refusal("printer_not_chosen")
+        return loaded[0].runtime_data
     device = dr.async_get(hass).async_get(device_id)
     if device is not None:
         for entry_id in device.config_entries:
@@ -121,7 +129,7 @@ def _coordinator(hass: HomeAssistant, device_id: str) -> AnycubicCoordinator:
     raise _refusal("unknown_printer")
 
 
-async def async_print_file(hass: HomeAssistant, device_id: str, file_id: str) -> None:
+async def async_print_file(hass: HomeAssistant, device_id: str | None, file_id: str) -> None:
     """The print_file action.
 
     The uploaded file is Home Assistant's, usable once, and deleted at the end of this

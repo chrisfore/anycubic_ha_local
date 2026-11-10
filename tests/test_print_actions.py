@@ -366,6 +366,47 @@ async def test_a_multi_color_unit_is_not_a_printer(env):
     _nothing_sent(env)
 
 
+async def test_with_one_printer_the_printer_can_be_left_out(env):
+    Transport.replies = [200, 200]
+    file_id = _stage(env, "a.gcode", PLA_GCODE)
+    await env.hass.services.async_call(DOMAIN, "print_file", {"file": file_id}, blocking=True)
+    assert len(Transport.last.starts()) == 1
+    assert _gone(env, file_id)
+    env.coord._apply("info", {"state": "free", "project": None})
+    env.coord.async_mark_bed_clear()
+    await env.hass.services.async_call(DOMAIN, "print_again", {}, blocking=True)
+    assert len(Transport.last.starts()) == 2
+
+
+async def test_with_no_printer_loaded_one_must_be_chosen(env):
+    s1 = Transport.last
+    assert await env.hass.config_entries.async_unload(env.entry.entry_id)
+    file_id = _stage(env, "a.gcode", PLA_GCODE)
+    for service, data in (("print_file", {"file": file_id}), ("print_again", {})):
+        with pytest.raises(ServiceValidationError) as err:
+            await env.hass.services.async_call(DOMAIN, service, data, blocking=True)
+        assert err.value.translation_key == "printer_not_chosen"
+    assert _gone(env, file_id), "the uploaded file was left behind"
+    env.fetch.assert_not_awaited()
+    assert s1.starts() == []
+
+
+async def test_with_several_printers_one_must_be_chosen(env):
+    s1 = Transport.last
+    await _setup(env.hass, HS_K3)
+    file_id = _stage(env, "a.gcode", PLA_GCODE)
+    for service, data in (("print_file", {"file": file_id}), ("print_again", {})):
+        with pytest.raises(ServiceValidationError) as err:
+            await env.hass.services.async_call(DOMAIN, service, data, blocking=True)
+        assert err.value.translation_key == "printer_not_chosen"
+    assert _gone(env, file_id)
+    env.fetch.assert_not_awaited()
+    assert s1.starts() == [] and Transport.last.starts() == []
+    # Naming one still works.
+    await _print_file(env, _stage(env, "a.gcode", PLA_GCODE))
+    assert len(s1.starts()) == 1
+
+
 async def test_a_refusal_after_the_upload_starts_nothing(env):
     """Guards 2, 4 and 5 are asked again after the upload, which can take minutes."""
     async def a_job_starts_meanwhile(*args, **kwargs):

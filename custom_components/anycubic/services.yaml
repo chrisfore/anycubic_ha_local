@@ -1,7 +1,7 @@
 print_file:
   fields:
     printer:
-      required: true
+      required: false
       selector:
         device:
           filter:
@@ -15,7 +15,7 @@ print_file:
 print_again:
   fields:
     printer:
-      required: true
+      required: false
       selector:
         device:
           filter:

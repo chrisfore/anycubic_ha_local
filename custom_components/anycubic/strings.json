@@ -140,6 +140,7 @@
   },
   "exceptions": {
     "unknown_printer": { "message": "Choose an Anycubic printer that is set up in Home Assistant." },
+    "printer_not_chosen": { "message": "Choose a printer." },
     "model_not_enabled": { "message": "Printing from Home Assistant is not available for this printer model yet." },
     "printer_unreachable": { "message": "Home Assistant has not heard from the printer for over a minute. Check that it is on and connected." },
     "submit_in_progress": { "message": "A file is already being sent to this printer. Wait for it to finish." },
