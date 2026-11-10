@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import html
+import json
 import math
 import re
 import zipfile
@@ -365,16 +366,8 @@ def _inspect_archive(path: Path, member_cap: int, total_cap: int) -> FileFacts:
     size, md5 = _md5_of(path)
     try:
         with zipfile.ZipFile(path) as archive:
+            plate = _one_plate(archive)
             entries = archive.infolist()
-            names = [entry.filename for entry in entries]
-            if (len(entries) > MAX_MEMBERS or len(set(names)) != len(names)
-                    or len({n.casefold() for n in names}) != len(names)):
-                raise FileRefused("archive_invalid")
-            plates = [e for e in entries if _PLATE.fullmatch(e.filename)]
-            if not plates:
-                raise FileRefused("not_sliced")
-            if len(plates) > 1:
-                raise FileRefused("multi_plate")
             budget = _Budget(member_cap, total_cap)
             info_text = ""
             slice_info = next((e for e in entries if _SLICE_INFO.fullmatch(e.filename)), None)
@@ -382,7 +375,7 @@ def _inspect_archive(path: Path, member_cap: int, total_cap: int) -> FileFacts:
                 with archive.open(slice_info) as fh:
                     info_text = b"".join(budget.chunks(fh)).decode("utf-8", errors="replace")
             window = _Window()
-            with archive.open(plates[0]) as fh:
+            with archive.open(plate) as fh:
                 for chunk in budget.chunks(fh):
                     window.add(chunk)
     except FileRefused:
@@ -410,3 +403,241 @@ def inspect_file(path: Path, kind: str, *, member_cap: int = MEMBER_CAP,
         return _inspect_archive(path, member_cap, total_cap)
     except OSError:
         raise FileRefused("file_unreadable") from None
+
+
+# ------------------------------------------------------------------ Clear the bed: checks
+#
+# What a file must say before a copy of it may be prepared for Clear the bed. One pass over
+# the G-code, line by line, under the same archive rules as above. Every check is "passes if
+# it can be read and is within range": anything that cannot be read refuses the file.
+
+# The materials a part may be pushed off in.
+CLEARING_FAMILIES = frozenset({"PLA", "PETG"})
+# More outlines, or more points in one, than any plate has.
+MAX_OUTLINES = 2000
+MAX_OUTLINE_POINTS = 5000
+
+_FEATURE = re.compile(rb";\s*(?:TYPE|FEATURE)\s*:\s*(.*)", re.IGNORECASE)
+_POLYGON = re.compile(rb"POLYGON=(\S+)", re.IGNORECASE)
+_S_VALUE = re.compile(rb"\bS\s*([-+0-9.]+)")
+_BED_TEMP = re.compile(rb"\bBEDTEMP\s*=\s*([-+0-9.]+)")
+_AXIS = re.compile(rb"[XYZE]\s*[-+0-9.]")
+_XYZ = re.compile(rb"[XYZ]\s*[-+0-9.]")
+# G commands that move nothing and leave the coordinates as they are.
+_STILL = frozenset({b"G4", b"G21", b"G90", b"G91"})
+_LINEAR = frozenset({b"G0", b"G1", b"G2", b"G3"})
+
+
+@dataclass(frozen=True)
+class ClearScan:
+    """What the sweep planner and the file change need from a file that passed."""
+
+    # The tallest part, in mm.
+    max_z: float
+    # Each part's outline on the bed: a closed run of (x, y) points, in mm.
+    footprints: tuple[tuple[tuple[float, float], ...], ...]
+    # Does the file say it was sliced for a textured plate?
+    textured_plate: bool
+    # Where the block goes: the offset in the G-code just after the last nozzle-off line.
+    insert_at: int
+    # The line end that line used, for the block to use too.
+    newline: bytes
+
+
+def _gcode_lines(chunks: Iterable[bytes]) -> Iterator[tuple[bytes, int]]:
+    """Each line of a G-code stream with the offset just after it, its line end included.
+
+    A comment too long to be a value is dropped where it stands; anything else that long is
+    not G-code, and the file is refused.
+    """
+    rest, offset, dropping = b"", 0, False
+    for chunk in chunks:
+        parts = (rest + chunk).split(b"\n")
+        rest = parts.pop()
+        for part in parts:
+            offset += len(part) + 1
+            if dropping:
+                dropping = False
+            elif len(part) <= _LONGEST_LINE:
+                yield part, offset
+            elif not part.lstrip().startswith(b";"):
+                raise FileRefused("clear_unreadable")
+        if len(rest) > _LONGEST_LINE:
+            if not dropping and not rest.lstrip().startswith(b";"):
+                raise FileRefused("clear_unreadable")
+            offset += len(rest)
+            rest, dropping = b"", True
+    if rest and not dropping:
+        yield rest, offset + len(rest)
+
+
+def _first_number(pattern: re.Pattern[bytes], command: bytes) -> float | None:
+    match = pattern.search(command)
+    return finite_number(match.group(1).decode("ascii", "replace")) if match else None
+
+
+def _outline(command: bytes) -> tuple[tuple[float, float], ...]:
+    """The outline an EXCLUDE_OBJECT_DEFINE line gives, or a refusal if it gives none."""
+    match = _POLYGON.search(command)
+    try:
+        points = json.loads(match.group(1)) if match else None
+    except (ValueError, RecursionError):
+        points = None
+    if not isinstance(points, list) or not 3 <= len(points) <= MAX_OUTLINE_POINTS:
+        raise FileRefused("clear_no_outline")
+    outline = []
+    for point in points:
+        if not isinstance(point, list) or len(point) != 2:
+            raise FileRefused("clear_no_outline")
+        x, y = (None if isinstance(v, str) else finite_number(v) for v in point)
+        if x is None or y is None:
+            raise FileRefused("clear_no_outline")
+        outline.append((x, y))
+    return tuple(outline)
+
+
+class _ClearScanner:
+    """Reads a G-code stream once and refuses at the first thing that rules clearing out."""
+
+    def __init__(self) -> None:
+        self.window = _Window()
+        self.footprints: list[tuple[tuple[float, float], ...]] = []
+        self.bed_heated = False
+        self.insert_at: int | None = None
+        self.newline = b"\n"
+        self._moved = False
+        self._released = False
+
+    def scan(self, chunks: Iterable[bytes]) -> ClearScan:
+        def kept() -> Iterator[bytes]:
+            for chunk in chunks:
+                self.window.add(chunk)
+                yield chunk
+
+        for raw, end in _gcode_lines(kept()):
+            self._line(raw, end)
+        return self._result()
+
+    def _line(self, raw: bytes, end: int) -> None:
+        text = raw.strip()
+        if not text:
+            return
+        if text.startswith(b";"):
+            label = _FEATURE.match(text)
+            if label:
+                name = label.group(1).lower()
+                for word, key in ((b"brim", "clear_brim"), (b"skirt", "clear_skirt"),
+                                  (b"tower", "clear_tower")):
+                    if word in name:
+                        raise FileRefused(key)
+            return
+        command = b" ".join(text.split(b";", 1)[0].upper().split())
+        if not command:
+            return
+        word = command.split(b" ", 1)[0]
+        if word == b"EXCLUDE_OBJECT_DEFINE":
+            if len(self.footprints) >= MAX_OUTLINES:
+                raise FileRefused("clear_no_outline")
+            # Read from the line as written: the outline's numbers have no upper case.
+            self.footprints.append(_outline(text))
+        elif word in (b"M600", b"M601"):
+            raise FileRefused("clear_own_pause")
+        elif word in (b"M140", b"M190"):
+            value = _first_number(_S_VALUE, command)
+            self.bed_heated |= value is not None and value > 0
+        elif word == b"G9111":
+            value = _first_number(_BED_TEMP, command)
+            self.bed_heated |= value is not None and value > 0
+        elif word == b"M104":
+            if _first_number(_S_VALUE, command) == 0:
+                self.insert_at, self._moved, self._released = end, False, False
+                self.newline = b"\r\n" if raw.endswith(b"\r") else b"\n"
+        elif word in (b"M84", b"M18"):
+            if self.insert_at is not None and not self._moved:
+                self._released = True
+        elif word.startswith(b"G"):
+            if word == b"G92" and _XYZ.search(command[3:]):
+                # The coordinates no longer mean what the sweep takes them to mean.
+                raise FileRefused("clear_unreadable")
+            moves = (word not in _STILL and word != b"G92"
+                     and (word not in _LINEAR or bool(_AXIS.search(command[len(word):]))))
+            if moves and self.insert_at is not None and not self._released:
+                self._moved = True
+
+    def _result(self) -> ClearScan:
+        settings = self.window.settings()
+        if finite_number(settings.get("raft_layers")) != 0:
+            raise FileRefused("clear_raft")
+        if not self.bed_heated:
+            raise FileRefused("clear_bed_not_heated")
+        if self.insert_at is None or not self._released:
+            raise FileRefused("clear_end_code")
+        if not self.footprints:
+            raise FileRefused("clear_no_outline")
+        max_z = finite_number(settings.get("max_z_height"))
+        if max_z is None or max_z <= 0:
+            raise FileRefused("clear_no_height")
+        return ClearScan(
+            max_z=max_z, footprints=tuple(self.footprints),
+            textured_plate="textured" in settings.get("curr_bed_type", "").lower(),
+            insert_at=self.insert_at, newline=self.newline)
+
+
+def _file_chunks(path: Path) -> Iterator[bytes]:
+    with path.open("rb") as fh:
+        yield from iter(partial(fh.read, CHUNK_BYTES), b"")
+
+
+def _one_plate(archive: zipfile.ZipFile) -> zipfile.ZipInfo:
+    """An archive's one sliced plate, under the rules in this module's docstring."""
+    entries = archive.infolist()
+    names = [entry.filename for entry in entries]
+    if (len(entries) > MAX_MEMBERS or len(set(names)) != len(names)
+            or len({n.casefold() for n in names}) != len(names)):
+        raise FileRefused("archive_invalid")
+    plates = [e for e in entries if _PLATE.fullmatch(e.filename)]
+    if not plates:
+        raise FileRefused("not_sliced")
+    if len(plates) > 1:
+        raise FileRefused("multi_plate")
+    return plates[0]
+
+
+def scan_for_clearing(path: Path, kind: str, *, member_cap: int = MEMBER_CAP,
+                      total_cap: int = TOTAL_CAP) -> ClearScan:
+    """May a copy of this file be prepared for Clear the bed? What the copy needs, if so.
+
+    Blocking: run it in an executor. Raises FileRefused, with the reason as its key, for a
+    brim, a skirt, a raft or a tower, for a pause of the file's own, for a bed that is never
+    heated, for an end that is not "nozzle off, then motors off, with no move between", and
+    for an outline or a height that cannot be read.
+    """
+    try:
+        if kind == KIND_GCODE:
+            return _ClearScanner().scan(_file_chunks(path))
+        try:
+            with zipfile.ZipFile(path) as archive:
+                plate = _one_plate(archive)
+                with archive.open(plate) as fh:
+                    return _ClearScanner().scan(_Budget(member_cap, total_cap).chunks(fh))
+        except FileRefused:
+            raise
+        except _UNREADABLE as err:
+            if isinstance(err, OSError) and not isinstance(err, zipfile.BadZipFile):
+                raise
+            raise FileRefused("archive_invalid") from None
+    except OSError:
+        raise FileRefused("file_unreadable") from None
+
+
+def clearing_families(facts: FileFacts) -> tuple[str, ...]:
+    """The material families a file prints with, if a part in each may be pushed off.
+
+    The slots the file uses; if it does not say, every slot it lists. Each must name PLA or
+    PETG by its first word. A slot with no material, or a file with no slots, is refused.
+    """
+    slots = facts.used_slots or tuple(sorted(facts.materials))
+    families = {material_family(facts.materials.get(slot)) for slot in slots}
+    if not families or not families <= CLEARING_FAMILIES:
+        raise FileRefused("clear_material")
+    return tuple(sorted(families))

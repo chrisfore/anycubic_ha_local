@@ -1,0 +1,280 @@
+"""What a file must say before it may be prepared for Clear the bed (spec 7.1)."""
+import zipfile
+
+import pytest
+
+from custom_components.anycubic.anycubic_local import printfile as pf
+from custom_components.anycubic.anycubic_local.printfile import FileRefused
+
+HEADER = """; HEADER_BLOCK_START
+; total layer number: 3
+; max_z_height: 12.40
+; HEADER_BLOCK_END
+"""
+START = """M140 S60
+M190 S60
+EXCLUDE_OBJECT_DEFINE NAME=cube_id_0_copy_0 CENTER=175,175 POLYGON=[[170,170],[180,170],[180,180],[170,180],[170,170]]
+;TYPE:Outer wall
+G1 X170 Y170 E.4 F1800
+;TYPE:Inner wall
+G1 X180 Y180 E.4
+"""
+END = """G1 E-.4 F1800
+M106 S0
+M400
+M140 S0
+M104 S0
+M141 S0
+M84
+M73 P100 R0
+"""
+CONFIG = """; CONFIG_BLOCK_START
+; brim_type = no_brim
+; raft_layers = 0
+; curr_bed_type = Textured PEI Plate
+; filament_type = PLA
+; CONFIG_BLOCK_END
+"""
+
+
+def _gcode(tmp_path, *, header=HEADER, start=START, end=END, config=CONFIG, name="part.gcode",
+           newline="\n"):
+    path = tmp_path / name
+    path.write_bytes((header + start + end + config).replace("\n", newline).encode())
+    return path
+
+
+def _scan(path, kind=pf.KIND_GCODE, **kwargs):
+    return pf.scan_for_clearing(path, kind, **kwargs)
+
+
+def _refused(key, *args, **kwargs):
+    with pytest.raises(FileRefused) as err:
+        _scan(*args, **kwargs)
+    assert err.value.key == key
+    return err.value
+
+
+# ------------------------------------------------- a file that passes
+
+
+def test_a_plain_part_passes_and_says_what_the_planner_needs(tmp_path):
+    scan = _scan(_gcode(tmp_path))
+    assert scan.max_z == 12.4
+    assert scan.footprints == (((170.0, 170.0), (180.0, 170.0), (180.0, 180.0), (170.0, 180.0),
+                                (170.0, 170.0)),)
+    assert scan.textured_plate is True
+
+
+def test_the_insert_point_is_just_after_the_last_nozzle_off_line(tmp_path):
+    path = _gcode(tmp_path)
+    data = path.read_bytes()
+    scan = _scan(path)
+    assert data[:scan.insert_at].endswith(b"M104 S0\n")
+    assert data[scan.insert_at:].startswith(b"M141 S0\n")
+    assert scan.newline == b"\n"
+
+
+def test_windows_line_ends_are_kept_for_the_block(tmp_path):
+    path = _gcode(tmp_path, newline="\r\n")
+    scan = _scan(path)
+    assert path.read_bytes()[:scan.insert_at].endswith(b"M104 S0\r\n")
+    assert scan.newline == b"\r\n"
+
+
+def test_an_earlier_nozzle_off_does_not_count_only_the_last(tmp_path):
+    start = START + "M104 S0\nG1 X10 Y10\nM104 S220\nG1 X20 Y20 E1\n"
+    path = _gcode(tmp_path, start=start)
+    scan = _scan(path)
+    assert path.read_bytes()[scan.insert_at:].startswith(b"M141 S0\n")
+
+
+def test_a_comment_or_spacing_on_the_nozzle_off_line_is_still_recognized(tmp_path):
+    scan = _scan(_gcode(tmp_path, end=END.replace("M104 S0\n", "m104  s0 ; nozzle off\n")))
+    assert scan.max_z == 12.4
+
+
+# ------------------------------------------------- brim, skirt, raft, towers (D11, D23)
+
+
+@pytest.mark.parametrize(("label", "key"), [
+    (";TYPE:Brim", "clear_brim"),
+    (";TYPE:Skirt/Brim", "clear_brim"),
+    ("; FEATURE: Brim", "clear_brim"),
+    (";type:brim", "clear_brim"),
+    (";TYPE:Skirt", "clear_skirt"),
+    ("; feature: skirt", "clear_skirt"),
+    (";TYPE:Prime tower", "clear_tower"),
+    ("; FEATURE: Wipe tower", "clear_tower"),
+    (";TYPE:Wipe Tower", "clear_tower"),
+])
+def test_a_brim_skirt_or_tower_in_the_body_is_refused(tmp_path, label, key):
+    _refused(key, _gcode(tmp_path, start=START + label + "\nG1 X1 Y1 E1\n"))
+
+
+def test_auto_brim_decides_nothing_the_body_does(tmp_path):
+    config = CONFIG.replace("no_brim", "auto_brim")
+    assert _scan(_gcode(tmp_path, config=config)).max_z == 12.4
+    _refused("clear_brim", _gcode(tmp_path, config=config,
+                                  start=START + ";TYPE:Brim\nG1 X1 Y1 E1\n"))
+
+
+@pytest.mark.parametrize("config", [
+    CONFIG.replace("raft_layers = 0", "raft_layers = 2"),
+    CONFIG.replace("; raft_layers = 0\n", ""),
+    CONFIG.replace("raft_layers = 0", "raft_layers = nan"),
+])
+def test_a_raft_or_an_unreadable_raft_setting_is_refused(tmp_path, config):
+    _refused("clear_raft", _gcode(tmp_path, config=config))
+
+
+# ------------------------------------------------- pauses and heat
+
+
+@pytest.mark.parametrize("line", ["M601", "M600", "m601 ; pause", "M600 X0 Y0"])
+def test_a_file_with_its_own_pause_is_refused(tmp_path, line):
+    _refused("clear_own_pause", _gcode(tmp_path, start=START + line + "\n"))
+
+
+def test_a_pause_named_only_in_a_comment_does_not_count(tmp_path):
+    assert _scan(_gcode(tmp_path, start=START + "; M601 would pause here\n")).max_z == 12.4
+
+
+def test_a_file_that_never_heats_the_bed_is_refused(tmp_path):
+    start = START.replace("M140 S60\nM190 S60\n", "M140 S0\n")
+    _refused("clear_bed_not_heated", _gcode(tmp_path, start=start))
+
+
+def test_the_printer_start_macro_counts_as_heating_the_bed(tmp_path):
+    start = START.replace("M140 S60\nM190 S60\n", "G9111 bedTemp=60 extruderTemp=220\n")
+    assert _scan(_gcode(tmp_path, start=start)).max_z == 12.4
+    _refused("clear_bed_not_heated", _gcode(
+        tmp_path, start=START.replace("M140 S60\nM190 S60\n", "G9111 bedTemp=0 extruderTemp=220\n")))
+
+
+# ------------------------------------------------- the end code (7.2)
+
+
+@pytest.mark.parametrize("end", [
+    END.replace("M104 S0\n", ""),                         # the nozzle is never turned off
+    END.replace("M84\n", ""),                             # the motors are never released
+    END.replace("M141 S0\n", "G1 X10 Y10 F3000\n"),       # the head moves in between
+    END.replace("M141 S0\n", "G0 Z5\n"),
+    END.replace("M141 S0\n", "G28\n"),                    # homing is a move
+    "M84\n" + END.replace("M84\n", ""),                   # released before, not after
+])
+def test_an_end_that_is_not_nozzle_off_then_motors_off_is_not_recognized(tmp_path, end):
+    _refused("clear_end_code", _gcode(tmp_path, end=end))
+
+
+def test_m18_ends_the_file_as_m84_does(tmp_path):
+    assert _scan(_gcode(tmp_path, end=END.replace("M84", "M18"))).max_z == 12.4
+
+
+# ------------------------------------------------- what must be readable
+
+
+def test_no_part_outline_is_refused(tmp_path):
+    start = "\n".join(line for line in START.splitlines()
+                      if not line.startswith("EXCLUDE_OBJECT_DEFINE")) + "\n"
+    _refused("clear_no_outline", _gcode(tmp_path, start=start))
+
+
+@pytest.mark.parametrize("polygon", [
+    "POLYGON=[[170,170],[180,170]]",                      # not an area
+    "POLYGON=[[170,170],[nan,170],[180,180]]",
+    "POLYGON=[[170,170],[inf,170],[180,180]]",
+    "POLYGON=[[170,170],[180],[180,180]]",
+    "POLYGON=garbage",
+    "CENTER=1,1",
+])
+def test_an_outline_that_cannot_be_read_is_refused_not_skipped(tmp_path, polygon):
+    start = START + f"EXCLUDE_OBJECT_DEFINE NAME=b {polygon}\n"
+    _refused("clear_no_outline", _gcode(tmp_path, start=start))
+
+
+@pytest.mark.parametrize("header", [
+    HEADER.replace("; max_z_height: 12.40\n", ""),
+    HEADER.replace("12.40", "nan"),
+    HEADER.replace("12.40", "0"),
+    HEADER.replace("12.40", "-3"),
+])
+def test_no_readable_height_is_refused(tmp_path, header):
+    _refused("clear_no_height", _gcode(tmp_path, header=header))
+
+
+def test_every_outline_is_kept(tmp_path):
+    start = START + ("EXCLUDE_OBJECT_DEFINE NAME=b CENTER=50,60 "
+                     "POLYGON=[[40,50],[60,50],[60.5,70.25],[40,70]]\n")
+    assert len(_scan(_gcode(tmp_path, start=start)).footprints) == 2
+
+
+def test_a_plate_that_is_not_said_to_be_textured_reads_as_not_textured(tmp_path):
+    for config in (CONFIG.replace("Textured PEI Plate", "Cool Plate"),
+                   CONFIG.replace("; curr_bed_type = Textured PEI Plate\n", "")):
+        assert _scan(_gcode(tmp_path, config=config)).textured_plate is False
+
+
+def test_a_line_too_long_to_be_gcode_stops_the_scan(tmp_path):
+    _refused("clear_unreadable", _gcode(tmp_path, start=START + "G1 X1 " + "9" * 70_000 + "\n"))
+
+
+def test_a_file_that_cannot_be_opened_is_unreadable(tmp_path):
+    _refused("file_unreadable", tmp_path / "gone.gcode")
+
+
+# ------------------------------------------------- archives
+
+
+def _archive(tmp_path, body: bytes, name="part.gcode.3mf"):
+    path = tmp_path / name
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("Metadata/plate_1.gcode", body)
+        archive.writestr("Metadata/plate_1.gcode.md5", "0" * 32)
+    return path
+
+
+def test_an_archive_is_scanned_through_its_one_plate(tmp_path):
+    body = (HEADER + START + END + CONFIG).encode()
+    scan = _scan(_archive(tmp_path, body), pf.KIND_3MF)
+    assert scan.max_z == 12.4
+    assert body[:scan.insert_at].endswith(b"M104 S0\n")
+    _refused("clear_brim", _archive(
+        tmp_path, (HEADER + START + ";TYPE:Brim\n" + END + CONFIG).encode(), "b.gcode.3mf"),
+        pf.KIND_3MF)
+
+
+def test_an_archive_scan_is_held_to_the_size_caps(tmp_path):
+    body = (HEADER + START + "G1 X1 Y1 E1\n" * 5000 + END + CONFIG).encode()
+    _refused("archive_too_large", _archive(tmp_path, body), pf.KIND_3MF, member_cap=1000)
+
+
+# ------------------------------------------------- materials (D15)
+
+
+def _facts(used, materials):
+    return pf.FileFacts(kind=pf.KIND_GCODE, size=1, md5="0" * 32, used_slots=used,
+                        materials=materials)
+
+
+def test_the_families_of_the_used_slots_are_what_counts():
+    assert pf.clearing_families(_facts((1,), {1: "PLA+", 2: "TPU"})) == ("PLA",)
+    assert pf.clearing_families(_facts((1, 2), {1: "PLA Silk", 2: "PETG HF"})) == ("PETG", "PLA")
+
+
+def test_with_no_used_slots_every_listed_slot_counts():
+    assert pf.clearing_families(_facts(None, {1: "PLA", 3: "PETG"})) == ("PETG", "PLA")
+    with pytest.raises(FileRefused) as err:
+        pf.clearing_families(_facts(None, {1: "PLA", 2: "ABS"}))
+    assert err.value.key == "clear_material"
+
+
+@pytest.mark.parametrize(("used", "materials"), [
+    ((1,), {1: "ABS"}), ((1,), {1: "PCTG"}), ((1,), {1: "TPU for ACE"}), ((1,), {1: ""}),
+    ((1,), {}), ((2,), {1: "PLA"}), (None, {}),
+])
+def test_any_other_or_unknown_material_is_refused(used, materials):
+    with pytest.raises(FileRefused) as err:
+        pf.clearing_families(_facts(used, materials))
+    assert err.value.key == "clear_material"
