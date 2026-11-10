@@ -38,11 +38,20 @@
 #       selector:
 #         file:
 #           accept: ".gcode,.3mf"
+#     allow_clear_bed:
+#       name: Allow Clear the bed
+#       required: false
+#       default: false
+#       selector:
+#         boolean:
 #   sequence:
 #     - action: anycubic.print_file
 #       data: >-
-#         {{ {'file': file, 'printer': printer} if printer is defined and printer
-#            else {'file': file} }}
+#         {% set data = {'file': file, 'allow_clear_bed': allow_clear_bed | default(false)} %}
+#         {{ dict(data, printer=printer) if printer is defined and printer else data }}
+#
+# Clear the bed (Kobra S1 Max only). The "Clear the bed" tile asks for the door to be
+# confirmed open and passes that on. Never call anycubic.clear_bed from an automation.
 
 
 title: Anycubic
@@ -357,6 +366,45 @@ views:
                     entity_id: button.anycubic_kobra_s1_max_bed_is_clear
                   confirmation:
                     text: Is the bed empty?
+          # Clear the bed (Kobra S1 Max). Delete this row on other printers.
+          - type: horizontal-stack
+            cards:
+              - type: custom:mushroom-template-card
+                entity: sensor.anycubic_kobra_s1_max_bed_clearing
+                primary: Clearing
+                secondary: >-
+                  {{ {'off': 'Off', 'armed': 'Print running', 'ready': 'Ready to clear',
+                      'pushing': 'Clearing', 'done': 'Cleared', 'failed': 'Failed',
+                      'expired': 'No longer available', 'stopped': 'Stopped'}.get(
+                        states(entity), 'Unknown') }}
+                icon: mdi:tray-arrow-down
+                color: >-
+                  {{ 'green' if is_state(entity, 'ready') or is_state(entity, 'done')
+                     else 'orange' if states(entity) in ('failed', 'expired')
+                     else 'blue' if is_state(entity, 'pushing') else 'disabled' }}
+                tap_action:
+                  action: more-info
+                icon_tap_action:
+                  action: more-info
+              - type: custom:mushroom-template-card
+                entity: button.anycubic_kobra_s1_max_clear_the_bed
+                primary: Clear the bed
+                icon: mdi:tray-arrow-down
+                color: blue
+                tap_action:
+                  action: perform-action
+                  perform_action: anycubic.clear_bed
+                  data:
+                    door_open_confirmed: true
+                  confirmation:
+                    text: Open the printer door before clearing the bed.
+                icon_tap_action:
+                  action: perform-action
+                  perform_action: anycubic.clear_bed
+                  data:
+                    door_open_confirmed: true
+                  confirmation:
+                    text: Open the printer door before clearing the bed.
 
           # ============================ Information (below) ============================
           - type: glance
