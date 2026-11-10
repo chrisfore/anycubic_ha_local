@@ -57,6 +57,10 @@ class AnycubicButton(AnycubicEntity, ButtonEntity):
 
     @property
     def available(self) -> bool:
+        # Resume is not offered for a pause only a checked Clear the bed press may resume.
+        if (self.entity_description.command == "resume"
+                and self.coordinator.clearing.resume_locked):
+            return False
         return super().available and self.entity_description.available_fn(self.coordinator.data.printer)
 
     async def async_press(self) -> None:

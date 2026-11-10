@@ -56,6 +56,7 @@ from .anycubic_local.models import (
     parse_light,
     parse_multicolorbox,
 )
+from .clearing import EVENT_CLEAR_DONE, EVENT_CLEAR_FAILED, EVENT_CLEAR_READY, Clearing
 from .const import (
     ACE_DRYING_DEFAULT_DURATION_MIN,
     ACE_DRYING_DEFAULT_TEMP,
@@ -159,7 +160,7 @@ EVENT_FINISHED = "finished"
 EVENT_STOPPED = "stopped"
 EVENT_ERROR = "error"
 EVENT_TYPES = (EVENT_STARTED, EVENT_PAUSED, EVENT_RESUMED, EVENT_FINISHED, EVENT_STOPPED,
-               EVENT_ERROR)
+               EVENT_ERROR, EVENT_CLEAR_READY, EVENT_CLEAR_DONE, EVENT_CLEAR_FAILED)
 # A job ends idle or finished; any other status outside JOB_PHASES (a stop, or a busy
 # printer with no job such as drying) is not a job either.
 _JOB_ENDED = frozenset({"idle", "finished"})
@@ -242,6 +243,8 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # How the last submission went: the refusal's key, or how the start ended. For
         # diagnostics; never a name.
         self.last_guard_outcome: str | None = None
+        # Clear the bed: the end of a print Home Assistant prepared (see clearing.py).
+        self.clearing = Clearing(self)
 
     def _build_and_connect(self):
         """Construct the transport (paho client + blocking tls_set) and connect.
@@ -348,6 +351,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             self._transport.query(t)
 
     async def async_shutdown(self) -> None:
+        self.clearing.async_shutdown()
         if self._transport is not None:
             await self.hass.async_add_executor_job(self._transport.disconnect)
         await super().async_shutdown()
@@ -366,6 +370,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # bound means nobody knows what happened at the printer, so the bed needs clearing.
         if self._report_gap():
             self._raise_bed_flag("no report within the gap bound")
+            self.clearing.async_on_gap()
         if self._transport is None:
             await self._async_recover("no transport")
         elif not getattr(self._transport, "connected", True):
@@ -413,6 +418,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         if not reason.by_user and reason.code != self._error_code:
             self._error_code = reason.code
             self._fire(EVENT_ERROR, {"reason_code": reason.code, "reason": reason.reason})
+        self.clearing.async_on_reason(reason)
         self.async_update_listeners()
 
     @callback
@@ -579,8 +585,15 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         """
         return redacted_error(err, (*self.redaction_identifiers, self.host))
 
-    async def async_send_command(self, command: str, **kwargs) -> None:
-        """Build a control command and publish it (executor — paho publish is blocking-ish)."""
+    async def async_send_command(self, command: str, *, press: bool = False, **kwargs) -> None:
+        """Build a control command and publish it (executor — paho publish is blocking-ish).
+
+        A resume is refused while the resume lock is on (see Clearing.resume_locked), from
+        every caller but a checked press of Clear the bed, which says so with `press`.
+        """
+        if command == "resume" and not press and self.clearing.resume_locked:
+            raise ServiceValidationError(translation_domain=DOMAIN,
+                                         translation_key="resume_locked")
         if self._transport is None:
             _LOGGER.debug("dropping command %s: no transport", command)
             return
@@ -626,6 +639,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # the printer meanwhile, nobody saw it. Judged before this report counts as the last.
         if self._report_gap():
             self._raise_bed_flag("report after a gap")
+            self.clearing.async_on_gap()
         self._report_at = self._last_report
         if msg_type == "info":
             self.data.printer = parse_info(data)
@@ -635,6 +649,8 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             self._track_status()
             if self._bed_may_hold_something(data):
                 self._raise_bed_flag("the printer was busy, or a job was reported")
+            # After the flag, as a sweep watched to its end is what turns it off.
+            self.clearing.async_on_info(data)
         elif msg_type == "tempature":
             # Not a typo — the firmware's wire string. Folded rather than parsed into a
             # fresh state: it carries only temperatures, and is the fastest-moving source
@@ -722,6 +738,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # info/tempature/fan every few seconds mid-print therefore never got polled at
         # all — and multiColorBox is poll-ONLY, so ACE humidity, temperature and drying
         # froze for the whole job. Notify listeners without touching the schedule.
+        self.clearing.async_tick()
         self.last_update_success = True
         self.async_update_listeners()
         if recovered:
@@ -846,11 +863,29 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         self._print_store = store
         self.print_state = await store.async_load()
         self.print_state.bed_flag = True
+        self.clearing.async_loaded()
 
     async def async_save_print_state(self) -> None:
         """Write the remembered state out now: on unload, so that a reload reads it fresh."""
         if self._print_store is not None:
             await self._print_store.async_save(self.print_state)
+
+    @callback
+    def fire_event(self, event_type: str, attributes: dict | None = None) -> None:
+        """Fire a print event from outside this class (Clear the bed's)."""
+        self._fire(event_type, attributes)
+
+    @callback
+    def async_clearing_changed(self) -> None:
+        """Clear the bed's record changed: write it out soon, and tell the entities."""
+        self._schedule_print_save()
+        self.async_update_listeners()
+
+    async def async_query_info(self) -> None:
+        """Ask the printer how it is, now, between polls."""
+        transport = self._transport
+        if transport is not None:
+            await self.hass.async_add_executor_job(transport.query, "info")
 
     @callback
     def _schedule_print_save(self) -> None:
@@ -943,13 +978,17 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         self.async_update_listeners()
 
     async def async_start_print(self, *, name: str, size: int, md5: str, filetype: int,
-                                ams_settings: dict, again: bool = False) -> bool:
+                                ams_settings: dict, again: bool = False,
+                                bed_limit: int | None = None) -> bool:
         """Start a file that is already on the printer, and hear that it started.
 
         Returns once the printer has taken the job, or once a job is seen: True only when
         the printer itself confirmed it, with a 200 and the state "printing". Raises when the
         printer refuses, when it is busy, and when it says nothing and no job appears.
         `again` is for Print again, whose refusal tells the user to send the file again.
+        `bed_limit` says the file is a prepared copy: the job is put on record for Clear the
+        bed before the start is sent, under the task id sent with it, and taken off again if
+        the printer turns the start down.
         """
         if self._transport is None:
             raise HomeAssistantError(translation_domain=DOMAIN,
@@ -958,9 +997,13 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         topic, payload = build_print_start(
             self.hs.model_id, self.hs.device_id, taskid=taskid, filename=name,
             filesize=size, md5=md5, filetype=filetype, ams_settings=ams_settings)
+        if bed_limit is not None:
+            self.clearing.async_arm(name=name, md5=md5, task_id=taskid, bed_limit=bed_limit)
         answer = await self._async_send_start(topic, payload)
         if answer is not None:
             code = answer["code"]
+            if code != START_ACCEPTED and bed_limit is not None:
+                self.clearing.async_disarm()
             if code == START_ACCEPTED:
                 self._raise_bed_flag("a print was started")
                 return answer.get("state") == START_PRINTING

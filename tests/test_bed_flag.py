@@ -117,9 +117,9 @@ def test_a_garbled_last_file_record_is_dropped():
     state = PrintState.from_dict({"bed_flag": False, "last_report": 1.0,
                                   "last_file": {**good, "md5": 5}})
     assert state.last_file is None and state.bed_flag is True
-    # Only the last file is written.
+    # The last file and the prepared print being waited for are written; the flag never.
     assert PrintState(bed_flag=False, last_file=LastFile.from_dict(good)).as_dict() == {
-        "last_file": LastFile.from_dict(good).as_dict()}
+        "last_file": LastFile.from_dict(good).as_dict(), "armed": None}
 
 
 # ------------------------------------------------- what turns it on
@@ -247,7 +247,7 @@ async def test_a_reload_keeps_the_last_file_and_sets_the_flag(hass, hass_storage
     with handshake, transport:
         assert await hass.config_entries.async_reload(entry.entry_id)
         await hass.async_block_till_done()
-    assert hass_storage[KEY]["data"] == {"last_file": record.as_dict()}
+    assert hass_storage[KEY]["data"] == {"last_file": record.as_dict(), "armed": None}
     assert entry.runtime_data.last_file == record
     assert entry.runtime_data.bed_needs_clearing, "every load is a gap"
 

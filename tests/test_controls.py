@@ -44,7 +44,7 @@ async def test_print_buttons_gated_on_state(hass):
     await btn["stop"].async_press()
     coord.async_send_command.assert_awaited_with("stop")
 
-    coord.data.printer = PrinterState(paused=True)
+    coord.data.printer = PrinterState(paused=True, bed_target=60)
     assert btn["resume"].available and btn["stop"].available
     assert not btn["pause"].available
     await btn["resume"].async_press()
