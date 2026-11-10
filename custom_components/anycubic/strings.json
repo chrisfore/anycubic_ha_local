@@ -27,7 +27,7 @@
   "options": {
     "step": {
       "init": {
-        "data": { "camera_source": "Camera source" }
+        "data": { "camera_source": "Camera source", "door_sensor": "Door sensor" }
       }
     }
   },
@@ -59,7 +59,21 @@
       "ace_drying_remaining": { "name": "Drying time remaining" },
       "ace_loaded_slot": { "name": "Loaded slot" },
       "ace_slot": { "name": "Slot {n}" },
-      "external_spool": { "name": "External spool" }
+      "external_spool": { "name": "External spool" },
+      "bed_clearing": {
+        "name": "Bed clearing",
+        "state": {
+          "off": "Off",
+          "armed": "Print running",
+          "ready": "Ready to clear",
+          "pushing": "Clearing",
+          "done": "Cleared",
+          "failed": "Failed",
+          "expired": "No longer available",
+          "stopped": "Stopped"
+        },
+        "state_attributes": { "reason": { "name": "Reason" } }
+      }
     },
     "image": {
       "object_thumbnail": { "name": "Object thumbnail" },
@@ -79,7 +93,8 @@
       "resume": { "name": "Resume" },
       "stop": { "name": "Stop" },
       "print_again": { "name": "Print again" },
-      "bed_clear": { "name": "Bed is clear" }
+      "bed_clear": { "name": "Bed is clear" },
+      "clear_bed": { "name": "Clear the bed" }
     },
     "number": {
       "nozzle_target": { "name": "Nozzle target temperature" },
@@ -114,7 +129,10 @@
               "resumed": "Resumed",
               "finished": "Finished",
               "stopped": "Stopped",
-              "error": "Error"
+              "error": "Error",
+              "clear_ready": "Ready to clear the bed",
+              "clear_done": "Bed cleared",
+              "clear_failed": "Clear the bed failed"
             }
           }
         }
@@ -127,14 +145,24 @@
       "description": "Sends a sliced file to a printer and starts it.",
       "fields": {
         "printer": { "name": "Printer", "description": "The printer to print on." },
-        "file": { "name": "File", "description": "A .gcode, .gcode.3mf or sliced .3mf file, up to 100 MB." }
+        "file": { "name": "File", "description": "A .gcode, .gcode.3mf or sliced .3mf file, up to 100 MB." },
+        "allow_clear_bed": { "name": "Allow Clear the bed", "description": "Ends the print paused so that Clear the bed can push the parts out of the open door. Kobra S1 Max only." }
       }
     },
     "print_again": {
       "name": "Print again",
       "description": "Starts the last file sent from Home Assistant again.",
       "fields": {
-        "printer": { "name": "Printer", "description": "The printer to print on." }
+        "printer": { "name": "Printer", "description": "The printer to print on." },
+        "allow_clear_bed": { "name": "Allow Clear the bed", "description": "Not available for Print again. Send the file again to use it." }
+      }
+    },
+    "clear_bed": {
+      "name": "Clear the bed",
+      "description": "Pushes a finished print off the bed and out of the open door. Never call this from an automation.",
+      "fields": {
+        "printer": { "name": "Printer", "description": "The printer to clear." },
+        "door_open_confirmed": { "name": "Door is open", "description": "Your confirmation that the printer door is open. Needed when no door sensor is set up." }
       }
     }
   },
@@ -180,6 +208,36 @@
     "start_refused": { "message": "The printer did not start the print: {reason}." },
     "print_again_refused": { "message": "The printer did not start the last file: {reason}. Send the file again." },
     "start_unconfirmed": { "message": "The printer did not confirm the start. The job may still start, because large 3MF files take time to unpack." },
-    "clear_while_busy": { "message": "Wait until the printer is on and idle, then press \"Bed is clear\"." }
+    "clear_while_busy": { "message": "Wait until the printer is on and idle, then press \"Bed is clear\"." },
+    "clear_model": { "message": "Clear the bed is only available for the Kobra S1 Max." },
+    "clear_file_model": { "message": "The file does not say which printer it was sliced for, so Clear the bed cannot be allowed. Slice it for this printer." },
+    "clear_brim": { "message": "The print has a brim, so Clear the bed cannot be allowed. Slice it without a brim." },
+    "clear_skirt": { "message": "The print has a skirt, so Clear the bed cannot be allowed. Slice it without a skirt." },
+    "clear_tower": { "message": "The print has a prime tower, so Clear the bed cannot be allowed." },
+    "clear_raft": { "message": "The print has a raft, or does not say whether it has one, so Clear the bed cannot be allowed." },
+    "clear_own_pause": { "message": "The file has a pause of its own, so Clear the bed cannot be allowed." },
+    "clear_bed_not_heated": { "message": "The file does not heat the bed, so Clear the bed cannot be allowed." },
+    "clear_end_code": { "message": "The end of the file was not recognized, so Clear the bed cannot be allowed." },
+    "clear_no_outline": { "message": "The file does not give the outline of its parts, so Clear the bed cannot be allowed. Turn on object labeling in the slicer." },
+    "clear_no_height": { "message": "The file does not give the height of its parts, so Clear the bed cannot be allowed." },
+    "clear_unreadable": { "message": "The file could not be checked for Clear the bed. Print it without Allow Clear the bed." },
+    "clear_material": { "message": "Clear the bed is only for PLA and PETG." },
+    "clear_petg_plate": { "message": "PETG can only be cleared from a textured plate. Slice the file for the textured plate." },
+    "clear_part_off_bed": { "message": "A part reaches past the edge of the bed, so Clear the bed cannot be allowed." },
+    "clear_part_too_short": { "message": "The print is too short to be pushed off. Print it without Allow Clear the bed." },
+    "clear_part_too_tall": { "message": "The print is taller than 200 mm, so Clear the bed cannot be allowed." },
+    "clear_part_too_far_back": { "message": "A part sits too close to the back of the bed to be pushed off. Move it forward in the slicer." },
+    "clear_out_of_reach": { "message": "The print cannot be pushed off within the printer's reach. Print it without Allow Clear the bed." },
+    "print_again_no_clear": { "message": "Send the file again with Allow Clear the bed ticked." },
+    "clear_needs_user": { "message": "Clear the bed must be pressed by a person. It cannot be run by an automation or a script." },
+    "clear_not_ready": { "message": "There is no finished print waiting to be cleared." },
+    "clear_window_over": { "message": "It is too late to clear this print. Press Stop, then clear the bed by hand." },
+    "clear_door_closed": { "message": "The door is not open. Open it, then press Clear the bed." },
+    "clear_door_not_opened": { "message": "The door has not been opened since the print finished. Open it, then press Clear the bed." },
+    "clear_no_door_sensor": { "message": "No door sensor is set up. Use Clear the bed on the dashboard, which asks you to confirm the door is open." },
+    "clear_bed_hot": { "message": "The bed is {temp} °C. Wait until it is {limit} °C or cooler." },
+    "clear_chamber_hot": { "message": "The chamber is {temp} °C. Wait until it is {limit} °C or cooler." },
+    "clear_reading_missing": { "message": "The printer has not reported its temperatures. Try again in a moment." },
+    "resume_locked": { "message": "This pause can only be continued with Clear the bed. To end the print without clearing, press Stop." }
   }
 }

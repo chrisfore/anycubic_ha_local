@@ -37,15 +37,14 @@ PRINTER_NAME_CAP = 100
 # it, in any case, is refused, so a copy can always be told from an original.
 PUSH_OFF_MARKER = "-ha-pushoff"
 
-# How recent, in seconds, a door sensor's last report must be to count (push-off, later).
-DOOR_FRESHNESS = 30
-# The option naming that sensor: a binary_sensor of device class door or opening.
+# The option naming a door sensor for Clear the bed: a binary_sensor of device class door or
+# opening, on when open. Optional. With one, a press needs it to have reported the door
+# opening after the print paused at its end, and it is watched through the sweep; with
+# none, the press needs the user's own word that the door is open.
 CONF_DOOR_SENSOR = "door_sensor"
-# Is that option offered? Off until push-off, the only thing that reads it, is built. While
-# off, the options form does not show it and diagnostics do not read it; a sensor already
-# chosen stays in the entry's options, unused. Turning it on also needs the field's label,
-# "Door sensor", back under options.step.init.data in strings.json and translations/en.json.
-DOOR_SENSOR_OPTION_ENABLED = False
+# Is that option offered? While off, the options form does not show it and nothing reads
+# it; a sensor already chosen stays in the entry's options, unused.
+DOOR_SENSOR_OPTION_ENABLED = True
 
 # Printer modelId -> name. IDs verified across multiple on-printer sources (Rinkhals api.cfg,
 # mann1x, TigerTag, 1coderookie). The Kobra 3 / S1 / X generation (20024-20030) speaks the same

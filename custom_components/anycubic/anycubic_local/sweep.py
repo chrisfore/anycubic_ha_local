@@ -162,27 +162,37 @@ class _Writer:
 
 
 def _cooling_lines(profile: SweepProfile, cooling) -> list[str]:
+    """The part fan on, each cooling step in turn, the fan off."""
     if cooling is None:
         cooling = CoolTo(profile.nozzle_cool)
-    if isinstance(cooling, CoolTo):
-        if type(cooling.celsius) is not int or not 0 < cooling.celsius <= profile.nozzle_cool:
-            raise FileRefused("clear_out_of_reach")
-        # M109 leaves the heater holding that temperature, so it is turned off again.
-        return ["M106 S255", f"M109 S{cooling.celsius}", "M104 S0", "M106 S0"]
-    seconds = None if isinstance(cooling.seconds, str) else finite_number(cooling.seconds)
-    if seconds is None or not 0 < seconds <= MAX_DWELL_SECONDS:
+    steps = cooling if isinstance(cooling, tuple) else (cooling,)
+    if not steps:
         raise FileRefused("clear_out_of_reach")
-    return ["M106 S255", f"G4 S{int(seconds)}", "M106 S0"]
+    lines = ["M106 S255"]
+    for step in steps:
+        if isinstance(step, CoolTo):
+            if type(step.celsius) is not int or not 0 < step.celsius <= profile.nozzle_cool:
+                raise FileRefused("clear_out_of_reach")
+            # M109 leaves the heater holding that temperature, so it is turned off again.
+            lines += [f"M109 S{step.celsius}", "M104 S0"]
+        elif isinstance(step, Dwell):
+            seconds = None if isinstance(step.seconds, str) else finite_number(step.seconds)
+            if seconds is None or not 0 < seconds <= MAX_DWELL_SECONDS:
+                raise FileRefused("clear_out_of_reach")
+            lines.append(f"G4 S{int(seconds)}")
+        else:
+            raise FileRefused("clear_out_of_reach")
+    return [*lines, "M106 S0"]
 
 
 def clearing_block(profile: SweepProfile, max_z: float, footprints, *,
-                   cooling: CoolTo | Dwell | None = None,
+                   cooling: CoolTo | Dwell | tuple[CoolTo | Dwell, ...] | None = None,
                    sweep_height: float | None = None) -> list[str]:
     """The lines to insert after a file's last nozzle-off line, or a refusal.
 
     `max_z` is the tallest part and `footprints` each part's outline, as the file gives them.
-    `cooling` is how the nozzle is cooled after the resume: by default a wait for the
-    profile's temperature. `sweep_height` is for a first live test in the air; the product
+    `cooling` is how the nozzle is cooled after the resume, one step or several in turn: by
+    default a wait for the profile's temperature. `sweep_height` is for a first live test in the air; the product
     never passes it.
     """
     height = profile.sweep_height if sweep_height is None else finite_number(sweep_height)

@@ -11,6 +11,11 @@ print_file:
       selector:
         file:
           accept: ".gcode,.3mf"
+    allow_clear_bed:
+      required: false
+      default: false
+      selector:
+        boolean:
 
 print_again:
   fields:
@@ -20,3 +25,22 @@ print_again:
         device:
           filter:
             integration: anycubic
+    allow_clear_bed:
+      required: false
+      default: false
+      selector:
+        boolean:
+
+clear_bed:
+  fields:
+    printer:
+      required: false
+      selector:
+        device:
+          filter:
+            integration: anycubic
+    door_open_confirmed:
+      required: false
+      default: false
+      selector:
+        boolean:

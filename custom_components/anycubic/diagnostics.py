@@ -10,6 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .anycubic_local.const import SENSITIVE_KEYS, redacted
+from .clearing import MOTOR_WINDOW
 from .const import (
     CAMERA_SOURCE_PRINTER,
     CONF_CAMERA_SOURCE,
@@ -40,6 +41,13 @@ def _print_from_ha(hass: HomeAssistant, entry: ConfigEntry,
         "has_last_file": coordinator.last_file is not None,
         "door_sensor_configured": bool(door),
         "door_reading_age_s": None if age is None else round(age, 1),
+        "clearing": {
+            "state": coordinator.clearing.state,
+            "reason": coordinator.clearing.reason,
+            "armed": coordinator.print_state.armed is not None,
+            "press_possible": coordinator.clearing.press_possible,
+            "motor_window_s": MOTOR_WINDOW,
+        },
     }
 
 

@@ -10,7 +10,8 @@ from homeassistant.const import UnitOfMass
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import ACE_SLOT_COUNT, ENCLOSED_MODELS, box_has_dryer
+from .clearing import STATES as CLEARING_STATES
+from .const import ACE_SLOT_COUNT, ENCLOSED_MODELS, PUSH_OFF_MODELS, box_has_dryer
 from .coordinator import AnycubicCoordinator
 from .definitions import (
     ACE_SENSORS,
@@ -27,6 +28,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEnt
     enclosed = coord.hs.model_id in ENCLOSED_MODELS
     add([AnycubicSensor(coord, d) for d in PRINTER_SENSORS if enclosed or not d.enclosed_only])
     add([AnycubicPauseReasonSensor(coord), AnycubicFilamentUsedSensor(coord)])
+    if coord.hs.model_id in PUSH_OFF_MODELS:
+        add([AnycubicBedClearingSensor(coord)])
 
     def ace_sensors(box_id: int) -> list:
         dryer = box_has_dryer(box_id)
@@ -238,3 +241,24 @@ class AnycubicExternalSpoolSensor(AnycubicEntity, SensorEntity):
             return {}
         return {"material": spool.material, "color": spool.color_hex,
                 "loaded": spool.loaded, "status": spool.current_status}
+
+
+class AnycubicBedClearingSensor(AnycubicEntity, SensorEntity):
+    """Where Clear the bed stands for the print Home Assistant prepared, and why if it
+    did not go through. See clearing.py for the states."""
+
+    _attr_translation_key = "bed_clearing"
+    _attr_device_class = SensorDeviceClass.ENUM
+    _attr_options = list(CLEARING_STATES)
+    _attr_icon = "mdi:tray-arrow-down"
+
+    def __init__(self, coordinator: AnycubicCoordinator) -> None:
+        super().__init__(coordinator, "bed_clearing")
+
+    @property
+    def native_value(self) -> str:
+        return self.coordinator.clearing.state
+
+    @property
+    def extra_state_attributes(self) -> dict:
+        return {"reason": self.coordinator.clearing.reason}

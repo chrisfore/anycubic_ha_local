@@ -226,3 +226,12 @@ def test_the_writer_itself_refuses_any_line_outside_travel_or_over_the_ceiling()
         with pytest.raises(FileRefused) as err:
             sweep.clearing_block(bad, 20.0, footprints)
         assert err.value.key == "clear_out_of_reach"
+
+
+def test_cooling_can_be_a_wait_followed_by_a_dwell():
+    commands = _commands(_block(cooling=(sweep.CoolTo(50), sweep.Dwell(300))))
+    after = commands[commands.index("M601") + 1:]
+    assert after[:6] == ["M106 S255", "M109 S50", "M104 S0", "G4 S300", "M106 S0", "G90"]
+    _refused("clear_out_of_reach", cooling=())
+    _refused("clear_out_of_reach", cooling=(sweep.CoolTo(50), "G28"))
+    _refused("clear_out_of_reach", cooling=sweep.CoolTo(60))

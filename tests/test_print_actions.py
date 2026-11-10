@@ -818,7 +818,9 @@ async def test_diagnostics_say_how_it_went_and_name_nothing(env):
     diag = await async_get_config_entry_diagnostics(env.hass, env.entry)
     assert diag["print_from_ha"] == {
         "enabled": True, "bed_needs_clearing": True, "last_guard_outcome": "started",
-        "has_last_file": True, "door_sensor_configured": False, "door_reading_age_s": None}
+        "has_last_file": True, "door_sensor_configured": False, "door_reading_age_s": None,
+        "clearing": {"state": "off", "reason": None, "armed": False, "press_possible": False,
+                     "motor_window_s": 600.0}}
     blob = json.dumps(diag)
     assert "Desk bracket" not in blob and TOKEN not in blob
 
@@ -826,8 +828,13 @@ async def test_diagnostics_say_how_it_went_and_name_nothing(env):
 # ------------------------------------------------- the door sensor option
 
 
-async def test_the_door_sensor_is_not_offered_and_one_kept_from_before_is_inert(hass):
+async def test_with_the_option_off_the_door_sensor_is_not_offered_and_one_kept_is_inert(
+        hass, monkeypatch):
+    from custom_components.anycubic import clearing as clearing_mod
     from custom_components.anycubic.diagnostics import async_get_config_entry_diagnostics
+
+    for module in (config_flow_mod, diagnostics_mod, clearing_mod):
+        monkeypatch.setattr(module, "DOOR_SENSOR_OPTION_ENABLED", False)
 
     hass.states.async_set("binary_sensor.printer_door", "off", {"device_class": "door"})
     entry = await _setup(hass, options={"door_sensor": "binary_sensor.printer_door"})
@@ -842,6 +849,7 @@ async def test_the_door_sensor_is_not_offered_and_one_kept_from_before_is_inert(
     diag = await async_get_config_entry_diagnostics(hass, entry)
     assert diag["print_from_ha"]["door_sensor_configured"] is False
     assert diag["print_from_ha"]["door_reading_age_s"] is None
+    assert entry.runtime_data.clearing.door_entity is None
 
 
 async def test_the_door_sensor_is_offered_on_enclosed_printers_only_once_enabled(

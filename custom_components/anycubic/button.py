@@ -8,13 +8,13 @@ from dataclasses import dataclass
 from homeassistant.components.button import ButtonEntity, ButtonEntityDescription
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import Unauthorized, UnknownUser
+from homeassistant.exceptions import ServiceValidationError, Unauthorized, UnknownUser
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .actions import async_print_again
+from .actions import async_clear_bed, async_print_again
 from .anycubic_local.const import JOB_PHASES
 from .anycubic_local.models import PrinterState
-from .const import PRINT_MODELS
+from .const import DOMAIN, PRINT_MODELS, PUSH_OFF_MODELS
 from .coordinator import AnycubicCoordinator
 from .entity import AnycubicEntity
 
@@ -45,6 +45,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEnt
     buttons: list[ButtonEntity] = [AnycubicButton(coordinator, d) for d in BUTTONS]
     if coordinator.hs.model_id in PRINT_MODELS:
         buttons += [AnycubicPrintAgainButton(coordinator), AnycubicBedClearButton(coordinator)]
+    if coordinator.hs.model_id in PUSH_OFF_MODELS:
+        buttons.append(AnycubicClearBedButton(coordinator))
     add(buttons)
 
 
@@ -75,9 +77,15 @@ class AdminOnlyButton(AnycubicEntity, ButtonEntity):
     let through, as Home Assistant's admin-only actions let it through.
     """
 
+    # Is a press with no user behind it let through? Not for Clear the bed.
+    _needs_user = False
+
     async def _async_check_admin(self) -> None:
         context = self._context
         if context is None or not context.user_id:
+            if self._needs_user:
+                raise ServiceValidationError(translation_domain=DOMAIN,
+                                             translation_key="clear_needs_user")
             return
         user = await self.hass.auth.async_get_user(context.user_id)
         if user is None:
@@ -126,3 +134,28 @@ class AnycubicBedClearButton(AdminOnlyButton):
     async def async_press(self) -> None:
         await self._async_check_admin()
         self.coordinator.async_mark_bed_clear()
+
+
+class AnycubicClearBedButton(AdminOnlyButton):
+    """Push the finished print off the bed. Offered only while a prepared print waits at its
+    end, and every press is checked (see clearing.py). Never something to automate: a press
+    with no user behind it is refused.
+
+    With no door sensor set up, a press here is refused and points to the dashboard, whose
+    Clear the bed control asks for the door to be confirmed open: a button cannot ask.
+    """
+
+    _attr_translation_key = "clear_bed"
+    _attr_icon = "mdi:tray-arrow-down"
+    _needs_user = True
+
+    def __init__(self, coordinator: AnycubicCoordinator) -> None:
+        super().__init__(coordinator, "clear_bed")
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.coordinator.clearing.press_possible
+
+    async def async_press(self) -> None:
+        await self._async_check_admin()
+        await async_clear_bed(self.coordinator)

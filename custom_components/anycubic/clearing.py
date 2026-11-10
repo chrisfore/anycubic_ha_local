@@ -33,6 +33,7 @@ from .anycubic_local.printfile import finite_number, is_marked
 from .const import (
     CONF_DOOR_SENSOR,
     DOMAIN,
+    DOOR_SENSOR_OPTION_ENABLED,
     ENCLOSED_MODELS,
     MODEL_NAMES,
     PUSH_OFF_MARKER,
@@ -166,7 +167,9 @@ class Clearing:
     @property
     def door_entity(self) -> str | None:
         entry = self._c.config_entry
-        return (entry.options.get(CONF_DOOR_SENSOR) or None) if entry is not None else None
+        if entry is None or not DOOR_SENSOR_OPTION_ENABLED:
+            return None
+        return entry.options.get(CONF_DOOR_SENSOR) or None
 
     @property
     def _paused(self) -> bool:
