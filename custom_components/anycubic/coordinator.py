@@ -999,6 +999,9 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             filesize=size, md5=md5, filetype=filetype, ams_settings=ams_settings)
         if bed_limit is not None:
             self.clearing.async_arm(name=name, md5=md5, task_id=taskid, bed_limit=bed_limit)
+        else:
+            # An ordinary print: nothing is waited for at its end.
+            self.clearing.async_disarm()
         answer = await self._async_send_start(topic, payload)
         if answer is not None:
             code = answer["code"]

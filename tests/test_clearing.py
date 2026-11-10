@@ -601,3 +601,38 @@ def test_the_strictest_bed_limit_wins():
     assert clearing_mod.bed_limit_for(("PLA",)) == 28
     assert clearing_mod.bed_limit_for(("PETG",)) == 25
     assert clearing_mod.bed_limit_for(("PETG", "PLA")) == 25
+
+
+# ------------------------------------------------- just after the press
+
+
+async def test_a_report_still_saying_paused_just_after_the_press_does_not_stop_the_sweep(hass):
+    coord = await _setup(hass)
+    await _to_pushing(hass, coord)
+    _paused(coord)                                               # sent before the resume landed
+    await hass.async_block_till_done()
+    assert Transport.last.actions() == ["resume"] and coord.clearing.state == "pushing"
+    _info(coord)                                                 # now it is running
+    _paused(coord)                                               # and this is a real pause
+    await hass.async_block_till_done()
+    assert Transport.last.actions() == ["resume", "stop"] and coord.clearing.state == "failed"
+
+
+async def test_a_resume_that_never_takes_is_stopped_after_a_short_wait(hass):
+    coord = await _setup(hass)
+    await _to_pushing(hass, coord)
+    coord.clearing._pressed_at -= clearing_mod.RESUME_GRACE + 1
+    _paused(coord)
+    await hass.async_block_till_done()
+    assert Transport.last.actions() == ["resume", "stop"] and coord.clearing.state == "failed"
+
+
+async def test_an_ordinary_start_drops_a_record_left_from_a_start_that_never_began(hass):
+    coord = await _setup(hass)
+    _arm(coord)
+    assert coord.print_state.armed is not None
+    Transport_reply = {"action": "start", "code": 200, "state": "printing", "msg": ""}
+    with patch.object(coord, "_async_send_start", return_value=Transport_reply):
+        await coord.async_start_print(name="other.gcode", size=1, md5=MD5, filetype=1,
+                                      ams_settings={})
+    assert coord.print_state.armed is None and coord.clearing.state == "off"

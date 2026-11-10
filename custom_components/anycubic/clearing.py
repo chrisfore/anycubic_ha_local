@@ -65,6 +65,10 @@ EVENT_CLEAR_FAILED = "clear_failed"
 MOTOR_WINDOW: float | None = 600.0
 WINDOW_MARGIN = 60.0
 
+# How long after a press the printer may still report the pause, in seconds, before the
+# resume counts as not taken. A report sent just before the resume arrived says "paused".
+RESUME_GRACE = 30.0
+
 # The bed is this cool, or cooler, before a push: what print farms release parts at.
 BED_LIMITS = {"PLA": 28, "PETG": 25}
 CHAMBER_LIMIT = 30
@@ -116,6 +120,9 @@ class Clearing:
         self._was_paused = False
         self._door_opened = False
         self._finished = False
+        # Monotonic time of the press, and whether the job has been seen running since.
+        self._pressed_at: float | None = None
+        self._push_running = False
         # The paused job a stop was already sent for, so one pause gets one stop.
         self._stopped: str | None = None
         self._unsub_door = None
@@ -238,10 +245,14 @@ class Clearing:
             job.seen = True
             self._save()
         if self.state == STATE_PUSHING:
-            if paused:
+            if not paused:
+                self._push_running = True
+                if self._c.data.printer.status == "finished":
+                    self._finished = True
+            elif self._push_running or self._pressed_at is None or (
+                    time.monotonic() - self._pressed_at > RESUME_GRACE):
+                # Paused again after running, or the resume never took.
                 self._fail(REASON_PAUSED, stop=True)
-            elif self._c.data.printer.status == "finished":
-                self._finished = True
         elif self.state == STATE_FAILED:
             if paused:
                 self._stop_once()
@@ -460,7 +471,8 @@ class Clearing:
                 raise _refusal("clear_chamber_hot", temp=round(chamber), limit=CHAMBER_LIMIT)
         # On record before it is sent, so that no restart can lead to a second resume.
         job.resumed = True
-        self._finished = False
+        self._finished = self._push_running = False
+        self._pressed_at = time.monotonic()
         self._set(STATE_PUSHING)
         await coordinator.async_save_print_state()
         coordinator.async_update_listeners()
