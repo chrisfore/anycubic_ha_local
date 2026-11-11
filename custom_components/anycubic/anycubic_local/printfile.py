@@ -536,7 +536,10 @@ class _ClearScanner:
     height it gives, refuses the file, because the sweep is planned from those two.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, push: bool = True) -> None:
+        # With no push, the parts only have to be lifted above: brims, skirts, towers,
+        # rafts and outlines do not matter, the height and the end of the file still do.
+        self._push = push
         self.window = _Window()
         self.footprints: list[tuple[tuple[float, float], ...]] = []
         self.bed_heated = False
@@ -581,7 +584,7 @@ class _ClearScanner:
                 name = label.group(1).lower()
                 for word, key in ((b"brim", "clear_brim"), (b"skirt", "clear_skirt"),
                                   (b"tower", "clear_tower")):
-                    if word in name:
+                    if word in name and self._push:
                         raise FileRefused(key)
                 self._in_part = b"custom" not in name
                 self._labels += self._in_part
@@ -699,23 +702,23 @@ class _ClearScanner:
 
     def _result(self) -> ClearScan:
         settings = self.window.settings()
-        if not self._labels:
+        if self._push and not self._labels:
             # Nothing says what was printed as what: a brim cannot be ruled out.
             raise FileRefused("clear_unreadable")
-        if finite_number(settings.get("raft_layers")) != 0:
+        if self._push and finite_number(settings.get("raft_layers")) != 0:
             raise FileRefused("clear_raft")
         if not self.bed_heated:
             raise FileRefused("clear_bed_not_heated")
         if self.insert_at is None or not self._released or self._moved_after_release:
             raise FileRefused("clear_end_code")
-        if not self.footprints:
+        if self._push and not self.footprints:
             raise FileRefused("clear_no_outline")
         max_z = finite_number(settings.get("max_z_height"))
         if max_z is None or max_z <= 0:
             raise FileRefused("clear_no_height")
         if self._printed_z > max_z + HEIGHT_TOLERANCE:
             raise FileRefused("clear_no_height")
-        if self._printed is not None:
+        if self._push and self._printed is not None:
             xs = [x for outline in self.footprints for x, _ in outline]
             ys = [y for outline in self.footprints for _, y in outline]
             low_x, high_x, low_y, high_y = self._printed
@@ -749,8 +752,8 @@ def _one_plate(archive: zipfile.ZipFile) -> zipfile.ZipInfo:
     return plates[0]
 
 
-def scan_for_clearing(path: Path, kind: str, *, member_cap: int = MEMBER_CAP,
-                      total_cap: int = TOTAL_CAP) -> ClearScan:
+def scan_for_clearing(path: Path, kind: str, *, push: bool = True,
+                      member_cap: int = MEMBER_CAP, total_cap: int = TOTAL_CAP) -> ClearScan:
     """May a copy of this file be prepared for Clear the bed? What the copy needs, if so.
 
     Blocking: run it in an executor. Raises FileRefused, with the reason as its key, for a
@@ -760,12 +763,13 @@ def scan_for_clearing(path: Path, kind: str, *, member_cap: int = MEMBER_CAP,
     """
     try:
         if kind == KIND_GCODE:
-            return _ClearScanner().scan(_file_chunks(path))
+            return _ClearScanner(push).scan(_file_chunks(path))
         try:
             with zipfile.ZipFile(path) as archive:
                 plate = _one_plate(archive)
                 with archive.open(plate) as fh:
-                    return _ClearScanner().scan(_Budget(member_cap, total_cap).chunks(fh))
+                    return _ClearScanner(push).scan(
+                        _Budget(member_cap, total_cap).chunks(fh))
         except FileRefused:
             raise
         except _UNREADABLE as err:

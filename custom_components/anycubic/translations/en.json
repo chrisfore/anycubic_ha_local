@@ -61,15 +61,15 @@
       "ace_slot": { "name": "Slot {n}" },
       "external_spool": { "name": "External spool" },
       "bed_clearing": {
-        "name": "Bed clearing",
+        "name": "Bed cool-down",
         "state": {
           "off": "Off",
           "armed": "Print running",
-          "ready": "Ready to clear",
+          "ready": "Cooling",
           "pushing": "Clearing",
-          "done": "Cleared",
+          "done": "Cool",
           "failed": "Failed",
-          "expired": "No longer available",
+          "expired": "Not cooled in time",
           "stopped": "Stopped"
         },
         "state_attributes": { "reason": { "name": "Reason" } }
@@ -130,9 +130,9 @@
               "finished": "Finished",
               "stopped": "Stopped",
               "error": "Error",
-              "clear_ready": "Ready to clear the bed",
-              "clear_done": "Bed cleared",
-              "clear_failed": "Clear the bed failed"
+              "clear_ready": "Cooling the bed",
+              "clear_done": "Bed is cool",
+              "clear_failed": "Cool-down did not finish"
             }
           }
         }
@@ -146,7 +146,7 @@
       "fields": {
         "printer": { "name": "Printer", "description": "The printer to print on." },
         "file": { "name": "File", "description": "A .gcode, .gcode.3mf or sliced .3mf file, up to 100 MB." },
-        "allow_clear_bed": { "name": "Allow Clear the bed", "description": "Ends the print paused so that Clear the bed can push the parts out of the open door. Kobra S1 Max only." }
+        "allow_clear_bed": { "name": "Cool the bed when done", "description": "Ends the print parked with the fans on, finishes it once the bed has cooled, and tells you. Kobra S1 Max only." }
       }
     },
     "print_again": {
@@ -154,7 +154,7 @@
       "description": "Starts the last file sent from Home Assistant again.",
       "fields": {
         "printer": { "name": "Printer", "description": "The printer to print on." },
-        "allow_clear_bed": { "name": "Allow Clear the bed", "description": "Not available for Print again. Send the file again to use it." }
+        "allow_clear_bed": { "name": "Cool the bed when done", "description": "Not available for Print again. Send the file again to use it." }
       }
     },
     "clear_bed": {
@@ -229,7 +229,7 @@
     "clear_part_too_tall": { "message": "The print is taller than 200 mm, so Clear the bed cannot be allowed." },
     "clear_part_too_far_back": { "message": "A part sits too close to the back of the bed to be pushed off. Move it forward in the slicer." },
     "clear_out_of_reach": { "message": "The print cannot be pushed off within the printer's reach. Print it without Allow Clear the bed." },
-    "print_again_no_clear": { "message": "Send the file again with Allow Clear the bed ticked." },
+    "print_again_no_clear": { "message": "Send the file again with Cool the bed when done turned on." },
     "clear_needs_user": { "message": "Clear the bed must be pressed by a person. It cannot be run by an automation or a script." },
     "clear_not_ready": { "message": "There is no finished print waiting to be cleared." },
     "clear_window_over": { "message": "It is too late to clear this print. Press Stop, then clear the bed by hand." },

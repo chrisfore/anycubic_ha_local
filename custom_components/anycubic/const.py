@@ -37,6 +37,13 @@ PRINTER_NAME_CAP = 100
 # it, in any case, is refused, so a copy can always be told from an original.
 PUSH_OFF_MARKER = "-ha-pushoff"
 
+# Is the push itself offered: a press that makes the head push the finished parts off the
+# bed? Off. The first real push could not free a part and stalled the head, and the printer
+# did not notice. With it off, a prepared print ends parked with the fans cooling the bed,
+# Home Assistant ends the job once the bed is cool and says so, and the part comes off by
+# hand: nothing is ever resumed and nothing touches a part. The push code stays, unused.
+PUSH_ENABLED = False
+
 # The option naming a door sensor for Clear the bed: a binary_sensor of device class door or
 # opening, on when open. Optional. With one, a press needs it to have reported the door
 # opening after the print paused at its end, and it is watched through the sweep; with
@@ -44,7 +51,7 @@ PUSH_OFF_MARKER = "-ha-pushoff"
 CONF_DOOR_SENSOR = "door_sensor"
 # Is that option offered? While off, the options form does not show it and nothing reads
 # it; a sensor already chosen stays in the entry's options, unused.
-DOOR_SENSOR_OPTION_ENABLED = True
+DOOR_SENSOR_OPTION_ENABLED = PUSH_ENABLED
 
 # Printer modelId -> name. IDs verified across multiple on-printer sources (Rinkhals api.cfg,
 # mann1x, TigerTag, 1coderookie). The Kobra 3 / S1 / X generation (20024-20030) speaks the same

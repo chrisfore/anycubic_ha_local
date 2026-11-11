@@ -46,13 +46,14 @@ from .anycubic_local.printfile import (
     scan_for_clearing,
     write_prepared_copy,
 )
-from .clearing import bed_limit_for
+from .clearing import bed_limit_for, cool_limit_for
 from .const import (
     ACE_SLOT_COUNT,
     DOMAIN,
     MODEL_NAMES,
     PRINT_MODELS,
     PRINTER_NAME_CAP,
+    PUSH_ENABLED,
     PUSH_OFF_MARKER,
     PUSH_OFF_MODELS,
     primary_ace_box_id,
@@ -154,8 +155,9 @@ def async_setup_actions(hass: HomeAssistant) -> None:
                                  schema=PRINT_FILE_SCHEMA)
     async_register_admin_service(hass, DOMAIN, SERVICE_PRINT_AGAIN, _print_again,
                                  schema=PRINT_AGAIN_SCHEMA)
-    async_register_admin_service(hass, DOMAIN, SERVICE_CLEAR_BED, _clear_bed,
-                                 schema=CLEAR_BED_SCHEMA)
+    if PUSH_ENABLED:
+        async_register_admin_service(hass, DOMAIN, SERVICE_CLEAR_BED, _clear_bed,
+                                     schema=CLEAR_BED_SCHEMA)
 
 
 @callback
@@ -293,6 +295,16 @@ def _prepare(path: Path, kind: str, model_id: str, facts, model_named) -> _Prepa
     profile = sweep.profile_for(model_id)
     if profile is None:
         raise FileRefused("clear_model")
+    if not PUSH_ENABLED:
+        # No push: the head only parks above the part, so any print can be cooled.
+        scan = scan_for_clearing(path, kind, push=False)
+        block = sweep.clearing_block(profile, scan.max_z, (), push=False)
+        slots = facts.used_slots or tuple(sorted(facts.materials))
+        limit = cool_limit_for(material_family(facts.materials.get(s)) for s in slots)
+        handle, name = tempfile.mkstemp(prefix="anycubic-", suffix=".tmp")
+        os.close(handle)
+        size, md5 = write_prepared_copy(path, Path(name), kind, scan, block)
+        return _Prepared(path=Path(name), size=size, md5=md5, bed_limit=limit)
     if model_named is not True:
         raise FileRefused("clear_file_model")
     families = clearing_families(facts)

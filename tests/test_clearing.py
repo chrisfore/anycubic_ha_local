@@ -102,6 +102,16 @@ def _notes(hass):
 
 
 @pytest.fixture(autouse=True)
+def push_on(monkeypatch):
+    """These tests are about the push, which is switched off in the product for now."""
+    from custom_components.anycubic import actions, button, config_flow, diagnostics
+    for module in (clearing_mod, actions, button):
+        monkeypatch.setattr(module, "PUSH_ENABLED", True)
+    for module in (clearing_mod, config_flow, diagnostics):
+        monkeypatch.setattr(module, "DOOR_SENSOR_OPTION_ENABLED", True)
+
+
+@pytest.fixture(autouse=True)
 def no_window(monkeypatch):
     """Most tests are not about the motor window; those that are set it themselves."""
     monkeypatch.setattr(clearing_mod, "MOTOR_WINDOW", None)

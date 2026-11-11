@@ -32,8 +32,19 @@ from custom_components.anycubic.anycubic_local import sweep, upload as upload_mo
 from custom_components.anycubic.anycubic_local.handshake import HandshakeResult
 from custom_components.anycubic.const import DOMAIN
 
+
+@pytest.fixture(autouse=True)
+def push_on(monkeypatch):
+    """These tests are about the push, which is switched off in the product for now."""
+    from custom_components.anycubic import button, config_flow
+    for module in (clearing_mod, actions_mod, button):
+        monkeypatch.setattr(module, "PUSH_ENABLED", True)
+    for module in (clearing_mod, config_flow, diagnostics_mod):
+        monkeypatch.setattr(module, "DOOR_SENSOR_OPTION_ENABLED", True)
+
+
 CLEAR = "button.anycubic_kobra_s1_max_clear_the_bed"
-STATE = "sensor.anycubic_kobra_s1_max_bed_clearing"
+STATE = "sensor.anycubic_kobra_s1_max_bed_cool_down"
 
 
 def _part(*, material="PLA", slot=1, plate="Textured PEI Plate", extra="", max_z="12.40",
@@ -368,9 +379,10 @@ def test_every_clearing_refusal_event_and_field_has_its_text():
     assert strings["entity"]["button"]["clear_bed"]["name"] == "Clear the bed"
     services = strings["services"]
     for service in ("print_file", "print_again"):
-        assert services[service]["fields"]["allow_clear_bed"]["name"] == "Allow Clear the bed"
+        assert services[service]["fields"]["allow_clear_bed"]["name"] == "Cool the bed when done"
     assert set(services["clear_bed"]["fields"]) == {"printer", "door_open_confirmed"}
     assert strings["options"]["step"]["init"]["data"]["door_sensor"] == "Door sensor"
+    assert strings["entity"]["sensor"]["bed_clearing"]["name"] == "Bed cool-down"
 
 
 async def test_a_ticked_archive_is_sent_whole_and_its_copy_as_plain_gcode(env):

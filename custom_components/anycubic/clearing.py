@@ -36,6 +36,7 @@ from .const import (
     DOOR_SENSOR_OPTION_ENABLED,
     ENCLOSED_MODELS,
     MODEL_NAMES,
+    PUSH_ENABLED,
     PUSH_OFF_MARKER,
     PUSH_OFF_MODELS,
     REPORT_GAP_BOUND,
@@ -76,8 +77,17 @@ CHAMBER_LIMIT = 30
 # How often the printer is asked how it is while a press is possible or a sweep is running.
 FAST_POLL = timedelta(seconds=5)
 
+# With no push, the bed is "cool" at the materials' limits above, or at this for others.
+COOL_DEFAULT = 30
+
 # What the owner is told. Constants, as strings.json has no place for a notification's text.
 MESSAGE_READY = "Print finished. Ready to clear the bed."
+MESSAGE_COOLING = "Print finished. Cooling the bed."
+MESSAGE_COOL = ("The bed has cooled to {temp} °C. Take the print off, then press Bed is "
+                "clear.")
+MESSAGE_NOT_COOL = ("The print was finished with the bed still warm, at {temp} °C, as it did "
+                    "not cool in time. Take the print off when it has cooled, then press Bed "
+                    "is clear.")
 MESSAGE_EXPIRED = ("Clear the bed is no longer available for this print. Press Stop, then "
                    "clear the bed by hand.")
 MESSAGE_PAUSED_EARLIER = ("This print paused earlier, so Clear the bed will not be offered. "
@@ -98,6 +108,13 @@ REASON_ENDED = "the print ended before the push finished"
 def bed_limit_for(families) -> int:
     """The strictest bed limit among the materials a file prints with."""
     return min(BED_LIMITS[family] for family in families)
+
+
+def cool_limit_for(families) -> int:
+    """With no push: how cool the bed must be before the job is ended, for these materials.
+    The coolest limit any of them asks for; a material with none of its own gets the usual."""
+    return min((BED_LIMITS.get(family, COOL_DEFAULT) for family in families),
+               default=COOL_DEFAULT)
 
 
 def _stem(name: str | None) -> str | None:
@@ -138,6 +155,8 @@ class Clearing:
         self._push_running = False
         # The paused job a stop was already sent for, so one pause gets one stop.
         self._stopped: str | None = None
+        # With no push: why the job was ended by Home Assistant, "cool" or "late".
+        self._ended: str | None = None
         self._unsub_door = None
         self._unsub_poll = None
 
@@ -212,7 +231,8 @@ class Clearing:
         Yes for a pause in Home Assistant's own prepared job, in any job whose name carries
         the marker, and in any job paused with the bed heater off or its target unknown.
         """
-        if self._c.hs.model_id not in PUSH_OFF_MODELS or not self._paused:
+        if (not PUSH_ENABLED or self._c.hs.model_id not in PUSH_OFF_MODELS
+                or not self._paused):
             return False
         printer = self._c.data.printer
         target = finite_number(printer.bed_target)
@@ -222,7 +242,8 @@ class Clearing:
     @property
     def press_possible(self) -> bool:
         """Is a press worth offering: ready, inside the window, and the printer reporting."""
-        return self.state == STATE_READY and self._c.reachable and not self._window_over()
+        return (PUSH_ENABLED and self.state == STATE_READY and self._c.reachable
+                and not self._window_over())
 
     def _info_fresh(self) -> bool:
         """Has the printer said how the job stands within the gap bound?"""
@@ -282,9 +303,11 @@ class Clearing:
             target = finite_number(self._c.data.printer.bed_target)
             if self.state == STATE_ARMED and target == 0 and not job.paused_earlier:
                 self._enter_ready()
+            elif self.state == STATE_READY and not PUSH_ENABLED:
+                self._cool_check()
             elif self.state == STATE_READY and self._window_over():
                 self._expire()
-        elif self.state in (STATE_READY, STATE_EXPIRED):
+        elif self.state in (STATE_READY, STATE_EXPIRED) and PUSH_ENABLED:
             # Running again, and not by a press: stop it before the sweep.
             self._fail(REASON_OUTSIDE, stop=True)
         elif self._was_paused and not job.paused_earlier:
@@ -299,7 +322,7 @@ class Clearing:
         if not self._paused:
             self._stopped = None
             return
-        if self._c.hs.model_id not in PUSH_OFF_MODELS:
+        if not PUSH_ENABLED or self._c.hs.model_id not in PUSH_OFF_MODELS:
             return
         printer = self._c.data.printer
         layer = finite_number(printer.current_layer)
@@ -327,6 +350,19 @@ class Clearing:
                 self._retire(STATE_FAILED, REASON_ENDED)
         elif self.state == STATE_FAILED:
             self._retire(STATE_FAILED, self.reason)
+        elif self.state == STATE_READY and self._ended is not None:
+            # No push: Home Assistant ended the job itself, cool or out of time. The part
+            # is still on the bed, so the bed still needs clearing.
+            temp = finite_number(self._c.data.printer.bed_temp)
+            shown = "?" if temp is None else round(temp)
+            if self._ended == "cool":
+                self._retire(STATE_DONE)
+                self._notify(MESSAGE_COOL.format(temp=shown))
+                self._c.fire_event(EVENT_CLEAR_DONE, {"reason": None})
+            else:
+                self._retire(STATE_EXPIRED, "the bed did not cool in time")
+                self._notify(MESSAGE_NOT_COOL.format(temp=shown))
+                self._c.fire_event(EVENT_CLEAR_FAILED, {"reason": STATE_EXPIRED})
         elif self.state in (STATE_READY, STATE_EXPIRED):
             self._retire(STATE_STOPPED)
         else:
@@ -343,6 +379,8 @@ class Clearing:
     def async_on_gap(self) -> None:
         """The printer was silent for longer than the gap bound: nobody saw what it did."""
         self._seen_running = False
+        if not PUSH_ENABLED:
+            return
         self._pause_at = None
         if self.state == STATE_PUSHING:
             self._fail(REASON_LOST, stop=False)
@@ -351,8 +389,10 @@ class Clearing:
 
     @callback
     def async_tick(self) -> None:
-        """Any report at all: time may have run out."""
-        if self.state == STATE_READY and self._window_over():
+        """Any report at all: time may have run out, or the bed may have cooled."""
+        if self.state == STATE_READY and not PUSH_ENABLED:
+            self._cool_check()
+        elif self.state == STATE_READY and self._window_over():
             self._expire()
 
     # ------------------------------------------------------------------ transitions
@@ -365,7 +405,37 @@ class Clearing:
         if state not in (STATE_READY, STATE_PUSHING):
             self._release()
 
+    def _cool_check(self) -> None:
+        """No push: end the job once the bed is cool, or once it has waited long enough.
+
+        Ended with a stop, never a resume. The printer must have said within the gap bound
+        that this is still Home Assistant's own job, paused; the bed reading must be a number.
+        """
+        if (self._ended is not None or not self._ours or not self._paused
+                or not self._info_fresh()):
+            return
+        job = self._job
+        bed = finite_number(self._c.data.printer.bed_temp)
+        if bed is not None and bed <= job.bed_limit:
+            self._ended = "cool"
+        elif self._window_over():
+            self._ended = "late"
+        else:
+            return
+        self._stop_once(cooled=True)
+
     def _enter_ready(self) -> None:
+        if not PUSH_ENABLED:
+            # Nothing is resumed, so when the pause began matters only for how long to wait.
+            self._pause_at, self._ended = time.monotonic(), None
+            self._set(STATE_READY)
+            self._save()
+            if self._unsub_poll is None:
+                self._unsub_poll = async_track_time_interval(self._c.hass, self._poll, FAST_POLL)
+            self._notify(MESSAGE_COOLING)
+            self._c.fire_event(EVENT_CLEAR_READY, {"reason": None})
+            self._cool_check()
+            return
         self._pause_at = time.monotonic() if self._seen_running else None
         self._door_opened = False
         self._set(STATE_READY)
@@ -401,13 +471,17 @@ class Clearing:
         self._set(state, reason)
         self._save()
 
-    def _stop_once(self) -> bool:
+    def _stop_once(self, *, cooled: bool = False) -> bool:
         """Send a stop for the paused job, once for each pause."""
         key = self.task or self._c.data.printer.filename or "?"
         if self._stopped == key:
             return False
         self._stopped = key
-        _LOGGER.warning("stopping a paused print rather than letting it be resumed into a sweep")
+        if cooled:
+            _LOGGER.debug("ending the parked print: the bed is cool, or it has waited long enough")
+        else:
+            _LOGGER.warning(
+                "stopping a paused print rather than letting it be resumed into a sweep")
         self._c.hass.async_create_task(self._c.async_send_command("stop"))
         return True
 
@@ -461,6 +535,8 @@ class Clearing:
         coordinator = self._c
         printer = coordinator.data.printer
         job = self._job
+        if not PUSH_ENABLED:
+            raise _refusal("clear_not_ready")
         if self.state == STATE_EXPIRED:
             raise _refusal("clear_window_over")
         if (self.state != STATE_READY or job is None or job.resumed or not self._ours

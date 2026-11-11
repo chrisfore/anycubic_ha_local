@@ -125,7 +125,7 @@ Home Assistant. Or find it manually:
 | `binary_sensor` | Printing, Paused, Bed needs clearing (S1 / S1 Max) |
 | `camera` | Camera |
 | `light` | Chamber light |
-| `button` | Pause, Resume, Stop, Print again and Bed is clear (S1 / S1 Max), Clear the bed (S1 Max) |
+| `button` | Pause, Resume, Stop, Print again and Bed is clear (S1 / S1 Max) |
 | `number` | Nozzle/Bed target temperature, Part-cooling/Auxiliary/Chamber fan |
 | `select` | Print speed (silent / standard / sport) |
 | ACE `sensor` | Humidity, Box temperature, Drying time remaining, Loaded slot, Slot 1–4 (material/color/remaining as attributes) |
@@ -281,7 +281,7 @@ script:
           file:
             accept: ".gcode,.3mf"
       allow_clear_bed:
-        name: Allow Clear the bed
+        name: Cool the bed when done
         required: true
         default: false
         selector:
@@ -293,93 +293,61 @@ script:
           {{ dict(data, printer=printer) if printer is defined and printer else data }}
 ```
 
-The **Allow Clear the bed** tick box is for the Kobra S1 Max; see the next section. Leave it out of
-the script if you do not use it.
+**Cool the bed when done** is for the Kobra S1 Max; see the next section. Leave it out of the
+script if you do not use it.
 
-## Clear the bed (Kobra S1 Max)
+## Cool the bed when done (Kobra S1 Max)
 
-Tick **Allow Clear the bed** when you send a file, and the print ends differently: the head lifts
-above the part, parks at the back and the printer pauses. A **Clear the bed** button then appears.
-Open the door, put a box in front of it, and press the button: the nozzle cools, and the head pushes
-the parts forward, out of the door. Nothing is pushed until you press, and every press is checked
-first.
+Turn on **Cool the bed when done** when you send a file, and the print ends differently. The head
+lifts above the part and parks at the back, the chamber fan and the auxiliary fan run at 80 %, and
+the printer waits. Home Assistant watches the bed, and once it has cooled it ends the print and
+tells you: "The bed has cooled to 25 °C. Take the print off, then press Bed is clear."
 
-> **Watch the first few.** A push cannot be undone, and nothing checks that a part really left the
-> bed. Stay with the printer until you know how your parts behave.
+Nothing touches the part, and nothing is ever resumed: the wait is ended with a stop, the same as
+pressing Stop.
 
-What a press checks, in this order. The first one that fails says what to do, and sends nothing:
-
-| Check | What you are told |
-|---|---|
-| The print is the one Home Assistant prepared, still paused at its end | There is no finished print waiting to be cleared |
-| There is still time (the printer only holds its motors for a while) | It is too late to clear this print. Press Stop, then clear the bed by hand |
-| The door is open (see below) | Open the door, then press Clear the bed |
-| The bed has cooled: 28 °C for PLA, 25 °C for PETG | The bed is 34 °C. Wait until it is 28 °C or cooler |
-| The chamber is 30 °C or cooler | The chamber is 36 °C. Wait until it is 30 °C or cooler |
-
-**The door.** With a door sensor chosen in the integration's options (any door or opening contact
-sensor; ones that only report changes work), the sensor must have reported the door opening *after*
-the print finished, and the push is stopped if it reports anything else while the head is moving.
-With no sensor, the button itself is refused. Use the dashboard's **Clear the bed** tile instead: it
-asks "Open the printer door before clearing the bed." and passes your answer on. In that case
-nothing watches the door, and a closed door is yours to prevent.
-
-**Which prints can be cleared.** PLA and PETG only (PETG only on the textured plate). No brim, skirt,
-raft or prime tower. Parts at least 4 mm and at most 200 mm tall, and not in the back 44 mm of the
-bed. The file must be sliced for this printer, with object labeling on, and with no pause of its
-own. A print that does not qualify is refused before anything is sent; untick the box to print it
-normally.
-
-**Place parts near the front of the bed.** In the slicer, put them toward the front edge of the
-plate, the door side, rather than in the middle or at the back. The head pushes from the back to
-the door, so a part near the front has less bed to slide across, is less likely to turn or tip on
-the way, and drops out of the door instead of stopping short.
-
-**To finish without pushing,** press **Stop**, wait for the head to stop moving, take the part off,
-then press **Bed is clear**.
-
-**The Bed clearing sensor** shows where things stand: Print running, Ready to clear, Clearing,
-Cleared, Failed, No longer available, or Stopped, with the reason as an attribute. The print event
-entity fires `clear_ready`, `clear_done` and `clear_failed`, so a phone can be told when a print is
-ready:
+- **How cool:** 28 °C for PLA, 25 °C for PETG, 30 °C for anything else; the coolest one if a print
+  uses several. With the door closed, a bed at 70 °C takes about half an hour.
+- **If it does not cool within 90 minutes,** the print is ended anyway and you are told the bed is
+  still warm.
+- **To take the part sooner,** press **Stop**, wait for the head to stop moving, and take it off.
+- **The Bed cool-down sensor** shows where things stand: Print running, Cooling, Cool, Not cooled
+  in time, or Stopped. The print event entity fires `clear_ready` when the cooling starts and
+  `clear_done` when the bed is cool, so a phone can be told:
 
 ```yaml
 automation:
-  - alias: Print ready to clear
+  - alias: Print is cool
     triggers:
       - trigger: state
         entity_id: event.anycubic_kobra_s1_max_print_event
         attribute: event_type
-        to: clear_ready
+        to: clear_done
     actions:
       - action: notify.mobile_app_your_phone
         data:
-          message: The print is finished. Open the door and press Clear the bed.
+          message: The print has cooled. Take it off and press Bed is clear.
 ```
 
 Things to know:
 
-- **Never automate `anycubic.clear_bed`,** and never put `door_open_confirmed` in a script. The
-  action refuses a call that has no person behind it.
-- **Do not resume the pause at the printer.** While a prepared print waits, Home Assistant's own
-  Resume button is unavailable. A resume from the touchscreen, the slicer or another app runs the
-  push with no checks at all; Home Assistant stops the print as soon as it sees that, which may be
-  too late.
-- The nozzle stays at 140 °C while the print waits for your press. It is cooled after the press,
-  before anything touches a part, so the push starts a few minutes after you press.
-- If the print was paused and continued earlier (by hand, or by a filament runout), Clear the bed is
-  not offered at its end. You are told when that happens. Press Stop when it finishes.
-- A paused print that Home Assistant did not start, but whose file name contains `-ha-pushoff` or
-  whose bed heater is off, is stopped rather than left to be resumed.
-- Print again never clears: send the file again with the box ticked.
-- A push that completes but moves nothing still counts as cleared. Look before the next print.
+- The nozzle stays at 140 °C while the print waits; the printer holds it there whenever it is
+  paused, and takes no temperature or fan commands until the wait ends.
+- The bed still needs clearing afterward, as after every print: take the part off, then press
+  **Bed is clear**.
+- If the print was paused and continued earlier (by hand, or by a filament runout), the printer
+  does not report its last pause. You are told when that happens; press Stop when it finishes.
+- The file must be sliced for this printer, give its height, and have no pause of its own. A file
+  that does not qualify is refused before anything is sent; turn the switch off to print it
+  normally.
+- Print again never cools: send the file again with the switch on.
 
 ## Example dashboard
 
 [`dashboards/anycubic_dashboard.yaml`](dashboards/anycubic_dashboard.yaml) — camera on top, the ACE 2
 filament slots (tinted with each slot's real color) below it, then the printer status and all the
 controls, including **Print a file**, **Print again**, **Bed is clear** and the bed status for the
-S1 / S1 Max, and **Clear the bed** with its status for the S1 Max. The file starts with a commented copy of the script above, which the **Print a file**
+S1 / S1 Max, and the bed cool-down status for the S1 Max. The file starts with a commented copy of the script above, which the **Print a file**
 button opens. It uses the [Mushroom](https://github.com/piitaya/lovelace-mushroom) and
 [card-mod](https://github.com/thomasloven/lovelace-card-mod) frontend cards (install both from HACS),
 and assumes the default device names — adjust the entity-ID prefixes if you renamed a device.

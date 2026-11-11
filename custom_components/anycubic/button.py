@@ -14,7 +14,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .actions import async_clear_bed, async_print_again
 from .anycubic_local.const import JOB_PHASES
 from .anycubic_local.models import PrinterState
-from .const import DOMAIN, PRINT_MODELS, PUSH_OFF_MODELS
+from .const import DOMAIN, PRINT_MODELS, PUSH_ENABLED, PUSH_OFF_MODELS
 from .coordinator import AnycubicCoordinator
 from .entity import AnycubicEntity
 
@@ -45,7 +45,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, add: AddEnt
     buttons: list[ButtonEntity] = [AnycubicButton(coordinator, d) for d in BUTTONS]
     if coordinator.hs.model_id in PRINT_MODELS:
         buttons += [AnycubicPrintAgainButton(coordinator), AnycubicBedClearButton(coordinator)]
-    if coordinator.hs.model_id in PUSH_OFF_MODELS:
+    if PUSH_ENABLED and coordinator.hs.model_id in PUSH_OFF_MODELS:
         buttons.append(AnycubicClearBedButton(coordinator))
     add(buttons)
 

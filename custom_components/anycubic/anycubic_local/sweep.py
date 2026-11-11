@@ -195,16 +195,46 @@ def _cooling_lines(profile: SweepProfile, cooling) -> list[str]:
     return [*lines, "M106 S0"]
 
 
+def _parking_block(profile: SweepProfile, max_z: float) -> list[str]:
+    """Lift, park, fans on, pause; then, should the pause ever be resumed, fans off and a
+    raise. Nothing in it goes near a part."""
+    tallest = finite_number(max_z)
+    if tallest is None or tallest <= 0:
+        raise FileRefused("clear_no_height")
+    lift = round(tallest + profile.lift_clearance, 2)
+    if lift + profile.pause_lift > profile.z_cap:
+        raise FileRefused("clear_part_too_tall")
+    out = _Writer(profile)
+    out.raw("; Home Assistant: cool the bed when done.")
+    out.raw("M140 S0")
+    out.raw("M141 S0")
+    out.raw("G90")
+    out.z(lift)
+    out.xy(*profile.park, profile.travel_speed)
+    for line in WAIT_FANS_ON:
+        out.raw(line)
+    out.raw("M601")
+    for line in WAIT_FANS_OFF:
+        out.raw(line)
+    out.z(min(lift + profile.final_raise, profile.z_cap))
+    out.raw("; Home Assistant: end of cool the bed when done.")
+    return out.lines
+
+
 def clearing_block(profile: SweepProfile, max_z: float, footprints, *,
                    cooling: CoolTo | Dwell | tuple[CoolTo | Dwell, ...] | None = None,
-                   sweep_height: float | None = None) -> list[str]:
+                   sweep_height: float | None = None, push: bool = True) -> list[str]:
     """The lines to insert after a file's last nozzle-off line, or a refusal.
 
     `max_z` is the tallest part and `footprints` each part's outline, as the file gives them.
     `cooling` is how the nozzle is cooled after the resume, one step or several in turn: by
     default a wait for the profile's temperature. `sweep_height` is for a first live test in the air; the product
-    never passes it.
+    never passes it. With `push` off there is no sweep: the block lifts, parks, turns the
+    fans on and pauses, and what follows a resume only turns the fans off and raises; only
+    the height is needed for that.
     """
+    if not push:
+        return _parking_block(profile, max_z)
     height = profile.sweep_height if sweep_height is None else finite_number(sweep_height)
     tallest = finite_number(max_z)
     if height is None or height <= 0:
