@@ -644,7 +644,7 @@ class _ClearScanner:
             extrudes = e > 0
         else:
             extrudes, self._e = e > self._e, e
-        travels = x is not None or y is not None
+        travels = x is not None or y is not None or arc
         if not self._absolute:
             if extrudes and travels and self._in_part:
                 raise FileRefused("clear_unreadable")

@@ -1,6 +1,6 @@
 [project]
 name = "anycubic-local"
-version = "1.3.0"
+version = "1.4.0b1"
 description = "Home Assistant integration for the Anycubic Kobra 3 / 4 / X / S1 series (and ACE / ACE 2) over stock LAN Mode - local control, no cloud"
 requires-python = ">=3.12"
 dependencies = ["cryptography>=42", "paho-mqtt>=1.6"]

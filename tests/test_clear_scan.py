@@ -368,3 +368,10 @@ def test_an_arc_counts_by_its_whole_circle_not_its_end_points(tmp_path):
 def test_relative_moves_make_extrusion_relative_too(tmp_path):
     _refused("clear_unreadable",
              _gcode(tmp_path, start=START + "M82\nG92 E50\nG91\nG1 X5 Y5 E1\nG90\n"))
+
+
+def test_a_full_circle_with_no_end_point_is_measured_too(tmp_path):
+    _refused("clear_no_outline",
+             _gcode(tmp_path, start=START + "G1 X175 Y175\nG2 I100 J0 E5\n"))
+    _refused("clear_unreadable",
+             _gcode(tmp_path, start=START + "G91\nG2 I100 J0 E5\nG90\n"))
