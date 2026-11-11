@@ -44,6 +44,7 @@ from .anycubic_local.printfile import (
     model_matches,
     printer_name,
     scan_for_clearing,
+    scan_purge_line,
     write_prepared_copy,
 )
 from .clearing import bed_limit_for, cool_limit_for
@@ -67,6 +68,7 @@ SERVICE_CLEAR_BED = "clear_bed"
 ATTR_PRINTER = "printer"
 ATTR_FILE = "file"
 ATTR_ALLOW_CLEAR_BED = "allow_clear_bed"
+ATTR_SKIP_PURGE_LINE = "skip_purge_line"
 ATTR_DOOR_OPEN_CONFIRMED = "door_open_confirmed"
 
 # How a prepared copy cools the nozzle after the resume, before the sweep. Measured on a
@@ -105,6 +107,7 @@ PRINT_FILE_SCHEMA = vol.Schema({
     vol.Optional(ATTR_PRINTER): _one_device,
     vol.Required(ATTR_FILE): cv.string,
     vol.Optional(ATTR_ALLOW_CLEAR_BED, default=False): cv.boolean,
+    vol.Optional(ATTR_SKIP_PURGE_LINE, default=False): cv.boolean,
 })
 PRINT_AGAIN_SCHEMA = vol.Schema({
     vol.Optional(ATTR_PRINTER): _one_device,
@@ -132,7 +135,8 @@ def async_setup_actions(hass: HomeAssistant) -> None:
 
     async def _print_file(call: ServiceCall) -> None:
         await async_print_file(hass, call.data.get(ATTR_PRINTER), call.data[ATTR_FILE],
-                               allow_clear=call.data[ATTR_ALLOW_CLEAR_BED])
+                               allow_clear=call.data[ATTR_ALLOW_CLEAR_BED],
+                               skip_purge=call.data[ATTR_SKIP_PURGE_LINE])
 
     async def _print_again(call: ServiceCall) -> None:
         coordinator = _coordinator(hass, call.data.get(ATTR_PRINTER))
@@ -208,7 +212,7 @@ async def async_clear_bed(coordinator: AnycubicCoordinator, *,
 
 
 async def async_print_file(hass: HomeAssistant, device_id: str | None, file_id: str, *,
-                           allow_clear: bool = False) -> None:
+                           allow_clear: bool = False, skip_purge: bool = False) -> None:
     """The print_file action.
 
     The uploaded file is Home Assistant's, usable once, and deleted at the end of this
@@ -222,7 +226,8 @@ async def async_print_file(hass: HomeAssistant, device_id: str | None, file_id: 
     try:
         coordinator = _coordinator(hass, device_id)
         await _with_outcome(coordinator,
-                            _async_submit_file(hass, coordinator, path, allow_clear))
+                            _async_submit_file(hass, coordinator, path, allow_clear,
+                                               skip_purge))
     finally:
         if holder is not None:
             await hass.async_add_executor_job(holder.__exit__, None, None, None)
@@ -283,40 +288,47 @@ class _Prepared:
     path: Path
     size: int
     md5: str
-    bed_limit: int
+    # How cool the bed must be before the job is ended; None if nothing waits for its end.
+    bed_limit: int | None
 
 
-def _prepare(path: Path, kind: str, model_id: str, facts, model_named) -> _Prepared:
-    """Check a file for Clear the bed and write its prepared copy. Executor.
+def _prepare(path: Path, kind: str, model_id: str, facts, model_named, cool: bool,
+             skip_purge: bool) -> _Prepared:
+    """Check a file for what was asked and write the copy that will be printed. Executor.
 
-    Every check comes before the copy is written, and all of it before anything is sent.
-    The copy has a generated name in the system's temporary folder; the caller deletes it.
+    `cool` is "Cool the bed when done" (or, with the push on, Clear the bed); `skip_purge`
+    is "Skip the purge line". Every check comes before the copy is written, and all of it
+    before anything is sent. The copy has a generated name in the system's temporary
+    folder; the caller deletes it. With no cool-down the copy is an ordinary print, and
+    nothing waits for its end: its bed limit is None.
     """
-    profile = sweep.profile_for(model_id)
-    if profile is None:
-        raise FileRefused("clear_model")
-    if not PUSH_ENABLED:
-        # No push: the head only parks above the part, so any print can be cooled.
-        scan = scan_for_clearing(path, kind, push=False)
-        block = sweep.clearing_block(profile, scan.max_z, (), push=False)
-        slots = facts.used_slots or tuple(sorted(facts.materials))
-        limit = cool_limit_for(material_family(facts.materials.get(s)) for s in slots)
-        handle, name = tempfile.mkstemp(prefix="anycubic-", suffix=".tmp")
-        os.close(handle)
-        size, md5 = write_prepared_copy(path, Path(name), kind, scan, block)
-        return _Prepared(path=Path(name), size=size, md5=md5, bed_limit=limit)
-    if model_named is not True:
-        raise FileRefused("clear_file_model")
-    families = clearing_families(facts)
-    scan = scan_for_clearing(path, kind)
-    if "PETG" in families and not scan.textured_plate:
-        raise FileRefused("clear_petg_plate")
-    block = sweep.clearing_block(profile, scan.max_z, scan.footprints, cooling=NOZZLE_COOLING)
+    edits = scan_purge_line(path, kind) if skip_purge else ()
+    scan, block, limit = None, (), None
+    if cool:
+        profile = sweep.profile_for(model_id)
+        if profile is None:
+            raise FileRefused("clear_model")
+        if not PUSH_ENABLED:
+            # No push: the head only parks above the part, so any print can be cooled.
+            scan = scan_for_clearing(path, kind, push=False)
+            block = sweep.clearing_block(profile, scan.max_z, (), push=False)
+            slots = facts.used_slots or tuple(sorted(facts.materials))
+            limit = cool_limit_for(material_family(facts.materials.get(s)) for s in slots)
+        else:
+            if model_named is not True:
+                raise FileRefused("clear_file_model")
+            families = clearing_families(facts)
+            scan = scan_for_clearing(path, kind)
+            if "PETG" in families and not scan.textured_plate:
+                raise FileRefused("clear_petg_plate")
+            block = sweep.clearing_block(profile, scan.max_z, scan.footprints,
+                                         cooling=NOZZLE_COOLING)
+            limit = bed_limit_for(families)
     handle, name = tempfile.mkstemp(prefix="anycubic-", suffix=".tmp")
     os.close(handle)
     copy = Path(name)
-    size, md5 = write_prepared_copy(path, copy, kind, scan, block)
-    return _Prepared(path=copy, size=size, md5=md5, bed_limit=bed_limit_for(families))
+    size, md5 = write_prepared_copy(path, copy, kind, scan, block, edits=edits)
+    return _Prepared(path=copy, size=size, md5=md5, bed_limit=limit)
 
 
 def _check_kept(kept, expected: str) -> None:
@@ -339,7 +351,8 @@ def _delete(path: Path) -> None:
 
 
 async def _async_submit_file(hass: HomeAssistant, coordinator: AnycubicCoordinator,
-                             path: Path | None, allow_clear: bool = False) -> None:
+                             path: Path | None, allow_clear: bool = False,
+                             skip_purge: bool = False) -> None:
     _check_model(coordinator)
     _check_reachable(coordinator)
     if coordinator.submit_lock.locked():
@@ -363,10 +376,11 @@ async def _async_submit_file(hass: HomeAssistant, coordinator: AnycubicCoordinat
         ams_settings = _filament_mapping(coordinator, facts.used_slots, facts.materials,
                                          facts.colors)
         prepared: _Prepared | None = None
-        if allow_clear:
+        if allow_clear or skip_purge:
             try:
                 prepared = await hass.async_add_executor_job(
-                    _prepare, path, name.kind, coordinator.hs.model_id, facts, model_named)
+                    _prepare, path, name.kind, coordinator.hs.model_id, facts, model_named,
+                    allow_clear, skip_purge)
             except FileRefused as err:
                 raise _refusal(err.key) from None
         try:

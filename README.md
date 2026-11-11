@@ -286,15 +286,30 @@ script:
         default: false
         selector:
           boolean:
+      skip_purge_line:
+        name: Skip the purge line
+        required: true
+        default: false
+        selector:
+          boolean:
     sequence:
       - action: anycubic.print_file
         data: >-
-          {% set data = {'file': file, 'allow_clear_bed': allow_clear_bed | default(false)} %}
+          {% set data = {'file': file, 'allow_clear_bed': allow_clear_bed | default(false),
+                         'skip_purge_line': skip_purge_line | default(false)} %}
           {{ dict(data, printer=printer) if printer is defined and printer else data }}
 ```
 
 **Cool the bed when done** is for the Kobra S1 Max; see the next section. Leave it out of the
 script if you do not use it.
+
+**Skip the purge line** leaves out the line of filament the slicer lays along the back edge of
+the bed before each print, so it does not have to be scraped off afterward. The head still makes
+the same moves; only the filament is left out, in the copy that is sent (your file is not
+changed). The printer has already purged into its chute by then, but the very start of the first
+layer may come out a little thin: try it on a part where that does not matter first. It works on
+files from the Anycubic slicer; a file whose purge line is not recognized is refused before
+anything is sent. Leave the field out of the script if you do not use it.
 
 ## Cool the bed when done (Kobra S1 Max)
 

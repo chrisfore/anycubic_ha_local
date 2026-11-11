@@ -16,6 +16,11 @@ print_file:
       default: false
       selector:
         boolean:
+    skip_purge_line:
+      required: false
+      default: false
+      selector:
+        boolean:
 
 print_again:
   fields:

@@ -44,10 +44,17 @@
 #       default: false
 #       selector:
 #         boolean:
+#     skip_purge_line:
+#       name: Skip the purge line
+#       required: true
+#       default: false
+#       selector:
+#         boolean:
 #   sequence:
 #     - action: anycubic.print_file
 #       data: >-
-#         {% set data = {'file': file, 'allow_clear_bed': allow_clear_bed | default(false)} %}
+#         {% set data = {'file': file, 'allow_clear_bed': allow_clear_bed | default(false),
+#                        'skip_purge_line': skip_purge_line | default(false)} %}
 #         {{ dict(data, printer=printer) if printer is defined and printer else data }}
 #
 # Cool the bed when done (Kobra S1 Max only): the "Cool-down" tile shows how far it has got.

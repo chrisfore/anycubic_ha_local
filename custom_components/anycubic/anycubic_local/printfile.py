@@ -819,68 +819,188 @@ def _block_bytes(block: Iterable[str], newline: bytes) -> bytes:
     return b"".join(line.encode("ascii", "replace") + newline for line in lines)
 
 
-def _insert(chunks: Iterable[bytes], scan: ClearScan, block: bytes) -> Iterator[bytes]:
-    """The stream with the block put in at the scan's insert point.
+@dataclass(frozen=True)
+class Edit:
+    """One change to a G-code stream: at `start`, the bytes `old` become `new`.
 
-    The line that ends there must still be the nozzle-off line the scan found: if it is
-    not, this is not the file that was scanned, and nothing is written past that point.
+    `old` is what was read there when the change was planned; if the stream no longer has
+    it, the file is not the one that was read and no copy is made. An insertion has no
+    `old`; `after` is then what the line just before it has to be.
     """
-    seen, tail, done = 0, b"", False
+
+    start: int
+    old: bytes
+    new: bytes
+    after: re.Pattern[bytes] | None = None
+
+
+def _edit(chunks: Iterable[bytes], edits: Iterable[Edit]) -> Iterator[bytes]:
+    """The stream with the edits made, in order. They must not overlap."""
+    todo = sorted(edits, key=lambda edit: edit.start)
+    at, done, pos, tail, taken = 0, False, 0, b"", b""
     for chunk in chunks:
-        if done:
-            yield chunk
-            continue
-        if seen + len(chunk) < scan.insert_at:
-            seen += len(chunk)
-            tail = (tail + chunk)[-_LONGEST_LINE:]
-            yield chunk
-            continue
-        cut = scan.insert_at - seen
-        head = chunk[:cut]
-        last = (tail + head)[-_LONGEST_LINE:]
-        if not last.endswith(b"\n") or not _NOZZLE_OFF.fullmatch(
-                last[:-1].rsplit(b"\n", 1)[-1].strip()):
-            raise FileRefused("clear_end_code")
-        yield head
-        yield block
-        yield chunk[cut:]
-        done = True
-    if not done:
+        cur, size = 0, len(chunk)
+        while cur < size:
+            if at >= len(todo):
+                yield chunk[cur:]
+                break
+            edit = todo[at]
+            if pos + cur < edit.start:
+                upto = min(size, edit.start - pos)
+                tail = (tail + chunk[cur:upto])[-_LONGEST_LINE:]
+                yield chunk[cur:upto]
+                cur = upto
+                if pos + cur < edit.start:
+                    break
+            if not done:
+                if edit.after is not None and (
+                        not tail.endswith(b"\n") or not edit.after.fullmatch(
+                            tail[:-1].rsplit(b"\n", 1)[-1].strip())):
+                    raise FileRefused("clear_end_code")
+                yield edit.new
+                done, taken = True, b""
+            upto = min(size, edit.start + len(edit.old) - pos)
+            taken += chunk[cur:upto]
+            cur = max(cur, upto)
+            if pos + cur < edit.start + len(edit.old):
+                break
+            if taken != edit.old:
+                raise FileRefused("clear_end_code")
+            tail = (tail + taken)[-_LONGEST_LINE:]
+            at, done = at + 1, False
+        pos += size
+    if at < len(todo):
+        # An edit the stream never reached, or was cut short in.
         raise FileRefused("clear_end_code")
 
 
-def _copy_gcode(src: Path, dst: Path, scan: ClearScan, block: bytes) -> None:
+# ------------------------------------------------------------------ Skip the purge line
+#
+# The slicer lays a line of filament along the back edge of the bed before the print, to
+# prime the nozzle. Skipping it takes the filament out and leaves every move as it is, so
+# the head goes where it always went. Only a purge line written exactly as expected is
+# touched; anything else and the file is refused, never guessed at.
+
+_PURGE_START = re.compile(rb";\s*PURGE LINE\b", re.IGNORECASE)
+_PURGE_END = re.compile(rb";\s*AFTER_LAYER_CHANGE\b", re.IGNORECASE)
+# What may stand between the two, besides comments and moves: speed limits and progress.
+_PURGE_OTHER = re.compile(rb"(?:M204|M73|SET_VELOCITY_LIMIT)\b.*", re.IGNORECASE)
+_PURGE_MOVE = re.compile(rb"G1(?:\s+[XYZEF]\s*[-+]?\d*\.?\d+)+", re.IGNORECASE)
+_E_WORD = re.compile(rb"\s*E\s*[-+]?\d*\.?\d+", re.IGNORECASE)
+# The purge line is at the back of the bed: no move in it comes nearer the front than this.
+PURGE_MIN_Y = 345.0
+# Longer than this is not a purge line.
+PURGE_MAX_LINES = 40
+PURGE_SKIPPED = b"; purge line skipped"
+
+
+def _purge_edits(chunks: Iterable[bytes]) -> tuple[Edit, ...]:
+    edits: list[Edit] = []
+    block: list[Edit] | None = None
+    lines = printed = 0
+    start = 0
+    for raw, end in _gcode_lines(chunks):
+        line_start, start = start, end
+        text = raw.strip()
+        if block is None:
+            if _PURGE_START.fullmatch(text):
+                block, lines, printed = [], 0, 0
+            continue
+        lines += 1
+        if lines > PURGE_MAX_LINES:
+            raise FileRefused("purge_not_found")
+        if _PURGE_END.match(text):
+            if not printed:
+                raise FileRefused("purge_not_found")
+            edits += block
+            block = None
+            continue
+        if not text or text.startswith(b";"):
+            continue
+        command = text.split(b";", 1)[0].strip().upper()
+        if _PURGE_OTHER.fullmatch(command):
+            continue
+        if not _PURGE_MOVE.fullmatch(command):
+            raise FileRefused("purge_not_found")
+        y, e = _word_value(command, b"Y"), _word_value(command, b"E")
+        travels = _word_value(command, b"X") is not None or y is not None
+        if y is not None and y < PURGE_MIN_Y:
+            raise FileRefused("purge_not_found")
+        if e is None or e <= 0:
+            continue
+        # The line as written, without its line end: that stays where it is.
+        body = raw[:-1] if raw.endswith(b"\r") else raw
+        if travels:
+            printed += 1
+            new = _E_WORD.sub(b"", body, count=1)
+        else:
+            new = PURGE_SKIPPED
+        edits_at = line_start
+        block.append(Edit(start=edits_at, old=body, new=new))
+    if block is not None or not edits:
+        # No purge line, or one that ran on to the end of the file.
+        raise FileRefused("purge_not_found")
+    return tuple(edits)
+
+
+def scan_purge_line(path: Path, kind: str, *, member_cap: int = MEMBER_CAP,
+                    total_cap: int = TOTAL_CAP) -> tuple[Edit, ...]:
+    """The changes that take the filament out of a file's purge line, or a refusal.
+
+    Blocking: run it in an executor. Raises FileRefused("purge_not_found") unless the file
+    has a purge line written the way the Anycubic slicer writes one, at the back of the bed.
+    """
+    try:
+        if kind == KIND_GCODE:
+            return _purge_edits(_file_chunks(path))
+        try:
+            with zipfile.ZipFile(path) as archive:
+                plate = _one_plate(archive)
+                with archive.open(plate) as fh:
+                    return _purge_edits(_Budget(member_cap, total_cap).chunks(fh))
+        except FileRefused:
+            raise
+        except _UNREADABLE as err:
+            if isinstance(err, OSError) and not isinstance(err, zipfile.BadZipFile):
+                raise
+            raise FileRefused("archive_invalid") from None
+    except OSError:
+        raise FileRefused("file_unreadable") from None
+
+
+def _write(chunks: Iterable[bytes], dst: Path, edits: Iterable[Edit]) -> None:
     with dst.open("wb") as out:
-        for chunk in _insert(_file_chunks(src), scan, block):
+        for chunk in _edit(chunks, edits):
             out.write(chunk)
 
 
-def _copy_plate(src: Path, dst: Path, scan: ClearScan, block: bytes, member_cap: int,
-                total_cap: int) -> None:
-    """An archive's plate, with the block put in, written out as plain G-code."""
-    with zipfile.ZipFile(src) as archive:
-        plate = _one_plate(archive)
-        with archive.open(plate) as fh, dst.open("wb") as out:
-            for chunk in _insert(_Budget(member_cap, total_cap).chunks(fh), scan, block):
-                out.write(chunk)
-
-
-def write_prepared_copy(src: Path, dst: Path, kind: str, scan: ClearScan,
-                        block: Iterable[str], *, member_cap: int = MEMBER_CAP,
+def write_prepared_copy(src: Path, dst: Path, kind: str, scan: ClearScan | None,
+                        block: Iterable[str], *, edits: Iterable[Edit] = (),
+                        member_cap: int = MEMBER_CAP,
                         total_cap: int = TOTAL_CAP) -> tuple[int, str]:
-    """Write `dst`: `src` with the block inserted after its last nozzle-off line.
+    """Write `dst`: a copy of `src` with the changes asked for.
 
-    Returns the copy's size and md5. Blocking: run it in an executor. The copy is always
-    plain G-code: for an archive it is the plate alone, which is all the printer keeps of an
-    archive anyway. Whatever goes wrong, no copy is left behind.
+    With a `scan`, the block is inserted after the file's last nozzle-off line; `edits` are
+    made as well (see scan_purge_line). Returns the copy's size and md5. Blocking: run it
+    in an executor. The copy is always plain G-code: for an archive it is the plate alone,
+    which is all the printer keeps of an archive anyway. Whatever goes wrong, no copy is
+    left behind.
     """
     try:
-        data = _block_bytes(block, scan.newline)
+        changes = list(edits)
+        if scan is not None:
+            changes.append(Edit(start=scan.insert_at, old=b"",
+                                new=_block_bytes(block, scan.newline), after=_NOZZLE_OFF))
+        if not changes:
+            raise FileRefused("clear_unreadable")
         try:
             if kind == KIND_GCODE:
-                _copy_gcode(src, dst, scan, data)
+                _write(_file_chunks(src), dst, changes)
             else:
-                _copy_plate(src, dst, scan, data, member_cap, total_cap)
+                with zipfile.ZipFile(src) as archive:
+                    plate = _one_plate(archive)
+                    with archive.open(plate) as fh:
+                        _write(_Budget(member_cap, total_cap).chunks(fh), dst, changes)
         except FileRefused:
             raise
         except OSError:

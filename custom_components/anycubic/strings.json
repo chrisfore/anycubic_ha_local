@@ -146,7 +146,8 @@
       "fields": {
         "printer": { "name": "Printer", "description": "The printer to print on." },
         "file": { "name": "File", "description": "A .gcode, .gcode.3mf or sliced .3mf file, up to 100 MB." },
-        "allow_clear_bed": { "name": "Cool the bed when done", "description": "Ends the print parked with the fans on, finishes it once the bed has cooled, and tells you. Kobra S1 Max only." }
+        "allow_clear_bed": { "name": "Cool the bed when done", "description": "Ends the print parked with the fans on, finishes it once the bed has cooled, and tells you. Kobra S1 Max only." },
+        "skip_purge_line": { "name": "Skip the purge line", "description": "Leaves out the line of filament laid at the back of the bed before the print. The very start of the first layer may come out a little thin." }
       }
     },
     "print_again": {
@@ -203,6 +204,7 @@
     "upload_not_saved": { "message": "The printer could not save the file. Send the file again." },
     "upload_no_space": { "message": "The printer does not have enough free space for this file. Delete files on the printer, then send it again." },
     "upload_3mf_refused": { "message": "The printer could not read this 3MF file. Export it from the slicer again." },
+    "purge_not_found": { "message": "No purge line was found in this file to skip. Turn Skip the purge line off and send it again." },
     "upload_name_changed": { "message": "The printer kept the file under another name, so it was not started. Rename the file and send it again." },
     "upload_failed": { "message": "The upload did not finish. Check the connection and send the file again." },
     "printer_not_connected": { "message": "Home Assistant is not connected to the printer right now. Try again in a minute." },
