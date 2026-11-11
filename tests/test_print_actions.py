@@ -820,7 +820,7 @@ async def test_diagnostics_say_how_it_went_and_name_nothing(env):
         "enabled": True, "bed_needs_clearing": True, "last_guard_outcome": "started",
         "has_last_file": True, "door_sensor_configured": False, "door_reading_age_s": None,
         "clearing": {"state": "off", "reason": None, "armed": False, "press_possible": False,
-                     "motor_window_s": 600.0}}
+                     "motor_window_s": 5400.0}}
     blob = json.dumps(diag)
     assert "Desk bracket" not in blob and TOKEN not in blob
 

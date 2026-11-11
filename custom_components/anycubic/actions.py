@@ -68,11 +68,11 @@ ATTR_FILE = "file"
 ATTR_ALLOW_CLEAR_BED = "allow_clear_bed"
 ATTR_DOOR_OPEN_CONFIRMED = "door_open_confirmed"
 
-# How a prepared copy cools the nozzle after the resume, before the sweep. PROVISIONAL: the
-# wait for 50 C is what the design asks for, but whether this printer's M109 waits while
-# cooling has not been measured, so a fixed dwell follows it. Set from the pause test before
-# Clear the bed is released.
-NOZZLE_COOLING = (sweep.CoolTo(50), sweep.Dwell(300))
+# How a prepared copy cools the nozzle after the resume, before the sweep. Measured on a
+# Kobra S1 Max (firmware 2.7.1.4): M109 does wait while the nozzle cools, and lets go about
+# 2 C above the temperature asked for (asked 50, went on at 52; 100 C to 52 C took two
+# minutes with the part fan on). So 45 is asked for, to be at 50 or below when it moves.
+NOZZLE_COOLING = sweep.CoolTo(45)
 
 # Home Assistant's own cap on an uploaded file. Checked again here, before the file is read,
 # so a file over it is never read and the refusal says why.

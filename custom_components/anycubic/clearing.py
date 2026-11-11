@@ -59,10 +59,10 @@ EVENT_CLEAR_DONE = "clear_done"
 EVENT_CLEAR_FAILED = "clear_failed"
 
 # How long after the pause a press is still taken, in seconds, and the margin kept inside
-# it; None for no limit. PROVISIONAL: how long the printer keeps its motors on while paused
-# has not been measured yet, so this is the shortest time a Klipper-style idle timeout
-# allows. It is set from the long-pause test before Clear the bed is released.
-MOTOR_WINDOW: float | None = 600.0
+# it; None for no limit. Measured on a Kobra S1 Max (firmware 2.7.1.4): paused for 95
+# minutes, the motors stayed on and homed, the nozzle held 140 C, and the resume ran the
+# rest of the file cleanly. Nothing longer has been tried, so the window stays inside that.
+MOTOR_WINDOW: float | None = 90 * 60.0
 WINDOW_MARGIN = 60.0
 
 # How long after a press the printer may still report the pause, in seconds, before the
