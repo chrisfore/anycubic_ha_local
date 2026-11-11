@@ -382,7 +382,8 @@ days (step a, PROVEN).
 | Firmware log errors: "Unknown command: WIPE_EXIT" at each resume, "filamentIndex out of range" at start | harmless so far; watched in T4 and T5 | observed |
 | A start feeds ACE slot 1 and purges even with `use_ams` off; with `use_ams` off, every M117 after the first triggers cut, unload, re-feed and purge at the current Z | Phase 2 adds no M117. Phase 1 files with several M117 lines, printed without a multi-color unit, could trip it (open, for the PM) | observed |
 
-Owner-accepted risks, in plain terms:
+Owner-accepted risks, in plain terms (accepted by the owner on 2026-11-10, together with the
+nozzle holding 140 C for the whole wait, now up to the 90-minute window):
 - **Unchecked resume.** A resume from the touchscreen, Mainsail, Moonraker, the slicer or the
   OctoPrint-compatible port, or one while HA is disconnected, sweeps with no door check, and the
   job now waits up to the whole motor window for a press; HA's stop may land too late.
