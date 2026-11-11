@@ -330,6 +330,11 @@ bed. The file must be sliced for this printer, with object labeling on, and with
 own. A print that does not qualify is refused before anything is sent; untick the box to print it
 normally.
 
+**Place parts near the front of the bed.** In the slicer, put them toward the front edge of the
+plate, the door side, rather than in the middle or at the back. The head pushes from the back to
+the door, so a part near the front has less bed to slide across, is less likely to turn or tip on
+the way, and drops out of the door instead of stopping short.
+
 **To finish without pushing,** press **Stop**, wait for the head to stop moving, take the part off,
 then press **Bed is clear**.
 
