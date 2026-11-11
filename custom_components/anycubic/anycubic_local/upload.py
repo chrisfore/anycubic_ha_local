@@ -120,6 +120,23 @@ async def _read_answer(response) -> tuple[int, dict]:
     return response.status, answer if isinstance(answer, dict) else {}
 
 
+_KEPT_NAME = re.compile(r"[A-Za-z0-9 ._()+\-]{1,255}")
+
+
+def stored_name(answer: dict) -> str | None:
+    """The file name in the printer's answer to an upload, or None if it is not a plain one.
+
+    Plain: a base name of the characters a printer-side name may have, ending in ".gcode".
+    Anything else is not believed.
+    """
+    data = answer.get("data") if isinstance(answer, dict) else None
+    name = data.get("gcode") if isinstance(data, dict) else None
+    if (not isinstance(name, str) or not _KEPT_NAME.fullmatch(name)
+            or not name.lower().endswith(".gcode") or name.startswith(".")):
+        return None
+    return name
+
+
 async def async_fetch_target(session: aiohttp.ClientSession, host: str, *,
                              port: int = INFO_PORT, identifiers=()) -> UploadTarget:
     """Ask the printer where to upload. Asked fresh for every upload and kept by nobody."""
@@ -140,8 +157,11 @@ async def async_fetch_target(session: aiohttp.ClientSession, host: str, *,
 
 
 async def async_send_file(session: aiohttp.ClientSession, target: UploadTarget, path: Path,
-                          name: str, size: int, *, identifiers=()) -> None:
+                          name: str, size: int, *, identifiers=()) -> str | None:
     """Send one file, streamed from disk, under the printer-side name `name`.
+
+    Returns the name the printer says it kept the file under, if it says so plainly: it
+    unpacks an archive and keeps the plate as "<stem>.gcode". None if it does not say.
 
     The printer checks its free space against X-File-Length before it takes the file. The
     file goes in a part called "gcode", whatever its kind, beside a text part naming it.
@@ -183,3 +203,4 @@ async def async_send_file(session: aiohttp.ClientSession, target: UploadTarget, 
     # 200 with no code, or with 0 or 200. Anything else, a redirect included, is a refusal.
     if status != 200 or ("code" in answer and code not in (0, 200)):
         raise UploadError("upload_refused")
+    return stored_name(answer)

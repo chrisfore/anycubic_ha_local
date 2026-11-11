@@ -359,14 +359,15 @@ async def _async_send_and_start(hass: HomeAssistant, coordinator: AnycubicCoordi
     """Upload the file, and its prepared copy if there is one, then start what was asked."""
     session = async_get_clientsession(hass)
     identifiers = (*coordinator.redaction_identifiers, coordinator.host)
-    with coordinator.submitting(name.original, name.marked, path.name):
+    with coordinator.submitting(name.original, name.stored, name.marked, path.name):
         try:
             target = await upload.async_fetch_target(session, coordinator.host,
                                                      identifiers=identifiers)
             with coordinator.holding(target.secrets):
                 # The original first, and always: Print again starts it, never a copy.
-                await upload.async_send_file(session, target, path, name.original,
-                                             facts.size, identifiers=identifiers)
+                kept = await upload.async_send_file(
+                    session, target, path, name.original, facts.size,
+                    identifiers=identifiers)
                 if prepared is not None:
                     await upload.async_send_file(
                         session, target, prepared.path, name.marked, prepared.size,
@@ -375,15 +376,23 @@ async def _async_send_and_start(hass: HomeAssistant, coordinator: AnycubicCoordi
             raise _failure(err.key) from None
         # Recorded as soon as the file is on the printer, so that a start the printer
         # turns down, or does not confirm, can be tried again with Print again.
+        # What the printer keeps: the file itself, or an archive's plate as plain G-code,
+        # under the name it says it kept, if that is a plain name and not a copy's.
+        stored = name.stored
+        if (isinstance(kept, str) and upload.stored_name({"data": {"gcode": kept}})
+                and not is_marked(kept, PUSH_OFF_MARKER)):
+            stored = kept
+        size = facts.size if facts.plate_size is None else facts.plate_size
+        md5 = facts.md5 if facts.plate_md5 is None else facts.plate_md5
         coordinator.async_set_last_file(LastFile(
-            name=name.original, size=facts.size, md5=facts.md5, filetype=FILETYPE_GCODE,
+            name=stored, size=size, md5=md5, filetype=FILETYPE_GCODE,
             used_slots=facts.used_slots,
             materials={k: v[:_LONGEST_MATERIAL] for k, v in facts.materials.items()},
             colors=dict(facts.colors), model_named=model_named is True))
         _check_printer(coordinator)
         if prepared is None:
             started = await coordinator.async_start_print(
-                name=name.original, size=facts.size, md5=facts.md5,
+                name=stored, size=size, md5=md5,
                 filetype=FILETYPE_GCODE, ams_settings=ams_settings)
         else:
             started = await coordinator.async_start_print(

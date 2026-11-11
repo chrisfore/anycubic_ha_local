@@ -218,8 +218,14 @@ async def test_a_3mf_is_sent_under_its_own_name(env):
     file_id = _stage(env, "Cube.gcode.3mf", archive)
     await _print_file(env, file_id)
     (_, start), = Transport.last.starts()
-    assert start["data"]["filename"] == "Cube.gcode.3mf"
-    assert start["data"]["md5"] == hashlib.md5(archive).hexdigest()
+    # Sent as the archive it is; the printer unpacks it and keeps the plate as G-code, and
+    # that is what is started, and what Print again starts.
+    assert env.send.await_args.args[3] == "Cube.gcode.3mf"
+    assert start["data"]["filename"] == "Cube.gcode"
+    assert start["data"]["md5"] == hashlib.md5(PLA_GCODE.encode()).hexdigest()
+    assert start["data"]["filesize"] == len(PLA_GCODE)
+    assert env.coord.last_file.name == "Cube.gcode"
+    assert env.coord.last_file.md5 == start["data"]["md5"]
     assert start["data"]["ams_settings"]["ams_box_mapping"] == [{
         "paint_index": 1, "ams_index": 1, "paint_color": [0, 255, 0, 255],
         "ams_color": [0, 0, 0, 255], "material_type": "PETG"}]
@@ -903,3 +909,17 @@ def test_every_refusal_and_failure_has_one_line_of_text():
         assert "\n" not in message and message.endswith((".", "?")), key
     for service in ("print_file", "print_again"):
         assert strings["services"][service]["fields"]["printer"]["name"] == "Printer"
+
+
+@pytest.mark.parametrize(("answer", "started"), [
+    ("Cube renamed.gcode", "Cube renamed.gcode"),          # what the printer says it kept
+    (None, "Cube.gcode"), ("", "Cube.gcode"), ("../x.gcode", "Cube.gcode"),
+    ("Cube.gcode.3mf", "Cube.gcode"), ("a-ha-pushoff.gcode", "Cube.gcode"), (5, "Cube.gcode"),
+])
+async def test_the_name_the_printer_says_it_kept_is_started_if_it_is_a_plain_name(
+        env, answer, started):
+    env.send.return_value = answer
+    archive = _zip([("Metadata/plate_1.gcode", PLA_GCODE)])
+    await _print_file(env, _stage(env, "Cube.gcode.3mf", archive))
+    (_, start), = Transport.last.starts()
+    assert start["data"]["filename"] == started

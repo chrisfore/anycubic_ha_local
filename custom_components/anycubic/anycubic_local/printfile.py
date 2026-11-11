@@ -125,9 +125,18 @@ def is_marked(name: str, marker: str) -> bool:
 
 @dataclass(frozen=True)
 class PrinterName:
-    """What a file is called on the printer, and what its push-off copy would be called."""
+    """What a file is called on the printer, and what its push-off copy would be called.
 
+    The printer unpacks an archive as it takes it and keeps the plate as plain G-code,
+    "<stem>.gcode": that is the name a start has to ask for. The copy is always sent as
+    plain G-code.
+    """
+
+    # The name the file is sent under.
     original: str
+    # The name the printer keeps it under.
+    stored: str
+    # The name of its push-off copy, sent and kept.
     marked: str
     kind: str
 
@@ -153,8 +162,11 @@ def printer_name(filename: str, *, cap: int, marker: str) -> PrinterName:
     stem = stem[:room].rstrip(" ") if room > 0 else ""
     if not stem:
         raise FileRefused("file_name_invalid")
-    return PrinterName(original=f"{stem}{suffix}", marked=f"{stem}{marker}{suffix}",
-                       kind=kind_of(suffix))
+    kind = kind_of(suffix)
+    original = f"{stem}{suffix}"
+    return PrinterName(original=original,
+                       stored=original if kind == KIND_GCODE else f"{stem}.gcode",
+                       marked=f"{stem}{marker}.gcode", kind=kind)
 
 
 def material_family(material) -> str | None:
@@ -205,6 +217,9 @@ class FileFacts:
     materials: dict[int, str] = field(default_factory=dict)
     # Slot number -> "#RRGGBB" the slicer showed for it.
     colors: dict[int, str] = field(default_factory=dict)
+    # For an archive, its plate's size and md5: what the printer keeps of it.
+    plate_size: int | None = None
+    plate_md5: str | None = None
 
 
 class _Budget:
@@ -374,10 +389,11 @@ def _inspect_archive(path: Path, member_cap: int, total_cap: int) -> FileFacts:
             if slice_info is not None:
                 with archive.open(slice_info) as fh:
                     info_text = b"".join(budget.chunks(fh)).decode("utf-8", errors="replace")
-            window = _Window()
+            window, plate_digest = _Window(), hashlib.md5(usedforsecurity=False)
             with archive.open(plate) as fh:
                 for chunk in budget.chunks(fh):
                     window.add(chunk)
+                    plate_digest.update(chunk)
     except FileRefused:
         raise
     except _UNREADABLE:
@@ -386,7 +402,8 @@ def _inspect_archive(path: Path, member_cap: int, total_cap: int) -> FileFacts:
     s_models, s_used, s_materials, s_colors = _slice_info_facts(info_text)
     return FileFacts(kind=KIND_3MF, size=size, md5=md5, models=(*s_models, *g_models),
                      used_slots=s_used or g_used, materials={**g_materials, **s_materials},
-                     colors={**g_colors, **s_colors})
+                     colors={**g_colors, **s_colors}, plate_size=window.size,
+                     plate_md5=plate_digest.hexdigest())
 
 
 def inspect_file(path: Path, kind: str, *, member_cap: int = MEMBER_CAP,
@@ -421,8 +438,6 @@ MAX_OUTLINE_POINTS_TOTAL = 200_000
 # the part the file describes: a support, the width of a wall, the last layer.
 OUTLINE_TOLERANCE = 5.0
 HEIGHT_TOLERANCE = 1.0
-# The longest an md5 file beside a plate can be.
-_SIDECAR_BYTES = 1024
 
 _FEATURE = re.compile(rb";\s*(?:TYPE|FEATURE)\b[\s:=]*(.*)", re.IGNORECASE)
 _LINE_NUMBER = re.compile(rb"^N\d+\s*")
@@ -828,51 +843,14 @@ def _copy_gcode(src: Path, dst: Path, scan: ClearScan, block: bytes) -> None:
             out.write(chunk)
 
 
-def _fresh_entry(info: zipfile.ZipInfo) -> zipfile.ZipInfo:
-    """A new entry with the old one's name, time, packing and attributes, and nothing else
-    of its header: the old one's flags and extras describe bytes that are not copied."""
-    if info.compress_type not in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
-        raise FileRefused("archive_invalid")
-    entry = zipfile.ZipInfo(info.filename, date_time=info.date_time)
-    entry.compress_type = info.compress_type
-    entry.external_attr = info.external_attr
-    entry.create_system = info.create_system
-    entry.comment = info.comment
-    return entry
-
-
-def _copy_archive(src: Path, dst: Path, scan: ClearScan, block: bytes, member_cap: int,
-                  total_cap: int) -> None:
+def _copy_plate(src: Path, dst: Path, scan: ClearScan, block: bytes, member_cap: int,
+                total_cap: int) -> None:
+    """An archive's plate, with the block put in, written out as plain G-code."""
     with zipfile.ZipFile(src) as archive:
         plate = _one_plate(archive)
-        budget = _Budget(member_cap, total_cap)
-        # The plate's new md5 first: the file that carries it may come before the plate.
-        digest = hashlib.md5(usedforsecurity=False)
-        with archive.open(plate) as fh:
-            for chunk in _insert(budget.chunks(fh), scan, block):
-                digest.update(chunk)
-        sidecar = (plate.filename + ".md5").casefold()
-        with zipfile.ZipFile(dst, "w") as out:
-            for info in archive.infolist():
-                with archive.open(info) as fh, out.open(_fresh_entry(info), "w",
-                                                        force_zip64=True) as to:
-                    if info is plate:
-                        for chunk in _insert(iter(partial(fh.read, CHUNK_BYTES), b""),
-                                             scan, block):
-                            to.write(chunk)
-                    elif info.filename.casefold() == sidecar:
-                        raw = fh.read(_SIDECAR_BYTES + 1)
-                        if len(raw) > _SIDECAR_BYTES:
-                            raise FileRefused("archive_invalid")
-                        old = raw.decode("ascii", "replace")
-                        text = old.strip()
-                        new = digest.hexdigest()
-                        if text and text == text.upper() and not text.isdigit():
-                            new = new.upper()
-                        to.write((new + old[len(old.rstrip()):]).encode("ascii"))
-                    else:
-                        for chunk in budget.chunks(fh):
-                            to.write(chunk)
+        with archive.open(plate) as fh, dst.open("wb") as out:
+            for chunk in _insert(_Budget(member_cap, total_cap).chunks(fh), scan, block):
+                out.write(chunk)
 
 
 def write_prepared_copy(src: Path, dst: Path, kind: str, scan: ClearScan,
@@ -880,9 +858,9 @@ def write_prepared_copy(src: Path, dst: Path, kind: str, scan: ClearScan,
                         total_cap: int = TOTAL_CAP) -> tuple[int, str]:
     """Write `dst`: `src` with the block inserted after its last nozzle-off line.
 
-    Returns the copy's size and md5. Blocking: run it in an executor. In an archive only the
-    plate changes, and the md5 file beside it, which keeps its case; every other member
-    keeps its bytes, its place and its packing. Whatever goes wrong, no copy is left behind.
+    Returns the copy's size and md5. Blocking: run it in an executor. The copy is always
+    plain G-code: for an archive it is the plate alone, which is all the printer keeps of an
+    archive anyway. Whatever goes wrong, no copy is left behind.
     """
     try:
         data = _block_bytes(block, scan.newline)
@@ -890,7 +868,7 @@ def write_prepared_copy(src: Path, dst: Path, kind: str, scan: ClearScan,
             if kind == KIND_GCODE:
                 _copy_gcode(src, dst, scan, data)
             else:
-                _copy_archive(src, dst, scan, data, member_cap, total_cap)
+                _copy_plate(src, dst, scan, data, member_cap, total_cap)
         except FileRefused:
             raise
         except OSError:

@@ -86,37 +86,21 @@ def _members(path):
         return {info.filename: archive.read(info) for info in archive.infolist()}
 
 
-@pytest.mark.parametrize("upper", [True, False])
-def test_only_the_plate_and_its_md5_change_in_an_archive(tmp_path, upper):
-    old = _md5(BODY.encode())
-    src = _archive(tmp_path / "a.gcode.3mf", sidecar=old.upper() if upper else old)
-    dst = tmp_path / "out.gcode.3mf"
+def test_the_copy_of_an_archive_is_its_plate_as_plain_gcode_with_the_block(tmp_path):
+    # The printer keeps an archive's plate as plain G-code, so the copy is sent as that.
+    src = _archive(tmp_path / "a.gcode.3mf", sidecar="0" * 32)
+    dst = tmp_path / "out.gcode"
     size, md5 = _copy(src, dst, pf.KIND_3MF)
-    before, after = _members(src), _members(dst)
-    assert list(before) == list(after)                          # same members, same order
-    plate = after["Metadata/plate_1.gcode"]
-    assert b"M104 S0\n; block start\nM140 S0\nM601\n" in plate
-    digest = _md5(plate)
-    assert after["Metadata/plate_1.gcode.md5"].decode() == (digest.upper() if upper else digest)
-    for name in before:
-        if name not in ("Metadata/plate_1.gcode", "Metadata/plate_1.gcode.md5"):
-            assert after[name] == before[name], name
-    data = dst.read_bytes()
-    assert (size, md5) == (len(data), _md5(data))
-    with zipfile.ZipFile(dst) as archive:
-        assert archive.getinfo("Metadata/pic.png").compress_type == zipfile.ZIP_STORED
-        assert archive.getinfo("Metadata/plate_1.gcode").compress_type == zipfile.ZIP_DEFLATED
-
-
-def test_an_archive_with_no_md5_beside_the_plate_gets_none(tmp_path):
-    src, dst = _archive(tmp_path / "a.3mf"), tmp_path / "out.3mf"
-    _copy(src, dst, pf.KIND_3MF)
-    assert "Metadata/plate_1.gcode.md5" not in _members(dst)
+    out = dst.read_bytes()
+    before, after = BODY.split("M104 S0\n")
+    assert out == (before + "M104 S0\n" + "\n".join(BLOCK) + "\n" + after).encode()
+    assert (size, md5) == (len(out), _md5(out))
+    assert _members(src)["Metadata/plate_1.gcode"] == PLATE     # the original is untouched
 
 
 def test_the_copy_is_held_to_the_size_caps_and_leaves_nothing_behind(tmp_path):
-    src = _archive(tmp_path / "a.3mf", extra=[("Metadata/big.bin", b"\0" * 200_000)])
-    dst = tmp_path / "out.3mf"
+    src = _archive(tmp_path / "a.3mf", plate=(BODY + "; pad\n" * 40_000).encode())
+    dst = tmp_path / "out.gcode"
     scan = pf.scan_for_clearing(src, pf.KIND_3MF)
     with pytest.raises(FileRefused) as err:
         pf.write_prepared_copy(src, dst, pf.KIND_3MF, scan, BLOCK, member_cap=100_000)
@@ -125,12 +109,11 @@ def test_the_copy_is_held_to_the_size_caps_and_leaves_nothing_behind(tmp_path):
 
 
 def test_the_copy_can_be_scanned_and_reads_as_a_pause_of_its_own(tmp_path):
-    src, dst = _archive(tmp_path / "a.3mf"), tmp_path / "out.3mf"
+    src, dst = _archive(tmp_path / "a.3mf"), tmp_path / "out.gcode"
     _copy(src, dst, pf.KIND_3MF)
     with pytest.raises(FileRefused) as err:                     # so a copy is never prepared twice
-        pf.scan_for_clearing(dst, pf.KIND_3MF)
+        pf.scan_for_clearing(dst, pf.KIND_GCODE)
     assert err.value.key == "clear_own_pause"
-    assert pf.inspect_file(dst, pf.KIND_3MF).kind == pf.KIND_3MF
 
 
 def test_every_line_the_sweep_planner_writes_is_a_line_the_copy_accepts(tmp_path):
@@ -145,12 +128,3 @@ def test_every_line_the_sweep_planner_writes_is_a_line_the_copy_accepts(tmp_path
         dst = tmp_path / f"out{i}.gcode"
         pf.write_prepared_copy(src, dst, pf.KIND_GCODE, scan, block)
         assert "\n".join(block).encode() in dst.read_bytes()
-
-
-def test_an_md5_file_too_large_to_be_one_is_refused(tmp_path):
-    src = _archive(tmp_path / "a.3mf", sidecar="0" * 5000)
-    dst = tmp_path / "out.3mf"
-    scan = pf.scan_for_clearing(src, pf.KIND_3MF)
-    with pytest.raises(FileRefused) as err:
-        pf.write_prepared_copy(src, dst, pf.KIND_3MF, scan, BLOCK)
-    assert err.value.key == "archive_invalid" and not dst.exists()

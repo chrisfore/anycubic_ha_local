@@ -371,3 +371,29 @@ def test_every_clearing_refusal_event_and_field_has_its_text():
         assert services[service]["fields"]["allow_clear_bed"]["name"] == "Allow Clear the bed"
     assert set(services["clear_bed"]["fields"]) == {"printer", "door_open_confirmed"}
     assert strings["options"]["step"]["init"]["data"]["door_sensor"] == "Door sensor"
+
+
+async def test_a_ticked_archive_is_sent_whole_and_its_copy_as_plain_gcode(env):
+    import io
+    import zipfile
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("Metadata/plate_1.gcode", _part())
+    sent = []
+
+    async def send(session, target, path, name, size, **kwargs):
+        sent.append((name, Path(path).read_bytes()))
+        return name[:-len(".3mf")] if name.endswith(".gcode.3mf") else name
+
+    env.send.side_effect = send
+    await _print_file(env, _stage(env, "part.gcode.3mf", buffer.getvalue()), True)
+    (first, original), (second, copy) = sent
+    assert first == "part.gcode.3mf" and original == buffer.getvalue()
+    assert second == "part-ha-pushoff.gcode" and copy.startswith(b"; HEADER_BLOCK_START")
+    assert b"M601" in copy
+    (_, start), = Transport.last.starts()
+    assert start["data"]["filename"] == "part-ha-pushoff.gcode"
+    assert start["data"]["md5"] == hashlib.md5(copy).hexdigest()
+    assert env.coord.print_state.armed.name == "part-ha-pushoff.gcode"
+    assert env.coord.last_file.name == "part.gcode"

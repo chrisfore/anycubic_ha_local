@@ -29,7 +29,12 @@ def _refused(key, call, *args, **kwargs):
 def test_the_base_name_only_with_the_suffix_in_lower_case():
     name = _name("C:\\Users\\someone\\Desk bracket (2).GCODE.3mf")
     assert name.original == "Desk bracket (2).gcode.3mf"
-    assert name.marked == "Desk bracket (2)-ha-pushoff.gcode.3mf"
+    # The printer unpacks an archive when it takes it and keeps the plate as plain G-code,
+    # so that is the name a start has to ask for, and the copy is plain G-code as well.
+    assert name.stored == "Desk bracket (2).gcode"
+    assert name.marked == "Desk bracket (2)-ha-pushoff.gcode"
+    assert _name("part.gcode").stored == "part.gcode"
+    assert _name("part.3mf").stored == "part.gcode"
     assert name.kind == pf.KIND_3MF
     assert _name("/a/b/part.gcode").original == "part.gcode"
     assert _name("part.gcode").kind == pf.KIND_GCODE
@@ -53,9 +58,9 @@ def test_the_marker_is_never_truncated_and_both_names_fit_the_cap():
         for length in (1, 50, 99, 100, 150, 400):
             name = _name("x" * length + ".gcode.3mf", cap=cap)
             assert len(name.original) <= cap and len(name.marked) <= cap
-            assert name.marked.endswith(MARKER + ".gcode.3mf")
+            assert name.marked.endswith(MARKER + ".gcode")
             # Original and copy share a stem, so one can always be found from the other.
-            assert name.marked.replace(MARKER, "") == name.original
+            assert name.marked.replace(MARKER, "") == name.stored
     # A cap with no room left for a stem beside the marker refuses rather than cutting it.
     _refused("file_name_invalid", _name, "x.gcode.3mf", cap=21)
 
@@ -292,3 +297,14 @@ def test_members_are_never_extracted_or_looked_up_by_name(tmp_path, monkeypatch)
 def test_a_file_that_cannot_be_read_is_refused(tmp_path):
     _refused("file_unreadable", pf.inspect_file, tmp_path / "gone.gcode", pf.KIND_GCODE)
     _refused("file_unreadable", pf.inspect_file, tmp_path / "gone.3mf", pf.KIND_3MF)
+
+
+def test_an_archive_says_how_large_its_plate_is_and_its_md5(tmp_path):
+    plate = b"; filament_type = PLA\nG1 X1\n" * 50
+    path = _archive(tmp_path, [("Metadata/plate_1.gcode", plate)])
+    facts = pf.inspect_file(path, pf.KIND_3MF)
+    assert (facts.plate_size, facts.plate_md5) == (len(plate), hashlib.md5(plate).hexdigest())
+    gcode = tmp_path / "a.gcode"
+    gcode.write_bytes(plate)
+    plain = pf.inspect_file(gcode, pf.KIND_GCODE)
+    assert plain.plate_size is None and plain.plate_md5 is None

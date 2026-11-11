@@ -249,3 +249,16 @@ def test_query_values_are_held_as_written_and_as_decoded():
                             "http://198.51.100.7:18910/gcode_upload?s=a%2Bb%3D&t=x+y", 18910)
     assert set(target.secrets) == {"a%2Bb%3D", "a+b=", "x+y", "x y"}
     assert target.url == "http://printer.example:18910/gcode_upload?s=a%2Bb%3D&t=x+y"
+
+
+@pytest.mark.parametrize(("body", "kept"), [
+    ({"code": 200, "message": "success", "data": {"gcode": "part.gcode"}}, "part.gcode"),
+    ({"code": 200, "data": {"gcode": "Desk bracket (2).gcode"}}, "Desk bracket (2).gcode"),
+    ({"code": 200}, None), ({"code": 200, "data": None}, None),
+    ({"code": 200, "data": {"gcode": "../etc/x.gcode"}}, None),
+    ({"code": 200, "data": {"gcode": "part.gcode.3mf"}}, None),
+    ({"code": 200, "data": {"gcode": "x" * 300 + ".gcode"}}, None),
+    ({"code": 200, "data": {"gcode": 7}}, None),
+])
+def test_the_name_the_printer_kept_is_read_from_its_answer_only_if_plain(body, kept):
+    assert upload.stored_name(body) == kept
