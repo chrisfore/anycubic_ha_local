@@ -309,7 +309,8 @@ the same moves; only the filament is left out, in the copy that is sent (your fi
 changed). The printer has already purged into its chute by then, but the very start of the first
 layer may come out a little thin: try it on a part where that does not matter first. It works on
 files from the Anycubic slicer; a file whose purge line is not recognized is refused before
-anything is sent. Leave the field out of the script if you do not use it.
+anything is sent. Print again starts your original file, purge line included. Leave the field
+out of the script if you do not use it.
 
 ## Cool the bed when done (Kobra S1 Max)
 

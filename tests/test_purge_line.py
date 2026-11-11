@@ -146,7 +146,7 @@ def test_skipping_and_the_cool_down_block_go_into_one_copy(tmp_path):
 # ------------------------------------------------- through the action
 
 
-PRINT = _part().replace("M140 S60\n", "M140 S60\n" + PURGE)
+PRINT = _part().replace("M140 S60\n", "M83\nM140 S60\n" + PURGE)
 
 
 async def _print(env, file_id, **options):
@@ -195,3 +195,36 @@ async def test_a_file_with_no_purge_line_to_skip_is_refused_and_nothing_is_sent(
 async def test_with_the_switch_off_the_purge_line_is_left_alone(env):
     await _print(env, _stage(env, "part.gcode", PRINT))
     assert [call.args[3] for call in env.send.await_args_list] == ["part.gcode"]
+
+
+# ------------------------------------------------- findings of the independent review
+
+
+def test_absolute_extrusion_is_refused_since_its_numbers_are_positions(tmp_path):
+    path = tmp_path / "a.gcode"
+    path.write_text((HEAD + PURGE + REST).replace("M83\n", "M82\n"))
+    _refused(path)
+    path.write_text((HEAD + PURGE + REST).replace("M83\n", ""))          # never said: absolute
+    _refused(path)
+
+
+def test_a_second_purge_line_is_refused(tmp_path):
+    _refused(_file(tmp_path, PURGE + PURGE))
+
+
+def test_a_purge_line_must_go_to_the_back_itself_before_it_prints(tmp_path):
+    _refused(_file(tmp_path, PURGE.replace("G1 X135 Y352 F18000\n", "G1 X135 F18000\n")
+                   .replace("G1 X205 Y352 E3.72454", "G1 X205 E3.72454")))
+
+
+def test_a_move_with_two_extrusion_words_is_refused(tmp_path):
+    _refused(_file(tmp_path, PURGE.replace("G1 X205 Y352 E3.72454", "G1 X205 Y352 E-.5 E2")))
+
+
+def test_a_changed_file_is_refused_in_the_purge_lines_own_words(tmp_path):
+    path = _file(tmp_path)
+    edits = pf.scan_purge_line(path, pf.KIND_GCODE)
+    path.write_bytes(path.read_bytes().replace(b"E3.72454", b"E9.99999"))
+    with pytest.raises(FileRefused) as err:
+        pf.write_prepared_copy(path, tmp_path / "out.gcode", pf.KIND_GCODE, None, (), edits=edits)
+    assert err.value.key == "purge_not_found"

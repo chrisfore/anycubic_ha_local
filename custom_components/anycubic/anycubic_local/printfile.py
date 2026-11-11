@@ -832,6 +832,8 @@ class Edit:
     old: bytes
     new: bytes
     after: re.Pattern[bytes] | None = None
+    # Why the copy is refused if the stream does not have `old` here.
+    key: str = "clear_end_code"
 
 
 def _edit(chunks: Iterable[bytes], edits: Iterable[Edit]) -> Iterator[bytes]:
@@ -865,13 +867,13 @@ def _edit(chunks: Iterable[bytes], edits: Iterable[Edit]) -> Iterator[bytes]:
             if pos + cur < edit.start + len(edit.old):
                 break
             if taken != edit.old:
-                raise FileRefused("clear_end_code")
+                raise FileRefused(edit.key)
             tail = (tail + taken)[-_LONGEST_LINE:]
             at, done = at + 1, False
         pos += size
     if at < len(todo):
         # An edit the stream never reached, or was cut short in.
-        raise FileRefused("clear_end_code")
+        raise FileRefused(todo[at].key)
 
 
 # ------------------------------------------------------------------ Skip the purge line
@@ -899,12 +901,21 @@ def _purge_edits(chunks: Iterable[bytes]) -> tuple[Edit, ...]:
     block: list[Edit] | None = None
     lines = printed = 0
     start = 0
+    # Relative extrusion must be in effect: only then is an E number an amount, and a
+    # positive one filament laid down. At the back of the bed: said inside the block.
+    relative_e = at_back = False
     for raw, end in _gcode_lines(chunks):
         line_start, start = start, end
         text = raw.strip()
         if block is None:
+            word = text.split(b";", 1)[0].strip().upper()
+            if word in (b"M82", b"M83"):
+                relative_e = word == b"M83"
             if _PURGE_START.fullmatch(text):
-                block, lines, printed = [], 0, 0
+                if edits or not relative_e:
+                    # A second purge line, or E numbers that are positions.
+                    raise FileRefused("purge_not_found")
+                block, lines, printed, at_back = [], 0, 0, False
             continue
         lines += 1
         if lines > PURGE_MAX_LINES:
@@ -920,14 +931,18 @@ def _purge_edits(chunks: Iterable[bytes]) -> tuple[Edit, ...]:
         command = text.split(b";", 1)[0].strip().upper()
         if _PURGE_OTHER.fullmatch(command):
             continue
-        if not _PURGE_MOVE.fullmatch(command):
+        if not _PURGE_MOVE.fullmatch(command) or len(_E_WORD.findall(command)) > 1:
             raise FileRefused("purge_not_found")
         y, e = _word_value(command, b"Y"), _word_value(command, b"E")
         travels = _word_value(command, b"X") is not None or y is not None
-        if y is not None and y < PURGE_MIN_Y:
-            raise FileRefused("purge_not_found")
+        if y is not None:
+            if y < PURGE_MIN_Y:
+                raise FileRefused("purge_not_found")
+            at_back = True
         if e is None or e <= 0:
             continue
+        if travels and not at_back:
+            raise FileRefused("purge_not_found")
         # The line as written, without its line end: that stays where it is.
         body = raw[:-1] if raw.endswith(b"\r") else raw
         if travels:
@@ -936,7 +951,7 @@ def _purge_edits(chunks: Iterable[bytes]) -> tuple[Edit, ...]:
         else:
             new = PURGE_SKIPPED
         edits_at = line_start
-        block.append(Edit(start=edits_at, old=body, new=new))
+        block.append(Edit(start=edits_at, old=body, new=new, key="purge_not_found"))
     if block is not None or not edits:
         # No purge line, or one that ran on to the end of the file.
         raise FileRefused("purge_not_found")
