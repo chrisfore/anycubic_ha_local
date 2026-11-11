@@ -4,7 +4,8 @@ No Home Assistant here, and nothing is read or written. `clearing_block` returns
 prepared copy of a file gets after its last nozzle-off line, or refuses with a reason:
 
 1. bed and chamber heaters off;
-2. lift to the tallest part plus a clearance, and park over the purge chute;
+2. lift to the tallest part plus a clearance, park over the purge chute, and turn the
+   chamber and auxiliary fans on so the bed and chamber cool while the print waits;
 3. `M601`: the printer pauses here, and only a resume carries on;
 4. cool the nozzle, with the part fan on, before anything can touch a part;
 5. the sweep: for each column, travel at the lifted height to a point behind the parts, come
@@ -36,6 +37,14 @@ class Dwell:
 
     seconds: float
 
+
+# The chamber fan (P3) and the auxiliary fan (P2) at 80 % for the wait at the pause, and off
+# again after the sweep. They go in the file, before the pause, because the printer takes
+# no fan command from outside while it is paused and keeps what the file set. Measured on a
+# Kobra S1 Max with the door closed, from a 67 C bed: 28 C after 20 minutes and 25 C after
+# 31 with them on, against 60 minutes and never without.
+WAIT_FANS_ON = ("M106 P3 S204", "M106 P2 S204")
+WAIT_FANS_OFF = ("M106 P2 S0", "M106 P3 S0")
 
 # The longest a timed wait may be.
 MAX_DWELL_SECONDS = 3600
@@ -221,6 +230,8 @@ def clearing_block(profile: SweepProfile, max_z: float, footprints, *,
     out.raw("G90")
     out.z(lift)
     out.xy(*profile.park, profile.travel_speed)
+    for line in WAIT_FANS_ON:
+        out.raw(line)
     out.raw("M601")
     for line in cool:
         out.raw(line)
@@ -230,6 +241,8 @@ def clearing_block(profile: SweepProfile, max_z: float, footprints, *,
         out.z(height)
         out.xy(x, profile.front_y, profile.push_speed)
         out.z(lift)
+    for line in WAIT_FANS_OFF:
+        out.raw(line)
     out.z(min(lift + profile.final_raise, profile.z_cap))
     out.raw("; Home Assistant: end of Clear the bed.")
     return out.lines

@@ -51,7 +51,11 @@ def test_the_block_runs_heaters_off_lift_park_pause_cool_sweep_raise():
     assert commands[2] == "G90"
     assert commands[3] == "G1 Z30.00 F600"                      # tallest part + 10
     assert commands[4] == "G1 X105.00 Y352.00 F12000"           # over the chute
-    assert pause == 5
+    # The chamber fan and the auxiliary fan, set here because the printer takes no fan
+    # command from outside while it is paused, and keeps what the file set.
+    assert commands[5:7] == ["M106 P3 S204", "M106 P2 S204"]
+    assert pause == 7
+    assert commands[-3:-1] == ["M106 P2 S0", "M106 P3 S0"]      # off again after the sweep
     after = commands[pause + 1:]
     cool = after.index("M109 S50")
     first_descent = next(i for i, c in enumerate(after) if c == "G1 Z2.00 F600")

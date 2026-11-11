@@ -648,7 +648,7 @@ def clearing_families(facts: FileFacts) -> tuple[str, ...]:
 # What a block line may be: a comment, or one of the commands the sweep planner writes.
 # Checked again here, where the block meets a file, so that nothing else is ever inserted.
 _BLOCK_LINE = re.compile(
-    r"(?:;[^\r\n]*|M140 S0|M141 S0|M104 S0|G90|M601|M106 S(?:0|255)|M109 S\d{1,2}"
+    r"(?:;[^\r\n]*|M140 S0|M141 S0|M104 S0|G90|M601|M106 S(?:0|255)|M106 P[23] S(?:0|204)|M109 S\d{1,2}"
     r"|G4 P\d{1,7}|G1 Z\d{1,3}\.\d\d F\d{1,5}|G1 X-?\d{1,3}\.\d\d Y-?\d{1,3}\.\d\d F\d{1,5})")
 _NOZZLE_OFF = re.compile(rb"M104\s+S0+(?:\.0*)?\s*(?:;.*)?", re.IGNORECASE)
 
