@@ -244,3 +244,79 @@ def test_the_limit_is_the_coolest_any_material_in_the_print_asks_for():
     assert clearing_mod.cool_limit_for(()) == 30
     assert clearing_mod.cool_limit_for((None, "PLA")) == 28
     assert (MD5, TASK, time) is not None
+
+
+# ------------------------------------------------- findings of the independent review
+
+
+@pytest.mark.parametrize("label", ["", ";TYPE:Custom\n", ";TYPE:Outer wall\n"])
+def test_printing_above_the_stated_height_is_refused_whatever_it_is_labeled(tmp_path, label):
+    # The head parks by travelling at the stated height plus 10 mm: a taller print is in its way.
+    body = _part(extra=f"{label}G1 Z50\nG1 X175 Y175 E1\n")
+    if not label:
+        body = "\n".join(line for line in body.splitlines() if not line.startswith(";TYPE")) + "\n"
+    path = tmp_path / "a.gcode"
+    path.write_text(body)
+    with pytest.raises(FileRefused) as err:
+        pf.scan_for_clearing(path, pf.KIND_GCODE, push=False)
+    assert err.value.key == "clear_no_height"
+
+
+def test_printing_at_an_unknown_height_is_refused_whatever_it_is_labeled(tmp_path):
+    path = tmp_path / "a.gcode"
+    path.write_text(_part().replace("G1 Z.2\n", "").replace(";TYPE:Outer wall\n", ";TYPE:Custom\n"))
+    with pytest.raises(FileRefused) as err:
+        pf.scan_for_clearing(path, pf.KIND_GCODE, push=False)
+    assert err.value.key == "clear_unreadable"
+
+
+def test_a_purge_line_at_the_back_is_still_fine(tmp_path):
+    path = tmp_path / "a.gcode"
+    path.write_text(_part().replace("G1 Z.2\n", "G1 Z.25\nG1 X135 Y352\nG1 X205 Y352 E3.7\nG1 Z.2\n"))
+    assert pf.scan_for_clearing(path, pf.KIND_GCODE, push=False).max_z == 12.4
+
+
+async def test_a_stop_that_does_not_take_is_sent_again_and_then_the_owner_is_told(
+        hass, no_push_window):
+    coord = await _setup(hass)
+    await _to_cooling(hass, coord)
+    _paused(coord, bed=20)
+    await hass.async_block_till_done()
+    assert Transport.last.actions() == ["stop"]
+    _paused(coord, bed=20)                                              # too soon to judge
+    await hass.async_block_till_done()
+    assert Transport.last.actions() == ["stop"]
+    for sent in (2, 3):
+        coord.clearing._stop_at -= clearing_mod.STOP_RETRY_AFTER + 1
+        _paused(coord, bed=20)
+        await hass.async_block_till_done()
+        assert Transport.last.actions() == ["stop"] * sent
+    coord.clearing._stop_at -= clearing_mod.STOP_RETRY_AFTER + 1
+    _paused(coord, bed=20)
+    _paused(coord, bed=20)
+    await hass.async_block_till_done()
+    assert Transport.last.actions() == ["stop"] * 3                     # and no more
+    assert _notes(hass).count(clearing_mod.MESSAGE_STOP_FAILED) == 1
+    _free(coord, last_state="stoped")                                   # the owner pressed Stop
+    assert coord.clearing.state == "done"
+
+
+async def test_a_resume_at_the_printer_while_cooling_is_not_called_an_earlier_pause(
+        hass, no_push_window):
+    coord = await _setup(hass)
+    await _to_cooling(hass, coord)
+    _info(coord)
+    await hass.async_block_till_done()
+    assert not coord.print_state.armed.paused_earlier
+    assert not any("paused earlier" in note for note in _notes(hass))
+
+
+async def test_a_print_that_paused_earlier_is_told_what_to_do_without_the_push_words(
+        hass, no_push_window):
+    coord = await _setup(hass)
+    _arm(coord)
+    _info(coord, bed_target=60)
+    _paused(coord, bed_target=60)
+    _info(coord, bed_target=60)
+    notes = [note for note in _notes(hass) if "paused earlier" in note]
+    assert len(notes) == 1 and "Clear the bed" not in notes[0] and "Press Stop" in notes[0]

@@ -663,8 +663,11 @@ class _ClearScanner:
         else:
             extrudes, self._e = e > self._e, e
         travels = x is not None or y is not None or arc
+        # With no push, the height is what matters, and for everything the file prints:
+        # the head parks by travelling just above the height the file gives.
+        counted = self._in_part or not self._push
         if not self._absolute:
-            if extrudes and travels and self._in_part:
+            if extrudes and travels and counted:
                 raise FileRefused("clear_unreadable")
             if travels:
                 self._x = self._y = None
@@ -675,10 +678,16 @@ class _ClearScanner:
         self._x = self._x if x is None else x
         self._y = self._y if y is None else y
         self._z = self._z if z is None else z
-        if not (extrudes and travels and self._in_part):
+        if not (extrudes and travels and counted):
             return
-        if self._x is None or self._y is None or self._z is None:
-            # Printing from somewhere, or at a height, the file's moves do not give.
+        if self._z is None:
+            # Printing at a height the file's moves do not give.
+            raise FileRefused("clear_unreadable")
+        self._printed_z = max(self._printed_z, self._z)
+        if not self._push:
+            return
+        if self._x is None or self._y is None:
+            # Printing from somewhere the file's moves do not give.
             raise FileRefused("clear_unreadable")
         reach = [(self._x, self._y)]
         if arc:
@@ -698,7 +707,6 @@ class _ClearScanner:
         for at_x, at_y in reach:
             box[0], box[1] = min(box[0], at_x), max(box[1], at_x)
             box[2], box[3] = min(box[2], at_y), max(box[3], at_y)
-        self._printed_z = max(self._printed_z, self._z)
 
     def _result(self) -> ClearScan:
         settings = self.window.settings()

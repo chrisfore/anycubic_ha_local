@@ -77,6 +77,11 @@ CHAMBER_LIMIT = 30
 # How often the printer is asked how it is while a press is possible or a sweep is running.
 FAST_POLL = timedelta(seconds=5)
 
+# With no push: how long after its stop a job may still report paused before the stop is
+# sent again, in seconds, and how many stops are sent in all before the owner is asked.
+STOP_RETRY_AFTER = 45.0
+STOP_TRIES = 3
+
 # With no push, the bed is "cool" at the materials' limits above, or at this for others.
 COOL_DEFAULT = 30
 
@@ -88,6 +93,11 @@ MESSAGE_COOL = ("The bed has cooled to {temp} °C. Take the print off, then pres
 MESSAGE_NOT_COOL = ("The print was finished with the bed still warm, at {temp} °C, as it did "
                     "not cool in time. Take the print off when it has cooled, then press Bed "
                     "is clear.")
+MESSAGE_STOP_FAILED = ("The print has finished, but the printer did not take the command to "
+                       "end it. Press Stop at the printer, then take the print off.")
+MESSAGE_PAUSED_EARLIER_COOL = (
+    "This print paused earlier, so Home Assistant cannot tell when it reaches its end and "
+    "cannot end it. Press Stop when it has finished, then take the print off.")
 MESSAGE_EXPIRED = ("Clear the bed is no longer available for this print. Press Stop, then "
                    "clear the bed by hand.")
 MESSAGE_PAUSED_EARLIER = ("This print paused earlier, so Clear the bed will not be offered. "
@@ -157,6 +167,8 @@ class Clearing:
         self._stopped: str | None = None
         # With no push: why the job was ended by Home Assistant, "cool" or "late".
         self._ended: str | None = None
+        self._stop_at: float | None = None
+        self._stops = 0
         self._unsub_door = None
         self._unsub_poll = None
 
@@ -310,10 +322,11 @@ class Clearing:
         elif self.state in (STATE_READY, STATE_EXPIRED) and PUSH_ENABLED:
             # Running again, and not by a press: stop it before the sweep.
             self._fail(REASON_OUTSIDE, stop=True)
-        elif self._was_paused and not job.paused_earlier:
+        elif self.state == STATE_ARMED and self._was_paused and not job.paused_earlier:
             job.paused_earlier = True
             self._save()
-            self._notify(MESSAGE_PAUSED_EARLIER)
+            self._notify(MESSAGE_PAUSED_EARLIER if PUSH_ENABLED
+                         else MESSAGE_PAUSED_EARLIER_COOL)
         if not paused:
             self._seen_running = True
         self._was_paused = paused
@@ -411,8 +424,18 @@ class Clearing:
         Ended with a stop, never a resume. The printer must have said within the gap bound
         that this is still Home Assistant's own job, paused; the bed reading must be a number.
         """
-        if (self._ended is not None or not self._ours or not self._paused
-                or not self._info_fresh()):
+        if not self._ours or not self._paused or not self._info_fresh():
+            return
+        if self._ended is not None:
+            # A stop was sent and the job still says paused: it may never have gone out.
+            # Sent again a few times, and then it is for the owner to press Stop.
+            if time.monotonic() - self._stop_at <= STOP_RETRY_AFTER:
+                return
+            if self._stops < STOP_TRIES:
+                self._send_stop()
+            elif self._stops == STOP_TRIES:
+                self._stops += 1
+                self._notify(MESSAGE_STOP_FAILED)
             return
         job = self._job
         bed = finite_number(self._c.data.printer.bed_temp)
@@ -422,12 +445,19 @@ class Clearing:
             self._ended = "late"
         else:
             return
-        self._stop_once(cooled=True)
+        self._send_stop()
+
+    def _send_stop(self) -> None:
+        """No push: one stop for the parked job, counted and timed."""
+        self._stops += 1
+        self._stop_at = time.monotonic()
+        _LOGGER.debug("ending the parked print (stop %s of %s)", self._stops, STOP_TRIES)
+        self._c.hass.async_create_task(self._c.async_send_command("stop"))
 
     def _enter_ready(self) -> None:
         if not PUSH_ENABLED:
             # Nothing is resumed, so when the pause began matters only for how long to wait.
-            self._pause_at, self._ended = time.monotonic(), None
+            self._pause_at, self._ended, self._stops = time.monotonic(), None, 0
             self._set(STATE_READY)
             self._save()
             if self._unsub_poll is None:
@@ -471,17 +501,13 @@ class Clearing:
         self._set(state, reason)
         self._save()
 
-    def _stop_once(self, *, cooled: bool = False) -> bool:
+    def _stop_once(self) -> bool:
         """Send a stop for the paused job, once for each pause."""
         key = self.task or self._c.data.printer.filename or "?"
         if self._stopped == key:
             return False
         self._stopped = key
-        if cooled:
-            _LOGGER.debug("ending the parked print: the bed is cool, or it has waited long enough")
-        else:
-            _LOGGER.warning(
-                "stopping a paused print rather than letting it be resumed into a sweep")
+        _LOGGER.warning("stopping a paused print rather than letting it be resumed into a sweep")
         self._c.hass.async_create_task(self._c.async_send_command("stop"))
         return True
 
