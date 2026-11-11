@@ -426,8 +426,9 @@ _SIDECAR_BYTES = 1024
 
 _FEATURE = re.compile(rb";\s*(?:TYPE|FEATURE)\b[\s:=]*(.*)", re.IGNORECASE)
 _LINE_NUMBER = re.compile(rb"^N\d+\s*")
-_WORD_VALUES = {axis: re.compile(rb"(?<![A-Z])" + axis + rb"\s*(-?\d*\.?\d+)")
-                for axis in (b"X", b"Y", b"Z", b"E")}
+_CHECKSUM = re.compile(rb"\s*\*\d+$")
+_WORD_VALUES = {axis: re.compile(rb"(?<![A-Z])" + axis + rb"\s*([-+]?\d*\.?\d+)")
+                for axis in (b"X", b"Y", b"Z", b"E", b"I", b"J", b"R")}
 _POLYGON = re.compile(rb"POLYGON=(\S+)", re.IGNORECASE)
 _S_VALUE = re.compile(rb"\bS\s*([-+0-9.]+)")
 _BED_TEMP = re.compile(rb"\bBEDTEMP\s*=\s*([-+0-9.]+)")
@@ -572,7 +573,7 @@ class _ClearScanner:
             return
         command = b" ".join(text.split(b";", 1)[0].upper().split())
         # A line number in front changes nothing about what the line does.
-        command = _LINE_NUMBER.sub(b"", command)
+        command = _CHECKSUM.sub(b"", _LINE_NUMBER.sub(b"", command))
         if not command:
             return
         word = command.split(b" ", 1)[0]
@@ -628,17 +629,18 @@ class _ClearScanner:
             else:
                 self._moved = True
         if word in _LINEAR:
-            self._follow(command)
+            self._follow(command, arc=word in (b"G2", b"G3"))
         elif moves:
             # Homing, probing and the like: where the head is afterward is not in the file.
             self._x = self._y = self._z = None
 
-    def _follow(self, command: bytes) -> None:
+    def _follow(self, command: bytes, *, arc: bool = False) -> None:
         """Keep track of the head through one G0 to G3, and of what it prints as a part."""
         x, y, z, e = (_word_value(command, axis) for axis in (b"X", b"Y", b"Z", b"E"))
         if e is None:
             extrudes = False
-        elif self._relative_e:
+        elif self._relative_e or not self._absolute:
+            # Relative moves make the extrusion relative too, on this family of firmware.
             extrudes = e > 0
         else:
             extrudes, self._e = e > self._e, e
@@ -651,21 +653,34 @@ class _ClearScanner:
             if z is not None:
                 self._z = None
             return
+        from_x, from_y = self._x, self._y
         self._x = self._x if x is None else x
         self._y = self._y if y is None else y
         self._z = self._z if z is None else z
         if not (extrudes and travels and self._in_part):
             return
-        if self._x is None or self._y is None:
+        if self._x is None or self._y is None or self._z is None:
+            # Printing from somewhere, or at a height, the file's moves do not give.
             raise FileRefused("clear_unreadable")
+        reach = [(self._x, self._y)]
+        if arc:
+            # An arc reaches as far as its whole circle; one given by a radius alone, or
+            # from an unknown start, cannot be placed.
+            i, j = _word_value(command, b"I"), _word_value(command, b"J")
+            if (from_x is None or from_y is None or (i is None and j is None)
+                    or _word_value(command, b"R") is not None):
+                raise FileRefused("clear_unreadable")
+            i, j = i or 0.0, j or 0.0
+            radius = math.hypot(i, j)
+            reach += [(from_x + i - radius, from_y + j - radius),
+                      (from_x + i + radius, from_y + j + radius)]
         if self._printed is None:
             self._printed = [self._x, self._x, self._y, self._y]
-        else:
-            box = self._printed
-            box[0], box[1] = min(box[0], self._x), max(box[1], self._x)
-            box[2], box[3] = min(box[2], self._y), max(box[3], self._y)
-        if self._z is not None:
-            self._printed_z = max(self._printed_z, self._z)
+        box = self._printed
+        for at_x, at_y in reach:
+            box[0], box[1] = min(box[0], at_x), max(box[1], at_x)
+            box[2], box[3] = min(box[2], at_y), max(box[3], at_y)
+        self._printed_z = max(self._printed_z, self._z)
 
     def _result(self) -> ClearScan:
         settings = self.window.settings()

@@ -11,9 +11,11 @@ HEADER = """; HEADER_BLOCK_START
 ; max_z_height: 12.40
 ; HEADER_BLOCK_END
 """
-START = """M140 S60
+START = """M83
+M140 S60
 M190 S60
 EXCLUDE_OBJECT_DEFINE NAME=cube_id_0_copy_0 CENTER=175,175 POLYGON=[[170,170],[180,170],[180,180],[170,180],[170,170]]
+G1 Z.2 F600
 ;TYPE:Outer wall
 G1 X170 Y170 E.4 F1800
 ;TYPE:Inner wall
@@ -341,3 +343,28 @@ def test_outlines_with_more_points_than_any_plate_has_are_refused(tmp_path, monk
     start = START + ("EXCLUDE_OBJECT_DEFINE NAME=b POLYGON=[[170,170],[180,170],[180,180],"
                      "[170,180]]\n")
     _refused("clear_no_outline", _gcode(tmp_path, start=start))
+
+
+def test_printing_at_a_height_the_file_does_not_give_cannot_be_followed(tmp_path):
+    for lost in ("G91\nG1 Z50\nG90\n", "G28 Z\n"):
+        _refused("clear_unreadable", _gcode(tmp_path, start=START + lost + "G1 X175 Y175 E1\n"))
+    start = START.replace("G1 Z.2 F600\n", "")
+    _refused("clear_unreadable", _gcode(tmp_path, start=start))
+
+
+def test_a_plus_sign_or_a_checksum_hides_nothing(tmp_path):
+    _refused("clear_no_outline", _gcode(tmp_path, start=START + "G1 X+300 Y+320 E+1\n"))
+    _refused("clear_own_pause", _gcode(tmp_path, start=START + "N10 M601*45\n"))
+
+
+def test_an_arc_counts_by_its_whole_circle_not_its_end_points(tmp_path):
+    assert _scan(_gcode(tmp_path, start=START + "G1 X174 Y175\nG2 X176 Y175 I1 J0 E.2\n")).max_z
+    _refused("clear_no_outline",
+             _gcode(tmp_path, start=START + "G1 X174 Y175\nG2 X176 Y175 I1 J-80 E.2\n"))
+    _refused("clear_unreadable",
+             _gcode(tmp_path, start=START + "G1 X174 Y175\nG3 X176 Y175 R200 E.2\n"))
+
+
+def test_relative_moves_make_extrusion_relative_too(tmp_path):
+    _refused("clear_unreadable",
+             _gcode(tmp_path, start=START + "M82\nG92 E50\nG91\nG1 X5 Y5 E1\nG90\n"))

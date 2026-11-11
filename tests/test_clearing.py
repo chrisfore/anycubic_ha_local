@@ -679,3 +679,12 @@ async def test_a_press_needs_a_recent_status_report_not_just_any_report(hass):
     coord.clearing._info_at -= 1000
     coord._apply("tempature", {"curr_hotbed_temp": 20})         # the printer is still talking
     await _refused("clear_not_ready", coord, door_open_confirmed=True)
+
+
+async def test_an_archive_job_is_known_by_its_name_as_the_printer_reports_it(hass):
+    coord = await _setup(hass)
+    coord.clearing.async_arm(name="part-ha-pushoff.gcode.3mf", md5=MD5, task_id=TASK, bed_limit=28)
+    _info(coord, name=".3mf_temp/part-ha-pushoff.gcode", bed_target=60)
+    _paused(coord, name=".3mf_temp/part-ha-pushoff.gcode")
+    await hass.async_block_till_done()
+    assert coord.clearing.state == "ready" and Transport.last.actions() == []

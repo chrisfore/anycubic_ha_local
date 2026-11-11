@@ -43,7 +43,7 @@ def _part(*, material="PLA", slot=1, plate="Textured PEI Plate", extra="", max_z
             "; HEADER_BLOCK_END\nM140 S60\nM190 S60\n"
             "EXCLUDE_OBJECT_DEFINE NAME=a CENTER=175,175 "
             "POLYGON=[[170,170],[180,170],[180,180],[170,180]]\n"
-            f";TYPE:Outer wall\nG1 X170 Y170 E.4\n{extra}"
+            f"G1 Z.2\n;TYPE:Outer wall\nG1 X170 Y170 E.4\n{extra}"
             "M140 S0\nM104 S0\nM141 S0\nM84\n"
             f"; raft_layers = 0\n; curr_bed_type = {plate}\n; filament_type = {types}\n"
             + (f"; printer_model = {model}\n" if model else ""))

@@ -29,7 +29,7 @@ from homeassistant.helpers.event import async_track_state_change_event, async_tr
 
 from .anycubic_local.const import PAUSED_PHASES, STATE_FREE
 from .anycubic_local.models import JobReason
-from .anycubic_local.printfile import finite_number, is_marked
+from .anycubic_local.printfile import finite_number, is_marked, split_suffix
 from .const import (
     CONF_DOOR_SENSOR,
     DOMAIN,
@@ -98,6 +98,16 @@ REASON_ENDED = "the print ended before the push finished"
 def bed_limit_for(families) -> int:
     """The strictest bed limit among the materials a file prints with."""
     return min(BED_LIMITS[family] for family in families)
+
+
+def _stem(name: str | None) -> str | None:
+    """A file's name with no folder and no suffix. The printer reports a job from an
+    archive under a working folder and as plain G-code: ".3mf_temp/<stem>.gcode"."""
+    if not name:
+        return None
+    base = name.replace("\\", "/").rsplit("/", 1)[-1]
+    parts = split_suffix(base)
+    return parts[0] if parts else base
 
 
 def _refusal(key: str, **placeholders) -> ServiceValidationError:
@@ -193,7 +203,7 @@ class Clearing:
         # The task id of the start, and the name of the copy it started: a refused start
         # can leave its task id on a job that was already running.
         return (job is not None and self.task is not None and self.task == job.task_id
-                and self._c.data.printer.filename == job.name)
+                and _stem(self._c.data.printer.filename) == _stem(job.name))
 
     @property
     def resume_locked(self) -> bool:
