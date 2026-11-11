@@ -282,7 +282,7 @@ script:
             accept: ".gcode,.3mf"
       allow_clear_bed:
         name: Allow Clear the bed
-        required: false
+        required: true
         default: false
         selector:
           boolean:
