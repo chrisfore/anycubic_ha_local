@@ -38,6 +38,7 @@ from .const import (
     MODEL_NAMES,
     PUSH_OFF_MARKER,
     PUSH_OFF_MODELS,
+    REPORT_GAP_BOUND,
 )
 from .store import ArmedJob
 
@@ -122,6 +123,8 @@ class Clearing:
         self._finished = False
         # Monotonic time of the press, and whether the job has been seen running since.
         self._pressed_at: float | None = None
+        # Monotonic time of the last `info` report: the only report that says paused or not.
+        self._info_at: float | None = None
         self._push_running = False
         # The paused job a stop was already sent for, so one pause gets one stop.
         self._stopped: str | None = None
@@ -187,7 +190,10 @@ class Clearing:
     @property
     def _ours(self) -> bool:
         job = self._job
-        return job is not None and self.task is not None and self.task == job.task_id
+        # The task id of the start, and the name of the copy it started: a refused start
+        # can leave its task id on a job that was already running.
+        return (job is not None and self.task is not None and self.task == job.task_id
+                and self._c.data.printer.filename == job.name)
 
     @property
     def resume_locked(self) -> bool:
@@ -208,6 +214,11 @@ class Clearing:
         """Is a press worth offering: ready, inside the window, and the printer reporting."""
         return self.state == STATE_READY and self._c.reachable and not self._window_over()
 
+    def _info_fresh(self) -> bool:
+        """Has the printer said how the job stands within the gap bound?"""
+        return (self._info_at is not None
+                and time.monotonic() - self._info_at <= REPORT_GAP_BOUND)
+
     def _window_over(self) -> bool:
         if MOTOR_WINDOW is None:
             return False
@@ -219,6 +230,7 @@ class Clearing:
     @callback
     def async_on_info(self, info: dict) -> None:
         """Every `info` report, after the coordinator has read it."""
+        self._info_at = time.monotonic()
         printer = self._c.data.printer
         project = info.get("project")
         running = printer.raw_state != STATE_FREE and isinstance(project, dict) and bool(project)
@@ -295,7 +307,7 @@ class Clearing:
             isinstance(last, dict) and str(last.get("task_id")) == job.task_id
             and last.get("state") == "finished")
         if self.state == STATE_PUSHING:
-            if finished and self._stopped is None:
+            if finished and self._push_running and self._stopped is None:
                 # The sweep ran to its end with Home Assistant watching all of it.
                 self._c.print_state.bed_flag = False
                 self._retire(STATE_DONE)
@@ -442,7 +454,7 @@ class Clearing:
         if self.state == STATE_EXPIRED:
             raise _refusal("clear_window_over")
         if (self.state != STATE_READY or job is None or job.resumed or not self._ours
-                or not coordinator.reachable or not self._paused
+                or not coordinator.reachable or not self._info_fresh() or not self._paused
                 or finite_number(printer.bed_target) != 0):
             raise _refusal("clear_not_ready")
         if self._window_over():
@@ -476,4 +488,8 @@ class Clearing:
         self._set(STATE_PUSHING)
         await coordinator.async_save_print_state()
         coordinator.async_update_listeners()
+        if self.state != STATE_PUSHING:
+            # Something failed the press while it was being recorded (the door, a fault,
+            # a silence). Nothing is sent, and this job is never resumed.
+            raise _refusal("clear_not_ready")
         await coordinator.async_send_command("resume", press=True)

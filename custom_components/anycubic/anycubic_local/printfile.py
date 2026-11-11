@@ -416,8 +416,18 @@ CLEARING_FAMILIES = frozenset({"PLA", "PETG"})
 # More outlines, or more points in one, than any plate has.
 MAX_OUTLINES = 2000
 MAX_OUTLINE_POINTS = 5000
+MAX_OUTLINE_POINTS_TOTAL = 200_000
+# How far outside the outlines, and above the height, a part may be printed and still be
+# the part the file describes: a support, the width of a wall, the last layer.
+OUTLINE_TOLERANCE = 5.0
+HEIGHT_TOLERANCE = 1.0
+# The longest an md5 file beside a plate can be.
+_SIDECAR_BYTES = 1024
 
-_FEATURE = re.compile(rb";\s*(?:TYPE|FEATURE)\s*:\s*(.*)", re.IGNORECASE)
+_FEATURE = re.compile(rb";\s*(?:TYPE|FEATURE)\b[\s:=]*(.*)", re.IGNORECASE)
+_LINE_NUMBER = re.compile(rb"^N\d+\s*")
+_WORD_VALUES = {axis: re.compile(rb"(?<![A-Z])" + axis + rb"\s*(-?\d*\.?\d+)")
+                for axis in (b"X", b"Y", b"Z", b"E")}
 _POLYGON = re.compile(rb"POLYGON=(\S+)", re.IGNORECASE)
 _S_VALUE = re.compile(rb"\bS\s*([-+0-9.]+)")
 _BED_TEMP = re.compile(rb"\bBEDTEMP\s*=\s*([-+0-9.]+)")
@@ -476,6 +486,12 @@ def _first_number(pattern: re.Pattern[bytes], command: bytes) -> float | None:
     return finite_number(match.group(1).decode("ascii", "replace")) if match else None
 
 
+def _word_value(command: bytes, axis: bytes) -> float | None:
+    """The number after one axis letter in a move, or None if the move has none."""
+    match = _WORD_VALUES[axis].search(command[2:])
+    return finite_number(match.group(1).decode("ascii", "replace")) if match else None
+
+
 def _outline(command: bytes) -> tuple[tuple[float, float], ...]:
     """The outline an EXCLUDE_OBJECT_DEFINE line gives, or a refusal if it gives none."""
     match = _POLYGON.search(command)
@@ -497,7 +513,12 @@ def _outline(command: bytes) -> tuple[tuple[float, float], ...]:
 
 
 class _ClearScanner:
-    """Reads a G-code stream once and refuses at the first thing that rules clearing out."""
+    """Reads a G-code stream once and refuses at the first thing that rules clearing out.
+
+    It also follows the head, so that what the file says about its parts can be held
+    against what it prints: printing outside the outlines it gives, or higher than the
+    height it gives, refuses the file, because the sweep is planned from those two.
+    """
 
     def __init__(self) -> None:
         self.window = _Window()
@@ -507,6 +528,22 @@ class _ClearScanner:
         self.newline = b"\n"
         self._moved = False
         self._released = False
+        self._moved_after_release = False
+        self._points = 0
+        # The feature being printed. Start and end code ("custom"), where the purge line
+        # is, is not a part; before the first label everything is start code.
+        self._in_part = False
+        self._labels = 0
+        # Where the head is, as far as the file's absolute moves say.
+        self._absolute = True
+        self._relative_e = False
+        self._x: float | None = None
+        self._y: float | None = None
+        self._z: float | None = None
+        self._e = 0.0
+        # What was printed as part of a part: its bounds, and how high it went.
+        self._printed: list[float] | None = None
+        self._printed_z = 0.0
 
     def scan(self, chunks: Iterable[bytes]) -> ClearScan:
         def kept() -> Iterator[bytes]:
@@ -530,8 +567,12 @@ class _ClearScanner:
                                   (b"tower", "clear_tower")):
                     if word in name:
                         raise FileRefused(key)
+                self._in_part = b"custom" not in name
+                self._labels += self._in_part
             return
         command = b" ".join(text.split(b";", 1)[0].upper().split())
+        # A line number in front changes nothing about what the line does.
+        command = _LINE_NUMBER.sub(b"", command)
         if not command:
             return
         word = command.split(b" ", 1)[0]
@@ -539,7 +580,11 @@ class _ClearScanner:
             if len(self.footprints) >= MAX_OUTLINES:
                 raise FileRefused("clear_no_outline")
             # Read from the line as written: the outline's numbers have no upper case.
-            self.footprints.append(_outline(text))
+            outline = _outline(text)
+            self._points += len(outline)
+            if self._points > MAX_OUTLINE_POINTS_TOTAL:
+                raise FileRefused("clear_no_outline")
+            self.footprints.append(outline)
         elif word in (b"M600", b"M601"):
             raise FileRefused("clear_own_pause")
         elif word in (b"M140", b"M190"):
@@ -551,32 +596,103 @@ class _ClearScanner:
         elif word == b"M104":
             if _first_number(_S_VALUE, command) == 0:
                 self.insert_at, self._moved, self._released = end, False, False
+                self._moved_after_release = False
                 self.newline = b"\r\n" if raw.endswith(b"\r") else b"\n"
         elif word in (b"M84", b"M18"):
             if self.insert_at is not None and not self._moved:
                 self._released = True
+        elif word == b"M82":
+            self._relative_e = False
+        elif word == b"M83":
+            self._relative_e = True
         elif word.startswith(b"G"):
-            if word == b"G92" and _XYZ.search(command[3:]):
+            self._g(word, command)
+
+    def _g(self, word: bytes, command: bytes) -> None:
+        if word == b"G90":
+            self._absolute = True
+        elif word == b"G91":
+            self._absolute = False
+        elif word == b"G92":
+            if _XYZ.search(command[3:]):
                 # The coordinates no longer mean what the sweep takes them to mean.
                 raise FileRefused("clear_unreadable")
-            moves = (word not in _STILL and word != b"G92"
-                     and (word not in _LINEAR or bool(_AXIS.search(command[len(word):]))))
-            if moves and self.insert_at is not None and not self._released:
+            value = _word_value(command, b"E")
+            if value is not None:
+                self._e = value
+        moves = (word not in _STILL and word != b"G92"
+                 and (word not in _LINEAR or bool(_AXIS.search(command[len(word):]))))
+        if moves and self.insert_at is not None:
+            if self._released:
+                self._moved_after_release = True
+            else:
                 self._moved = True
+        if word in _LINEAR:
+            self._follow(command)
+        elif moves:
+            # Homing, probing and the like: where the head is afterward is not in the file.
+            self._x = self._y = self._z = None
+
+    def _follow(self, command: bytes) -> None:
+        """Keep track of the head through one G0 to G3, and of what it prints as a part."""
+        x, y, z, e = (_word_value(command, axis) for axis in (b"X", b"Y", b"Z", b"E"))
+        if e is None:
+            extrudes = False
+        elif self._relative_e:
+            extrudes = e > 0
+        else:
+            extrudes, self._e = e > self._e, e
+        travels = x is not None or y is not None
+        if not self._absolute:
+            if extrudes and travels and self._in_part:
+                raise FileRefused("clear_unreadable")
+            if travels:
+                self._x = self._y = None
+            if z is not None:
+                self._z = None
+            return
+        self._x = self._x if x is None else x
+        self._y = self._y if y is None else y
+        self._z = self._z if z is None else z
+        if not (extrudes and travels and self._in_part):
+            return
+        if self._x is None or self._y is None:
+            raise FileRefused("clear_unreadable")
+        if self._printed is None:
+            self._printed = [self._x, self._x, self._y, self._y]
+        else:
+            box = self._printed
+            box[0], box[1] = min(box[0], self._x), max(box[1], self._x)
+            box[2], box[3] = min(box[2], self._y), max(box[3], self._y)
+        if self._z is not None:
+            self._printed_z = max(self._printed_z, self._z)
 
     def _result(self) -> ClearScan:
         settings = self.window.settings()
+        if not self._labels:
+            # Nothing says what was printed as what: a brim cannot be ruled out.
+            raise FileRefused("clear_unreadable")
         if finite_number(settings.get("raft_layers")) != 0:
             raise FileRefused("clear_raft")
         if not self.bed_heated:
             raise FileRefused("clear_bed_not_heated")
-        if self.insert_at is None or not self._released:
+        if self.insert_at is None or not self._released or self._moved_after_release:
             raise FileRefused("clear_end_code")
         if not self.footprints:
             raise FileRefused("clear_no_outline")
         max_z = finite_number(settings.get("max_z_height"))
         if max_z is None or max_z <= 0:
             raise FileRefused("clear_no_height")
+        if self._printed_z > max_z + HEIGHT_TOLERANCE:
+            raise FileRefused("clear_no_height")
+        if self._printed is not None:
+            xs = [x for outline in self.footprints for x, _ in outline]
+            ys = [y for outline in self.footprints for _, y in outline]
+            low_x, high_x, low_y, high_y = self._printed
+            if (low_x < min(xs) - OUTLINE_TOLERANCE or high_x > max(xs) + OUTLINE_TOLERANCE
+                    or low_y < min(ys) - OUTLINE_TOLERANCE
+                    or high_y > max(ys) + OUTLINE_TOLERANCE):
+                raise FileRefused("clear_no_outline")
         return ClearScan(
             max_z=max_z, footprints=tuple(self.footprints),
             textured_plate="textured" in settings.get("curr_bed_type", "").lower(),
@@ -730,7 +846,10 @@ def _copy_archive(src: Path, dst: Path, scan: ClearScan, block: bytes, member_ca
                                              scan, block):
                             to.write(chunk)
                     elif info.filename.casefold() == sidecar:
-                        old = b"".join(budget.chunks(fh)).decode("ascii", "replace")
+                        raw = fh.read(_SIDECAR_BYTES + 1)
+                        if len(raw) > _SIDECAR_BYTES:
+                            raise FileRefused("archive_invalid")
+                        old = raw.decode("ascii", "replace")
                         text = old.strip()
                         new = digest.hexdigest()
                         if text and text == text.upper() and not text.isdigit():

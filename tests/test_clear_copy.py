@@ -145,3 +145,12 @@ def test_every_line_the_sweep_planner_writes_is_a_line_the_copy_accepts(tmp_path
         dst = tmp_path / f"out{i}.gcode"
         pf.write_prepared_copy(src, dst, pf.KIND_GCODE, scan, block)
         assert "\n".join(block).encode() in dst.read_bytes()
+
+
+def test_an_md5_file_too_large_to_be_one_is_refused(tmp_path):
+    src = _archive(tmp_path / "a.3mf", sidecar="0" * 5000)
+    dst = tmp_path / "out.3mf"
+    scan = pf.scan_for_clearing(src, pf.KIND_3MF)
+    with pytest.raises(FileRefused) as err:
+        pf.write_prepared_copy(src, dst, pf.KIND_3MF, scan, BLOCK)
+    assert err.value.key == "archive_invalid" and not dst.exists()

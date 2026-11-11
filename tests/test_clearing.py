@@ -636,3 +636,46 @@ async def test_an_ordinary_start_drops_a_record_left_from_a_start_that_never_beg
         await coord.async_start_print(name="other.gcode", size=1, md5=MD5, filetype=1,
                                       ams_settings={})
     assert coord.print_state.armed is None and coord.clearing.state == "off"
+
+
+# ------------------------------------------------- findings of the independent review
+
+
+async def test_a_press_that_fails_while_it_is_being_recorded_sends_no_resume(hass):
+    coord = await _setup(hass)
+    await _to_ready(hass, coord)
+
+    async def save_and_lose_the_printer():
+        coord.clearing.async_on_gap()                           # as a report gap would
+
+    with patch.object(coord, "async_save_print_state", save_and_lose_the_printer):
+        with pytest.raises(ServiceValidationError):
+            await _press(coord, door_open_confirmed=True)
+    await hass.async_block_till_done()
+    assert "resume" not in Transport.last.actions()
+    assert coord.clearing.state == "failed" and coord.print_state.armed.resumed
+
+
+async def test_a_job_that_ends_without_ever_running_after_the_press_is_not_a_sweep(hass):
+    coord = await _setup(hass)
+    await _to_pushing(hass, coord)
+    _free(coord)                                                # finished, but never seen running
+    assert coord.clearing.state == "failed" and coord.bed_needs_clearing
+
+
+async def test_the_armed_job_must_also_carry_the_prepared_copys_name(hass):
+    coord = await _setup(hass)
+    _arm(coord)
+    _info(coord, name="other.gcode", bed_target=60)
+    _paused(coord, name="other.gcode")
+    await hass.async_block_till_done()
+    assert coord.clearing.state == "armed"
+    assert Transport.last.actions() == ["stop"]                 # the signature, not ours
+
+
+async def test_a_press_needs_a_recent_status_report_not_just_any_report(hass):
+    coord = await _setup(hass)
+    await _to_ready(hass, coord)
+    coord.clearing._info_at -= 1000
+    coord._apply("tempature", {"curr_hotbed_temp": 20})         # the printer is still talking
+    await _refused("clear_not_ready", coord, door_open_confirmed=True)

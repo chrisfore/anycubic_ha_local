@@ -83,7 +83,7 @@ def test_windows_line_ends_are_kept_for_the_block(tmp_path):
 
 
 def test_an_earlier_nozzle_off_does_not_count_only_the_last(tmp_path):
-    start = START + "M104 S0\nG1 X10 Y10\nM104 S220\nG1 X20 Y20 E1\n"
+    start = START + "M104 S0\nG1 X171 Y171\nM104 S220\nG1 X175 Y175 E1\n"
     path = _gcode(tmp_path, start=start)
     scan = _scan(path)
     assert path.read_bytes()[scan.insert_at:].startswith(b"M141 S0\n")
@@ -246,7 +246,7 @@ def test_an_archive_is_scanned_through_its_one_plate(tmp_path):
 
 
 def test_an_archive_scan_is_held_to_the_size_caps(tmp_path):
-    body = (HEADER + START + "G1 X1 Y1 E1\n" * 5000 + END + CONFIG).encode()
+    body = (HEADER + START + "G1 X175 Y175 E1\n" * 5000 + END + CONFIG).encode()
     _refused("archive_too_large", _archive(tmp_path, body), pf.KIND_3MF, member_cap=1000)
 
 
@@ -278,3 +278,66 @@ def test_any_other_or_unknown_material_is_refused(used, materials):
     with pytest.raises(FileRefused) as err:
         pf.clearing_families(_facts(used, materials))
     assert err.value.key == "clear_material"
+
+
+# ------------------------------------------------- what the file says against what it prints
+
+
+def test_a_file_with_no_feature_labels_cannot_be_checked_for_a_brim(tmp_path):
+    start = "\n".join(line for line in START.splitlines() if not line.startswith(";TYPE")) + "\n"
+    _refused("clear_unreadable", _gcode(tmp_path, start=start))
+
+
+@pytest.mark.parametrize(("label", "key"), [
+    ("; feature skirt", "clear_skirt"), (";TYPE Brim", "clear_brim"),
+    ("; FEATURE = Prime tower", "clear_tower")])
+def test_a_label_written_without_a_colon_is_still_read(tmp_path, label, key):
+    _refused(key, _gcode(tmp_path, start=START + label + "\n"))
+
+
+@pytest.mark.parametrize(("line", "key"), [
+    ("N10 M601", "clear_own_pause"), ("N22 G92 Z50", "clear_unreadable"),
+    ("n5 m600", "clear_own_pause")])
+def test_a_line_number_in_front_hides_nothing(tmp_path, line, key):
+    _refused(key, _gcode(tmp_path, start=START + line + "\n"))
+
+
+def test_printing_outside_the_outlines_the_file_gives_is_refused(tmp_path):
+    for move in ("G1 X300 Y320 E1", "G1 Y330 E.5", "G1 X100 E.5", "G2 X175 Y240 I1 J1 E.5"):
+        _refused("clear_no_outline", _gcode(tmp_path, start=START + move + "\n"))
+    # A little outside is a support or a wall's width, not another part.
+    assert _scan(_gcode(tmp_path, start=START + "G1 X183 Y166 E.5\n")).max_z == 12.4
+    # A travel move is not printing.
+    assert _scan(_gcode(tmp_path, start=START + "G1 X300 Y320 F9000\nG1 X175 Y175\n")).max_z == 12.4
+
+
+def test_the_purge_line_and_other_start_code_may_print_anywhere(tmp_path):
+    start = ";TYPE:Custom\nG1 X135 Y352 F18000\nG1 X205 Y352 E3.7\n" + START
+    assert _scan(_gcode(tmp_path, start=start)).max_z == 12.4
+
+
+def test_printing_higher_than_the_height_the_file_gives_is_refused(tmp_path):
+    _refused("clear_no_height", _gcode(tmp_path, start=START + "G1 Z20\nG1 X175 Y175 E1\n"))
+    assert _scan(_gcode(tmp_path, start=START + "G1 Z12.4\nG1 X175 Y175 E1\nG1 Z30\n")).max_z == 12.4
+
+
+def test_absolute_extrusion_counts_only_when_it_advances(tmp_path):
+    start = START + "M82\nG92 E0\nG1 X175 Y175 E1\nG1 X300 Y320 E1\nG1 X175 Y175 E.5\n"
+    assert _scan(_gcode(tmp_path, start=start)).max_z == 12.4
+    _refused("clear_no_outline", _gcode(tmp_path, start=start + "G1 X300 Y320 E2\n"))
+
+
+def test_printing_in_relative_moves_cannot_be_followed(tmp_path):
+    _refused("clear_unreadable", _gcode(tmp_path, start=START + "G91\nG1 X5 Y5 E1\nG90\n"))
+
+
+def test_a_move_after_the_motors_are_released_is_not_a_recognized_end(tmp_path):
+    for line in ("G1 X10 Y10", "G28", "G1 Z5"):
+        _refused("clear_end_code", _gcode(tmp_path, end=END + line + "\n"))
+
+
+def test_outlines_with_more_points_than_any_plate_has_are_refused(tmp_path, monkeypatch):
+    monkeypatch.setattr(pf, "MAX_OUTLINE_POINTS_TOTAL", 8)
+    start = START + ("EXCLUDE_OBJECT_DEFINE NAME=b POLYGON=[[170,170],[180,170],[180,180],"
+                     "[170,180]]\n")
+    _refused("clear_no_outline", _gcode(tmp_path, start=start))
