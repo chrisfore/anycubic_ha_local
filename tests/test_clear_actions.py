@@ -397,3 +397,12 @@ async def test_a_ticked_archive_is_sent_whole_and_its_copy_as_plain_gcode(env):
     assert start["data"]["md5"] == hashlib.md5(copy).hexdigest()
     assert env.coord.print_state.armed.name == "part-ha-pushoff.gcode"
     assert env.coord.last_file.name == "part.gcode"
+
+
+async def test_a_copy_the_printer_kept_under_another_name_is_not_started(env):
+    # An older copy could still be there under the expected name, with another part's sweep.
+    env.send.side_effect = ["part.gcode", "part-ha-pushoff(1).gcode"]
+    with pytest.raises(HomeAssistantError) as err:
+        await _print_file(env, _stage(env, "part.gcode", _part()), True)
+    assert err.value.translation_key == "upload_name_changed"
+    assert Transport.last.starts() == [] and env.coord.print_state.armed is None

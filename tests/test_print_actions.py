@@ -911,15 +911,22 @@ def test_every_refusal_and_failure_has_one_line_of_text():
         assert strings["services"][service]["fields"]["printer"]["name"] == "Printer"
 
 
-@pytest.mark.parametrize(("answer", "started"), [
-    ("Cube renamed.gcode", "Cube renamed.gcode"),          # what the printer says it kept
-    (None, "Cube.gcode"), ("", "Cube.gcode"), ("../x.gcode", "Cube.gcode"),
-    ("Cube.gcode.3mf", "Cube.gcode"), ("a-ha-pushoff.gcode", "Cube.gcode"), (5, "Cube.gcode"),
-])
-async def test_the_name_the_printer_says_it_kept_is_started_if_it_is_a_plain_name(
-        env, answer, started):
+@pytest.mark.parametrize("answer", ["Cube.gcode", None, "", "../x.gcode", "Cube.gcode.3mf", 5])
+async def test_an_archive_is_started_under_the_name_the_printer_keeps_it_by(env, answer):
+    # The name it says it kept, when that is the name expected; an answer that names no
+    # plain file says nothing, and the expected name stands.
     env.send.return_value = answer
     archive = _zip([("Metadata/plate_1.gcode", PLA_GCODE)])
     await _print_file(env, _stage(env, "Cube.gcode.3mf", archive))
     (_, start), = Transport.last.starts()
-    assert start["data"]["filename"] == started
+    assert start["data"]["filename"] == "Cube.gcode"
+
+
+@pytest.mark.parametrize("answer", ["Cube renamed.gcode", "Cube(1).gcode", "a-ha-pushoff.gcode"])
+async def test_a_file_the_printer_kept_under_another_name_is_not_started(env, answer):
+    env.send.return_value = answer
+    archive = _zip([("Metadata/plate_1.gcode", PLA_GCODE)])
+    with pytest.raises(HomeAssistantError) as err:
+        await _print_file(env, _stage(env, "Cube.gcode.3mf", archive))
+    assert err.value.translation_key == "upload_name_changed"
+    assert Transport.last.starts() == [] and env.coord.last_file is None

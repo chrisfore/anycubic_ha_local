@@ -307,6 +307,18 @@ def _prepare(path: Path, kind: str, model_id: str, facts, model_named) -> _Prepa
     return _Prepared(path=copy, size=size, md5=md5, bed_limit=bed_limit_for(families))
 
 
+def _check_kept(kept, expected: str) -> None:
+    """Fail if the printer says it kept a file under a name other than the one expected.
+
+    The start names a file, and the printer does not check its md5: under another name,
+    the file that would start is whatever was already there under the expected one. An
+    answer that names no plain file says nothing, and the upload stands.
+    """
+    if (isinstance(kept, str) and kept != expected
+            and upload.stored_name({"data": {"gcode": kept}}) is not None):
+        raise upload.UploadError("upload_name_changed")
+
+
 def _delete(path: Path) -> None:
     try:
         path.unlink(missing_ok=True)
@@ -368,20 +380,17 @@ async def _async_send_and_start(hass: HomeAssistant, coordinator: AnycubicCoordi
                 kept = await upload.async_send_file(
                     session, target, path, name.original, facts.size,
                     identifiers=identifiers)
+                _check_kept(kept, name.stored)
                 if prepared is not None:
-                    await upload.async_send_file(
+                    _check_kept(await upload.async_send_file(
                         session, target, prepared.path, name.marked, prepared.size,
-                        identifiers=identifiers)
+                        identifiers=identifiers), name.marked)
         except upload.UploadError as err:
             raise _failure(err.key) from None
         # Recorded as soon as the file is on the printer, so that a start the printer
         # turns down, or does not confirm, can be tried again with Print again.
-        # What the printer keeps: the file itself, or an archive's plate as plain G-code,
-        # under the name it says it kept, if that is a plain name and not a copy's.
+        # What the printer keeps: the file itself, or an archive's plate as plain G-code.
         stored = name.stored
-        if (isinstance(kept, str) and upload.stored_name({"data": {"gcode": kept}})
-                and not is_marked(kept, PUSH_OFF_MARKER)):
-            stored = kept
         size = facts.size if facts.plate_size is None else facts.plate_size
         md5 = facts.md5 if facts.plate_md5 is None else facts.plate_md5
         coordinator.async_set_last_file(LastFile(
