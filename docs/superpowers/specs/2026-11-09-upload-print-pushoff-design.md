@@ -437,3 +437,43 @@ scans and the archive rewrite (7.2, section 3); sweep tunables (after T5) and th
 (after T4); store schema, keys, services.yaml, the `file_upload` dependency and poll cadence; the
 docs and automation; offline tests for every guard, the file change, names, press checks and the 7.4
 state machine (no test code here).
+
+## 12. The push is parked (owner, 2026-11-11); what a later attempt must solve
+
+The first real push failed and the owner chose to ship the cool-down without it: a prepared print
+ends parked with the fans cooling the bed, Home Assistant ends the job when the bed is cool and
+says so, and the part comes off by hand. The push code stays in the tree, switched off by
+`PUSH_ENABLED`, so that this section and the code can be picked up together.
+
+What was proven on the owner's Kobra S1 Max (firmware 2.7.1.4):
+- Everything up to the push works through Home Assistant: the prepared copy, the pause with the
+  head lifted and parked, the job recognized by its echoed task id (also after a Home Assistant
+  restart mid-print), the press checks, the in-file nozzle cooling, the air sweep path.
+- A paused print keeps its motors on and homed for at least 95 minutes, with the nozzle at 140 C.
+- Commands sent while paused (nozzle target, fans) are ignored; fans set in the file before the
+  pause keep running. With the chamber fan and the auxiliary fan at 80 %, door closed, the bed
+  goes from 67 C to 28 C in 20 minutes and 25 C in 31; without them 28 C takes an hour.
+- The printer unpacks an archive at upload and keeps the plate as plain `<stem>.gcode`.
+
+Why the push failed (2026-11-11, solid 20 x 20 x 6 mm PETG block, textured PEI, bed 25 C):
+- The nozzle at 2 mm pushed straight into the block and the block did not let go. The motors
+  skipped ("motor stress and clapping") until the owner pressed Stop.
+- **The firmware did not detect the stall.** No step-loss, scratch or head-block pause appears in
+  its log. Nothing stops the head when a part does not release; Home Assistant cannot see it.
+- The part was the hardest kind: short, wide, solid, in PETG. A push low on the part is shear along
+  the bond, its strongest direction.
+
+What a later attempt has to answer before any push ships:
+1. **A stuck part must not stall the head.** Either a way to detect it (motor current, position
+   feedback, the camera) or a push gentle enough to give up, which this firmware does not offer.
+2. **Release first.** Which materials and plates let go on their own when cold (PLA on smooth or
+   textured PEI is the print-farm case; PETG on textured PEI did not), and at what bed temperature.
+3. **How to push.** From near the top of the part first, so that it tips and peels, then lower
+   (the descending-height pattern print farms use); taller-than-wide parts only; a faster approach.
+   Parts sliced near the front of the bed have less far to travel.
+4. **What does the pushing.** The nozzle is a point and the toolhead cover is not built for it.
+5. **The purge line.** Every print leaves one at the rear of the bed (Y 352). For repeated prints
+   it has to be cleaned off or prevented, or it builds up; a sweep at 2 mm passes over it (owner).
+6. **Where parts land**, and whether they clear the door, was never reached.
+7. The accepted-risk list of section 9 comes back with the push, and so does the question of a
+   door sensor: the printer's own door switch does not work on the owner's unit.
