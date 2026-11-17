@@ -16,6 +16,7 @@ from .anycubic_local.handshake import do_handshake
 from .config_flow import OPTIONS_FLOW_RELOADS
 from .const import DOMAIN, PLATFORMS, ace_suffix
 from .coordinator import AnycubicCoordinator
+from .setup_failure import describe_failure
 from .store import PrintStore
 
 type AnycubicConfigEntry = ConfigEntry[AnycubicCoordinator]
@@ -31,16 +32,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: AnycubicConfigEntry) -> bool:
-    # Home Assistant logs both of these messages at its normal level, so the exception's text
-    # goes through the redactor first. No handshake has succeeded here, which leaves the
-    # entered address as the one thing known that it could name.
+    # Home Assistant logs both of these messages at its normal level. They say which step
+    # failed and why, in words built by describe_failure: never the exception's own text,
+    # and nothing that names the address or the printer.
     try:
         hs = await hass.async_add_executor_job(do_handshake, entry.data[CONF_HOST])
     except CloudModeError as err:
         # LAN Mode was turned off on the printer — guide the user to re-enable it via reauth.
-        raise ConfigEntryAuthFailed(redacted_error(err, (entry.data[CONF_HOST],))) from err
+        raise ConfigEntryAuthFailed(describe_failure(err)[1]) from err
     except (HandshakeError, OSError) as err:
-        raise ConfigEntryNotReady(redacted_error(err, (entry.data[CONF_HOST],))) from err
+        raise ConfigEntryNotReady(describe_failure(err)[1]) from err
     coordinator = AnycubicCoordinator(hass, hs, host=entry.data[CONF_HOST])
     # Before the session starts, so the last file on record is there for the first report,
     # and the bed needs clearing from the start.

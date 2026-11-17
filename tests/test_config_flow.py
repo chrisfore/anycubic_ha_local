@@ -26,13 +26,13 @@ async def test_user_flow_success(hass):
 
 
 async def test_cloud_mode_error(hass):
-    from custom_components.anycubic.anycubic_local.exceptions import HandshakeError
+    from custom_components.anycubic.anycubic_local.exceptions import CloudModeError
     result = await _start(hass)
     with patch("custom_components.anycubic.config_flow.do_handshake",
-               side_effect=HandshakeError("Printer is in CLOUD mode — enable LAN Mode")):
+               side_effect=CloudModeError("Printer is in CLOUD mode — enable LAN Mode")):
         result = await hass.config_entries.flow.async_configure(result["flow_id"], {"host": "1.2.3.4"})
     assert result["type"] == FlowResultType.FORM
-    assert result["errors"]["base"] == "cannot_connect"
+    assert result["errors"]["base"] == "cloud_mode"
 
 
 async def test_already_configured(hass):
@@ -78,7 +78,7 @@ async def test_reauth_still_cloud(hass):
                side_effect=CloudModeError("Printer is in CLOUD mode — enable LAN Mode")):
         result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     assert result["type"] == FlowResultType.FORM
-    assert result["errors"]["base"] == "cannot_connect"
+    assert result["errors"]["base"] == "cloud_mode"
 
 
 async def test_setup_cloud_mode_starts_reauth(hass):
@@ -253,9 +253,9 @@ async def test_reconfigure_started_with_the_entry_data_shows_the_form_first(hass
 
 
 async def test_reconfigure_to_an_address_nothing_answers_at_changes_nothing(hass):
-    from custom_components.anycubic.anycubic_local.exceptions import HandshakeError
     entry = _entry(hass)
-    with _printers({"192.168.1.61": HandshakeError("not a printer")}) as flow_handshake:
+    with _printers({"192.168.1.61": ConnectionRefusedError(111, "Connection refused")}) \
+            as flow_handshake:
         result = await _submit(hass, await _start_reconfigure(hass, entry), NEW)
         assert result["type"] == FlowResultType.FORM
         assert result["errors"] == {"base": "cannot_connect"}
@@ -290,7 +290,7 @@ async def test_reconfigure_refuses_a_printer_that_does_not_say_who_it_is(hass):
     with _printers({NEW: nameless}):
         result = await _submit(hass, await _start_reconfigure(hass, entry), NEW)
     assert result["type"] == FlowResultType.FORM
-    assert result["errors"] == {"base": "cannot_connect"}
+    assert result["errors"] == {"base": "unsupported_printer"}
     assert entry.data == {"host": "1.2.3.4"}
 
 
@@ -310,7 +310,7 @@ async def test_a_malformed_address_is_refused_without_a_handshake_when_adding(ha
         for bad in BAD_ADDRESSES:
             result = await _submit(hass, await _start(hass), bad)
             assert result["type"] == FlowResultType.FORM, bad
-            assert result["errors"] == {"base": "cannot_connect"}, bad
+            assert result["errors"] == {"base": "invalid_host"}, bad
     flow_handshake.assert_not_called()
     assert not hass.config_entries.async_entries(DOMAIN)
 
@@ -322,7 +322,7 @@ async def test_a_malformed_address_is_refused_without_a_handshake_when_reconfigu
         for bad in BAD_ADDRESSES:
             result = await _submit(hass, result, bad)
             assert result["type"] == FlowResultType.FORM, bad
-            assert result["errors"] == {"base": "cannot_connect"}, bad
+            assert result["errors"] == {"base": "invalid_host"}, bad
     flow_handshake.assert_not_called()
     assert entry.data == {"host": "1.2.3.4"}
 
@@ -411,7 +411,7 @@ async def test_adding_a_printer_with_no_serial_cannot_move_another_entry(hass):
     with _printers({NEW: nameless}):
         result = await _submit(hass, await _start(hass), NEW)
     assert result["type"] == FlowResultType.FORM
-    assert result["errors"] == {"base": "cannot_connect"}
+    assert result["errors"] == {"base": "unsupported_printer"}
     assert legacy.data == {"host": "1.2.3.4"}
 
 
@@ -448,20 +448,25 @@ def _not_printers():
     info = json.dumps({"token": "0123456789abcdefABCDEF0123456789", "cn": "SER-1",
                        "modelId": "20029", "ctrlType": "lan",
                        "ctrlInfoUrl": f"http://{NEW}:18910/ctrl"}).encode()
+    # What answers, and the form error it is: before a good first answer nothing says the
+    # device is a printer at all; after one, it is a printer that did not accept the setup.
+    nothing, other, printer = "cannot_connect", "unsupported_printer", "handshake_failed"
     return {
-        "a web page": [b"<html><body>router login</body></html>"],
-        "bytes that are not text": [b"\xff\xfe\x00"],
-        "a JSON list": [b"[1, 2, 3]"],
-        "JSON null": [b"null"],
-        "no control data": [info, b'{"code": 200}'],
-        "control data that is null": [info, b'{"code": 200, "data": null}'],
-        "control data that is a list": [info, b'{"code": 200, "data": []}'],
-        "control data that cannot be unsealed": [info, b'{"code": 200, "data": {"info": "AAAA", "token": "t"}}'],
-        "a control answer that is a list": [info, b"[]"],
-        "not HTTP": [http.client.BadStatusLine("SSH-2.0-OpenSSH")],
-        "a connection dropped mid-answer": [http.client.IncompleteRead(b"")],
-        "a name that cannot be a hostname": [UnicodeError("encoding with 'idna' codec failed")],
-        "a refused connection": [ConnectionRefusedError(111, "Connection refused")],
+        "a web page": (other, [b"<html><body>router login</body></html>"]),
+        "bytes that are not text": (other, [b"\xff\xfe\x00"]),
+        "a JSON list": (other, [b"[1, 2, 3]"]),
+        "JSON null": (other, [b"null"]),
+        "no control data": (printer, [info, b'{"code": 200}']),
+        "control data that is null": (printer, [info, b'{"code": 200, "data": null}']),
+        "control data that is a list": (printer, [info, b'{"code": 200, "data": []}']),
+        "control data that cannot be unsealed":
+            (printer, [info, b'{"code": 200, "data": {"info": "AAAA", "token": "t"}}']),
+        "a control answer that is a list": (printer, [info, b"[]"]),
+        "not HTTP": (other, [http.client.BadStatusLine("SSH-2.0-OpenSSH")]),
+        "a connection dropped mid-answer": (other, [http.client.IncompleteRead(b"")]),
+        "a name that cannot be a hostname":
+            (other, [UnicodeError("encoding with 'idna' codec failed")]),
+        "a refused connection": (nothing, [ConnectionRefusedError(111, "Connection refused")]),
     }
 
 
@@ -488,25 +493,25 @@ def _network(outcomes):
         yield
 
 
-async def test_a_device_that_is_not_a_printer_is_cannot_connect_when_adding(hass, caplog):
-    for what, outcomes in _not_printers().items():
+async def test_a_device_that_is_not_a_printer_is_a_form_error_when_adding(hass, caplog):
+    for what, (error, outcomes) in _not_printers().items():
         with _network(outcomes):
             result = await _submit(hass, await _start(hass), NEW)
         assert result["type"] == FlowResultType.FORM, what
-        assert result["errors"] == {"base": "cannot_connect"}, what
+        assert result["errors"] == {"base": error}, what
     assert not hass.config_entries.async_entries(DOMAIN)
     assert NEW not in caplog.text
     assert "Traceback" not in caplog.text
 
 
-async def test_a_device_that_is_not_a_printer_is_cannot_connect_when_reconfiguring(hass, caplog):
+async def test_a_device_that_is_not_a_printer_is_a_form_error_when_reconfiguring(hass, caplog):
     entry = _entry(hass)
     result = await _start_reconfigure(hass, entry)
-    for what, outcomes in _not_printers().items():
+    for what, (error, outcomes) in _not_printers().items():
         with _network(outcomes):
             result = await _submit(hass, result, NEW)
         assert result["type"] == FlowResultType.FORM, what
-        assert result["errors"] == {"base": "cannot_connect"}, what
+        assert result["errors"] == {"base": error}, what
     assert entry.data == {"host": "1.2.3.4"}
     assert NEW not in caplog.text
     assert "Traceback" not in caplog.text

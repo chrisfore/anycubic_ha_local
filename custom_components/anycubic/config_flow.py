@@ -1,6 +1,7 @@
 """Config flow: collect the printer IP, validate via the LAN handshake."""
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any
 
@@ -34,6 +35,14 @@ from .const import (
     ENCLOSED_MODELS,
     MODEL_NAMES,
 )
+from .setup_failure import (
+    ERROR_CANNOT_CONNECT,
+    ERROR_INVALID_HOST,
+    ERROR_UNSUPPORTED_PRINTER,
+    describe_failure,
+)
+
+_LOGGER = logging.getLogger(__name__)
 
 # Characters that are never part of a bare address and that would change what the handshake
 # URL means: the address is interpolated into "http://{host}:18910/info" exactly as typed.
@@ -72,8 +81,28 @@ class AnycubicConfigFlow(ConfigFlow, domain=DOMAIN):
         """Having this is what makes Home Assistant offer "Configure" on the entry."""
         return AnycubicOptionsFlow()
 
-    async def _async_identify(self, typed: str) -> tuple[str, HandshakeResult] | None:
-        """Check an address and ask the printer there who it is; None if it cannot be used.
+    async def _async_handshake(self, host: str) -> HandshakeResult | str:
+        """Ask the printer at `host` who it is: its answer, or the form error for why not.
+
+        Every failure is logged here, once, as a warning: the form can only say which kind
+        of failure it was, and the line is what a bug report needs. A warning, because that
+        is the level Home Assistant's log shows with nothing switched on, and it is one line
+        for one press of Submit. The line names neither the address nor anything else that
+        identifies the printer (see describe_failure), and has no traceback.
+        """
+        # These two are everything a device can do to fail the handshake: do_handshake turns
+        # an answer that is not a printer's into a HandshakeError itself. Nothing wider is
+        # caught here, so a mistake in this integration is not shown as a network problem.
+        try:
+            return await self.hass.async_add_executor_job(do_handshake, host)
+        except (HandshakeError, OSError) as err:
+            key, line = describe_failure(err)
+            _LOGGER.warning("%s", line)
+            return key
+
+    async def _async_identify(self, typed: str) -> tuple[str, HandshakeResult] | str:
+        """Check an address and ask the printer there who it is; the form error if it cannot
+        be used.
 
         One path for every step that takes an address, so adding a printer and moving one
         run the same checks and the same handshake. A printer that gives no serial counts
@@ -82,22 +111,21 @@ class AnycubicConfigFlow(ConfigFlow, domain=DOMAIN):
         """
         host = _clean_host(typed)
         if host is None:
-            return None
-        # These two are everything a device can do to fail the handshake: do_handshake turns
-        # an answer that is not a printer's into a HandshakeError itself. Nothing wider is
-        # caught here, so a mistake in this integration is not shown as a network problem.
-        try:
-            hs = await self.hass.async_add_executor_job(do_handshake, host)
-        except (HandshakeError, OSError):
-            return None
-        return (host, hs) if hs.serial else None
+            return ERROR_INVALID_HOST
+        hs = await self._async_handshake(host)
+        if isinstance(hs, str):
+            return hs
+        if not hs.serial:
+            _LOGGER.warning("Printer setup failed at step serial: the printer gave no serial number")
+            return ERROR_UNSUPPORTED_PRINTER
+        return host, hs
 
     async def async_step_user(self, user_input=None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
             found = await self._async_identify(user_input[CONF_HOST])
-            if found is None:
-                errors["base"] = "cannot_connect"
+            if isinstance(found, str):
+                errors["base"] = found
             else:
                 host, hs = found
                 await self.async_set_unique_id(hs.serial)
@@ -133,10 +161,9 @@ class AnycubicConfigFlow(ConfigFlow, domain=DOMAIN):
         entry = self.hass.config_entries.async_get_entry(self.context["entry_id"])
         errors: dict[str, str] = {}
         if user_input is not None:
-            try:
-                await self.hass.async_add_executor_job(do_handshake, entry.data[CONF_HOST])
-            except (HandshakeError, OSError):
-                errors["base"] = "cannot_connect"
+            hs = await self._async_handshake(entry.data[CONF_HOST])
+            if isinstance(hs, str):
+                errors["base"] = hs
             else:
                 return self.async_update_reload_and_abort(entry, data=entry.data)
         return self.async_show_form(
@@ -169,8 +196,10 @@ class AnycubicConfigFlow(ConfigFlow, domain=DOMAIN):
             # entry is normally NOT loaded when someone needs this step, so there is no
             # coordinator to ask. With no unique id nothing can be confirmed, so nothing
             # is accepted.
-            if found is None or not entry.unique_id:
-                errors["base"] = "cannot_connect"
+            if isinstance(found, str):
+                errors["base"] = found
+            elif not entry.unique_id:
+                errors["base"] = ERROR_CANNOT_CONNECT
             elif found[1].serial != entry.unique_id:
                 # Deliberately not _abort_if_unique_id_configured(updates=...): if the printer
                 # that answered is configured as well, that helper would re-point ITS entry

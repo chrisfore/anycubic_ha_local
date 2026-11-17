@@ -16,6 +16,10 @@
     },
     "error": {
       "cannot_connect": "Could not reach the printer. Check the IP and that LAN Mode is on.",
+      "invalid_host": "Enter only the IP address or hostname, with no http://, port, or path.",
+      "cloud_mode": "The printer is in cloud mode. Turn on LAN Mode on the printer, then try again.",
+      "unsupported_printer": "Something answered at that address, but not the way a supported printer does. Check the IP address.",
+      "handshake_failed": "The printer answered but did not accept the setup. The Home Assistant log says why. Include that line in a bug report.",
       "wrong_printer": "That address belongs to a different printer."
     },
     "abort": {

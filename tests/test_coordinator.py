@@ -588,7 +588,9 @@ async def test_a_failed_setup_does_not_put_the_address_in_the_log(hass, caplog):
             assert not await hass.config_entries.async_setup(entry.entry_id)
             await hass.async_block_till_done()
         assert entry.reason and "192.168.1.50" not in entry.reason
-        assert "No route to host" in entry.reason or "is busy" in entry.reason
+        # Which step and what kind of failure, in fixed words: none of the error's own text.
+        assert entry.reason.startswith("Printer setup failed at step ")
+        assert "No route to host" not in entry.reason and "is busy" not in entry.reason
         await hass.config_entries.async_remove(entry.entry_id)
     assert "192.168.1.50" not in caplog.text
     assert "not ready yet" in caplog.text           # the line this is about was written
