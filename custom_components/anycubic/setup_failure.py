@@ -22,8 +22,11 @@ _UNKNOWN_STEP = "unknown"
 _BEFORE_A_GOOD_INFO = frozenset((hs_mod.STEP_INFO, hs_mod.STEP_SERIAL))
 
 
-def describe_failure(err: BaseException) -> tuple[str, str]:
+def describe_failure(err: BaseException, doing: str = "setup") -> tuple[str, str]:
     """The form error for a failed handshake, and one line for the log saying why.
+
+    `doing` is the word for what was being done: "setup", or "reconnect" when a running
+    session is being got back.
 
     For the two things a device can do to fail one: a HandshakeError and an OSError. The
     line is built from the error's step, reason and detail and from fixed words here. It
@@ -42,7 +45,18 @@ def describe_failure(err: BaseException) -> tuple[str, str]:
     if not isinstance(detail, dict):
         detail = {}
     key, why = _key_and_why(err, step, detail)
-    return key, f"Printer setup failed at step {step}: {why}{_model(detail)}"
+    return key, f"Printer {doing} failed at step {step}: {why}{_model(detail)}"
+
+
+def is_described(err: BaseException) -> bool:
+    """Is this a failure describe_failure should word, rather than the error's own text?
+
+    Everything the handshake raises: its own errors, an OSError it marked with the step it
+    came from, and any HTTP status error at all, marked or not, because that one's text is
+    the device's reason phrase.
+    """
+    return (isinstance(err, (HandshakeError, urllib.error.HTTPError))
+            or hasattr(err, "handshake_step"))
 
 
 def _key_and_why(err: BaseException, step: str, detail: dict) -> tuple[str, str]:

@@ -532,3 +532,72 @@ def test_a_code_that_is_not_a_plain_number_is_not_printed(code):
         do_handshake(HOST)
     assert describe_failure(raised.value)[1] == (
         f'Printer setup failed at step ctrl: the printer refused the request, message "no" {KOBRA_X}')
+
+
+# ------------------------------------------------------------- getting a session back
+#
+# A running printer that stops answering is asked again on every poll, by the same two
+# requests. What fails there is said the same way, and kept as clean.
+
+def _running(hass):
+    from custom_components.anycubic import coordinator as coord_mod
+    from custom_components.anycubic.anycubic_local.handshake import HandshakeResult
+
+    known = HandshakeResult(HOST, 9883, BROKER_USER, BROKER_PASSWORD, DEVICE_ID, "20030",
+                            SERIAL, mac=MAC)
+    return coord_mod, coord_mod.AnycubicCoordinator(
+        hass, known, host=HOST, transport_factory=_Transport)
+
+
+async def _reconnect(hass, net):
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    coord_mod, coord = _running(hass)
+    await coord.async_start()
+    coord._last_report -= coord_mod.STALE_AFTER + 1         # silent for too long
+    with net.up(), pytest.raises((UpdateFailed, ConfigEntryAuthFailed)) as raised:
+        await coord._async_update_data()
+    return raised.value
+
+
+@pytest.mark.parametrize("name", FAILURES)
+async def test_a_failed_reconnect_says_the_step_and_the_reason(hass, name):
+    net, error, said = FAILURES[name]
+    from homeassistant.exceptions import ConfigEntryAuthFailed
+
+    err = await _reconnect(hass, net())
+    assert str(err) == f"Printer reconnect failed at {said}"
+    assert isinstance(err, ConfigEntryAuthFailed) == (error == "cloud_mode")
+
+
+@pytest.mark.parametrize("name", ECHOES)
+async def test_nothing_the_device_echoes_is_in_a_failed_reconnect(hass, caplog, name):
+    caplog.set_level(logging.DEBUG)
+    net = ECHOES[name]()
+    err = await _reconnect(hass, net)
+    text = str(err)
+    _assert_clean(text, net)
+    assert text.startswith("Printer reconnect failed at step ")
+    assert all(" " <= c <= "~" for c in text), text
+    _assert_clean(caplog.text, net)
+    assert "Traceback" not in caplog.text
+
+
+async def test_an_http_error_that_was_never_marked_with_a_step_is_still_not_quoted(hass, monkeypatch):
+    # Belt and braces: an HTTP status error's own text is the device's reason phrase, so it
+    # is never used, even if one arrives without having come through the handshake.
+    from homeassistant.helpers.update_coordinator import UpdateFailed
+
+    coord_mod, coord = _running(hass)
+    await coord.async_start()
+    coord._last_report -= coord_mod.STALE_AFTER + 1
+
+    def refuse(host, *a, **k):
+        raise _http_error(f"http://{HOST}:18910/ctrl?sign=abc", 403, f"Forbidden {TOKEN} {MAC} {HOST}")
+
+    monkeypatch.setattr(coord_mod, "do_handshake", refuse)
+    with pytest.raises(UpdateFailed) as raised:
+        await coord._async_update_data()
+    assert str(raised.value) == (
+        "Printer reconnect failed at step unknown: the answer was an HTTP error")

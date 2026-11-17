@@ -69,6 +69,7 @@ from .const import (
     ace_device_name,
     ace_suffix,
 )
+from .setup_failure import describe_failure, is_described
 from .store import LastFile, PrintState, PrintStore
 
 _LOGGER = logging.getLogger(__name__)
@@ -329,10 +330,14 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             await self.hass.async_add_executor_job(self._rebuild)
         except CloudModeError as err:
             # LAN Mode was turned off on the printer — same reauth path as setup.
-            raise ConfigEntryAuthFailed(self._error_text(err)) from err
+            raise ConfigEntryAuthFailed(describe_failure(err, "reconnect")[1]) from err
         except UpdateFailed:
             raise
         except Exception as err:
+            if is_described(err):
+                # From the handshake: its step and reason in fixed words. Its own text
+                # can be the device's (an HTTP reason phrase), and is not used.
+                raise UpdateFailed(describe_failure(err, "reconnect")[1]) from err
             raise UpdateFailed(f"reconnect failed: {self._error_text(err)}") from err
         # Give the rebuilt session a full silence window before judging it again.
         self._last_report = time.monotonic()
