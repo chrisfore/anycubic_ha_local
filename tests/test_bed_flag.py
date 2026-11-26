@@ -235,6 +235,38 @@ async def test_bed_is_clear_is_unavailable_during_a_job_and_while_unreachable(ha
         coord.async_mark_bed_clear()
 
 
+CANCELLED = {"state": "paused", "pause": 1, "task_id": 879064, "curr_layer": 0, "progress": 0,
+             "print_time": 1509}
+
+
+async def test_a_job_cancelled_while_paused_does_not_come_back_after_bed_is_clear(hass):
+    """Seen on an S1 Max (#24): a job paused, then cancelled, stays in `project` of a free
+    printer. It turns the flag on; once cleared past, the same unchanged job does not."""
+    coord = (await _setup(hass)).runtime_data
+    _clear(coord)
+    phantom = {"state": "free", "project": dict(CANCELLED)}
+    coord._apply("info", phantom)
+    assert coord.bed_needs_clearing, "the cancelled job may have left a part"
+    coord.async_mark_bed_clear()
+    for _ in range(3):
+        coord._apply("info", {"state": "free", "project": dict(CANCELLED)})
+    assert not coord.bed_needs_clearing
+
+
+@pytest.mark.parametrize("changed", [
+    {"task_id": 879065},                      # a new job
+    {"state": "printing", "pause": 0},        # the same job, running again
+    {"curr_layer": 1},                        # the same job, moving
+], ids=["new-job", "state-change", "progress"])
+async def test_a_job_that_differs_from_the_one_cleared_past_still_turns_it_on(hass, changed):
+    coord = (await _setup(hass)).runtime_data
+    coord._apply("info", {"state": "free", "project": dict(CANCELLED)})
+    coord.async_mark_bed_clear()
+    assert not coord.bed_needs_clearing
+    coord._apply("info", {"state": "free", "project": {**CANCELLED, **changed}})
+    assert coord.bed_needs_clearing
+
+
 async def test_bed_is_clear_works_while_the_ace_is_drying(hass):
     """Drying has nothing to do with the bed (#24): the flag can be cleared mid-dry, while
     starting a print still waits for drying to end."""

@@ -211,8 +211,8 @@ def parse_info(data: dict) -> PrinterState:
         pause_code=pause_code,
         camera_url=(data.get("urls") or {}).get("rtspUrl"),
         printing=raw_state != STATE_FREE and proj_state == "printing",
-        # A free printer has no job: last_project keeps the pause flag of a job that ended
-        # paused, and must not read as paused now.
+        # A free printer has no job: a job paused and then cancelled stays as its project,
+        # still marked paused (S1 Max, #24), and must not read as paused now.
         paused=raw_state != STATE_FREE and pause_code == PAUSE_PAUSED,
     )
 

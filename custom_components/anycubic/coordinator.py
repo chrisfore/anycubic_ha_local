@@ -186,6 +186,11 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         # Non-sensitive: the printer's reported feature map, the peripheral presence inventory, and
         # which report types this printer actually emits.
         self.raw_features: dict | None = None
+        # The current job of the last `info` report, and the one "Bed is clear" was pressed
+        # over. A job paused and then cancelled stays as the current job of a free printer
+        # (S1 Max, #24); once cleared past, that same unchanged job is not a new doubt.
+        self._info_project: dict | None = None
+        self._cleared_project: dict | None = None
         self.peripherie: dict | None = None
         # Last raw multiColorBox payload, verbatim — diagnostics exposes it so protocol
         # differences across printer/ACE firmwares (unknown or renamed slot keys) can be
@@ -944,11 +949,15 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         no job and the last project "failed", while a real job ran on. A clear bed costs one
         more "Bed is clear" press; a missed job costs a nozzle driven into a part. The last
         project of a free printer is the previous job, already seen, and does not count, or
-        the flag could never be cleared.
+        the flag could never be cleared. Nor does the current job of a free printer that is
+        exactly the one "Bed is clear" was pressed over: a job paused and then cancelled
+        stays there unchanged. Any change to it, or another job, counts again.
         """
         project = info.get("project")
+        self._info_project = project if isinstance(project, dict) and project else None
         return (self.data.printer.raw_state != STATE_FREE or self._job_seen()
-                or (isinstance(project, dict) and bool(project)))
+                or (self._info_project is not None
+                    and self._info_project != self._cleared_project))
 
     @property
     def bed_needs_clearing(self) -> bool:
@@ -976,6 +985,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             raise ServiceValidationError(translation_domain=DOMAIN,
                                          translation_key="clear_while_busy")
         self.print_state.bed_flag = False
+        self._cleared_project = self._info_project
         self.async_update_listeners()
 
     @property
