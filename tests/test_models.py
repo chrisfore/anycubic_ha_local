@@ -301,3 +301,9 @@ def test_s1_max_single_chamber_entry_still_parses(load_fixture):
     data = load_fixture("light_report.json")
     assert models.parse_light(data) == models.LightState(on=True, brightness=100)
     assert models.parse_light(data, 3) is None
+
+
+def test_stopped_job_status_is_spelled_correctly():
+    """The firmware reports a stopped job as "stoped"; the Status sensor says "stopped"."""
+    p = models.parse_info({"state": "busy", "project": {"state": "stoped"}})
+    assert p.status == "stopped"

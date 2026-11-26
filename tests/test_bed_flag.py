@@ -235,6 +235,20 @@ async def test_bed_is_clear_is_unavailable_during_a_job_and_while_unreachable(ha
         coord.async_mark_bed_clear()
 
 
+async def test_bed_is_clear_works_while_the_ace_is_drying(hass):
+    """Drying has nothing to do with the bed (#24): the flag can be cleared mid-dry, while
+    starting a print still waits for drying to end."""
+    coord = (await _setup(hass)).runtime_data
+    _idle(coord)
+    coord._apply("multiColorBox", {"multi_color_box": [
+        {"id": 0, "drying_status": {"status": 1}, "slots": []}]})
+    await hass.async_block_till_done()
+    assert not coord.idle, "starts still treat drying as busy"
+    assert hass.states.get(CLEAR).state != "unavailable"
+    await hass.services.async_call("button", "press", {"entity_id": CLEAR}, blocking=True)
+    assert not coord.bed_needs_clearing
+
+
 # ------------------------------------------------- kept, and taken away with the printer
 
 

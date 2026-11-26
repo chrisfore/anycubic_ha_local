@@ -183,6 +183,8 @@ def parse_info(data: dict) -> PrinterState:
     pause_code = proj.get("pause")
     status = proj_state if raw_state != STATE_FREE and proj_state else (
         "idle" if raw_state == STATE_FREE else raw_state)
+    if status == "stoped":  # the firmware's spelling; the Status sensor shows it spelled right
+        status = "stopped"
     return PrinterState(
         model=data.get("model"),
         firmware=data.get("version"),

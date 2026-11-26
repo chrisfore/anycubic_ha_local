@@ -119,7 +119,7 @@ class AnycubicPrintAgainButton(AdminOnlyButton):
 
 class AnycubicBedClearButton(AdminOnlyButton):
     """The user's word that the bed is clear. Offered only while the bed needs clearing and
-    the printer is known to be idle; never something to automate."""
+    the printer is known to have no job (drying is fine); never something to automate."""
 
     _attr_translation_key = "bed_clear"
     _attr_icon = "mdi:check-bold"
