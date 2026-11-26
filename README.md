@@ -224,7 +224,7 @@ automation:
 | Printing from Home Assistant is not available for this printer model yet | Only the S1 and S1 Max can print from Home Assistant |
 | Choose a printer | More than one printer is set up: pick one |
 | Home Assistant has not heard from the printer… | The printer is off or disconnected. Try again in a minute |
-| The printer is busy | A print is running or paused, or the ACE is drying. Nothing is retried |
+| The printer is busy | A print is running or paused. Nothing is retried. ACE drying does not count |
 | A file is already being sent to this printer | Wait for that upload to finish |
 | Clear the bed, then press "Bed is clear" | See [Bed needs clearing](#bed-needs-clearing) |
 | A problem with the file (unreadable, empty, over 100 MB, wrong type, bad name) | Export it from the slicer again, or rename it |

@@ -268,14 +268,13 @@ async def test_a_job_that_differs_from_the_one_cleared_past_still_turns_it_on(ha
 
 
 async def test_bed_is_clear_works_while_the_ace_is_drying(hass):
-    """Drying has nothing to do with the bed (#24): the flag can be cleared mid-dry, while
-    starting a print still waits for drying to end."""
+    """Drying has nothing to do with the bed (#24): the flag can be cleared mid-dry."""
     coord = (await _setup(hass)).runtime_data
     _idle(coord)
     coord._apply("multiColorBox", {"multi_color_box": [
         {"id": 0, "drying_status": {"status": 1}, "slots": []}]})
     await hass.async_block_till_done()
-    assert not coord.idle, "starts still treat drying as busy"
+    assert coord.idle, "drying is not a job"
     assert hass.states.get(CLEAR).state != "unavailable"
     await hass.services.async_call("button", "press", {"entity_id": CLEAR}, blocking=True)
     assert not coord.bed_needs_clearing

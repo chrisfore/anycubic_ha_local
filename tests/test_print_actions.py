@@ -194,7 +194,8 @@ async def test_a_file_is_checked_uploaded_started_and_recorded(env):
     assert data["taskid"].isdigit() and len(data["taskid"]) == 9
     assert data["task_settings"] == {
         "auto_leveling": 0, "vibration_compensation": 0, "flow_calibration": 0,
-        "timelapse": {"status": 0}, "ai_settings": {"status": 0}, "dry_mode": 0}
+        "timelapse": {"status": 0}, "ai_settings": {"status": 0}}
+    # No dry_mode: a start leaves the ACE's drying as it is (#24).
     assert data["ams_settings"] == {"use_ams": True, "ams_box_mapping": [{
         "paint_index": 0, "ams_index": 0, "paint_color": [255, 0, 0, 255],
         "ams_color": [255, 0, 0, 255], "material_type": "PLA"}]}
@@ -207,6 +208,16 @@ async def test_a_file_is_checked_uploaded_started_and_recorded(env):
     assert env.coord.bed_needs_clearing, "the printer took a job: the bed is not clear"
     assert env.coord.last_guard_outcome == "started"
     assert _gone(env, file_id)
+
+
+async def test_a_file_starts_while_the_ace_is_drying(env):
+    """Drying is not a job (#24): the ACE can dry during a print, so it refuses nothing."""
+    _drying(env.coord)
+    file_id = _stage(env, "a.gcode", PLA_GCODE)
+    await _print_file(env, file_id)
+    (_, start), = Transport.last.starts()
+    assert start["data"]["filename"] == "a.gcode"
+    assert env.coord.last_guard_outcome == "started"
 
 
 async def test_a_3mf_is_sent_under_its_own_name(env):
@@ -291,7 +302,6 @@ REFUSALS = [
      # As seen live after a refused start: busy, no job, the last project "failed".
      lambda c: c._apply("info", {"state": "busy", "project": None,
                                  "last_project": {"state": "failed"}})),
-    ("printer_busy", "a.gcode", PLA_GCODE, _drying),
     ("bed_not_clear", "a.gcode", PLA_GCODE, lambda c: c._raise_bed_flag("test")),
     ("file_type_not_supported", "a.stl", PLA_GCODE, None),
     ("file_type_not_supported", "a.bgcode", PLA_GCODE, None),

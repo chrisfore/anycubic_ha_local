@@ -83,7 +83,8 @@ def build_print_start(model_id: str, device_id: str, *, taskid: str, filename: s
     `taskid` is fresh for each start, so the printer's reports can be matched to it.
     `ams_settings` maps the file's filament slots to the multi-color unit's, or says to use
     the external spool. Task settings: auto-leveling, vibration compensation, flow
-    calibration, timelapse, the printer's camera detection and drying all off.
+    calibration, timelapse and the printer's camera detection all off. No `dry_mode`: a start
+    leaves the ACE's drying as it is, so a unit already drying keeps drying (#24).
     """
     data = {
         "taskid": taskid,
@@ -100,7 +101,6 @@ def build_print_start(model_id: str, device_id: str, *, taskid: str, filename: s
             "flow_calibration": 0,
             "timelapse": {"status": 0},
             "ai_settings": {"status": 0},
-            "dry_mode": 0,
         },
     }
     payload = {"type": "print", "action": "start",

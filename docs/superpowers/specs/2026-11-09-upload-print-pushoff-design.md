@@ -131,7 +131,7 @@ Security rules (from the security review; they apply everywhere below)
    model yet.").
 2. The printer is reachable: a report has arrived within the gap bound (6.4).
 3. No other submission to this printer is in flight. One lock per printer covers upload and start.
-4. The printer is idle: `info` state `free` and no job phase. Drying or loading counts as busy.
+4. The printer is idle: `info` state `free` and no job phase. Loading counts as busy; ACE drying does not (#24).
 5. The bed flag is off (6.4).
 6. The suffix is `.gcode`, `.gcode.3mf` or `.3mf`, and the printer-side name follows section 3. A
    `.3mf` holds exactly one plate gcode. None means "not sliced", and more than one is refused
@@ -159,7 +159,7 @@ Security rules (from the security review; they apply everywhere below)
    mapping.
 4. **Task settings.** All off: `auto_leveling` 0, because 1 hung a file in a 10 C preheat for 45
    min (T7.3). Vibration compensation, flow calibration, timelapse, the printer's camera detection
-   settings (`ai_settings`) and drying are off too.
+   settings (`ai_settings`) are off too. `dry_mode` is not sent: a start leaves drying alone (#24).
 5. **Reply.** 10101 (previous task still active) is refused as busy with no retry: a refused start
    corrupts the printer's job record (T6), so guard 4 is the real protection. Other codes give the
    existing reason catalog's text. No reply and no job seen: "The printer did not confirm the

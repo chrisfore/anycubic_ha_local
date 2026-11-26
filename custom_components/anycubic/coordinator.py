@@ -922,20 +922,12 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         return age is not None and age <= REPORT_GAP_BOUND
 
     @property
-    def no_job(self) -> bool:
-        """Is the printer free, with no job in any phase? Drying does not count: it never
-        touches the bed (#24)."""
+    def idle(self) -> bool:
+        """Is the printer free, with no job in any phase? ACE drying does not count: it is
+        not a job, and a unit can dry during a print (#24)."""
         printer = self.data.printer
         return not (printer.raw_state != STATE_FREE or printer.status in JOB_PHASES
                     or printer.printing or printer.paused)
-
-    @property
-    def idle(self) -> bool:
-        """Free with no job, and no attached unit drying: what a print start needs."""
-        if not self.no_job:
-            return False
-        return not (self.ace_present and any(
-            box.drying_active for box in self.data.ace if box.id in self.attached_box_ids))
 
     def _job_seen(self) -> bool:
         printer = self.data.printer
@@ -966,7 +958,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
     @property
     def bed_clear_allowed(self) -> bool:
         """Can "Bed is clear" be pressed: the flag is on and the printer has no job."""
-        return self.print_state.bed_flag and self.reachable and self.no_job
+        return self.print_state.bed_flag and self.reachable and self.idle
 
     @callback
     def _raise_bed_flag(self, why: str) -> None:
@@ -981,7 +973,7 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         """The user says the bed is clear: the only thing that turns the flag off."""
         if not self.print_state.bed_flag:
             return
-        if not (self.reachable and self.no_job):
+        if not (self.reachable and self.idle):
             raise ServiceValidationError(translation_domain=DOMAIN,
                                          translation_key="clear_while_busy")
         self.print_state.bed_flag = False
