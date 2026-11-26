@@ -273,6 +273,25 @@ views:
           # not paused) render dimmed automatically.
           - type: custom:mushroom-chips-card
             alignment: center
+            # A pressed button greys out with a ring for 3 seconds, so a press is seen
+            # to land. A button's state is the time it was last pressed.
+            card_mod:
+              style: |
+                {% set ts = as_timestamp(states('button.anycubic_kobra_s1_max_pause'), 0) | int %}
+                {% if (as_timestamp(now()) - as_timestamp(states('button.anycubic_kobra_s1_max_pause'), 0)) < 4 %}
+                .chip-container > *:nth-child(1) { border-radius: 50%; animation: sent-1-{{ ts }} 3s ease-out 1; }
+                @keyframes sent-1-{{ ts }} { 0% { opacity: .35; box-shadow: 0 0 0 3px var(--primary-color); } 85% { opacity: .35; box-shadow: 0 0 0 3px var(--primary-color); } 100% { opacity: 1; box-shadow: 0 0 0 0 transparent; } }
+                {% endif %}
+                {% set ts = as_timestamp(states('button.anycubic_kobra_s1_max_resume'), 0) | int %}
+                {% if (as_timestamp(now()) - as_timestamp(states('button.anycubic_kobra_s1_max_resume'), 0)) < 4 %}
+                .chip-container > *:nth-child(2) { border-radius: 50%; animation: sent-2-{{ ts }} 3s ease-out 1; }
+                @keyframes sent-2-{{ ts }} { 0% { opacity: .35; box-shadow: 0 0 0 3px var(--primary-color); } 85% { opacity: .35; box-shadow: 0 0 0 3px var(--primary-color); } 100% { opacity: 1; box-shadow: 0 0 0 0 transparent; } }
+                {% endif %}
+                {% set ts = as_timestamp(states('button.anycubic_kobra_s1_max_stop'), 0) | int %}
+                {% if (as_timestamp(now()) - as_timestamp(states('button.anycubic_kobra_s1_max_stop'), 0)) < 4 %}
+                .chip-container > *:nth-child(3) { border-radius: 50%; animation: sent-3-{{ ts }} 3s ease-out 1; }
+                @keyframes sent-3-{{ ts }} { 0% { opacity: .35; box-shadow: 0 0 0 3px var(--primary-color); } 85% { opacity: .35; box-shadow: 0 0 0 3px var(--primary-color); } 100% { opacity: 1; box-shadow: 0 0 0 0 transparent; } }
+                {% endif %}
             chips:
               - type: entity
                 entity: button.anycubic_kobra_s1_max_pause

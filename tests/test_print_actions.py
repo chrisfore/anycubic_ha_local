@@ -51,6 +51,7 @@ class Transport:
 
     replies: list = []
     job_on_query = False
+    info_on_query: dict | None = None     # reported, as it is, whenever `info` is asked for
     last = None
 
     def __init__(self, hs, on_report, **kwargs):
@@ -65,6 +66,8 @@ class Transport:
         self.queries.append(msg_type)
         if msg_type == "info" and type(self).job_on_query:
             self._on_report("info", {"state": "busy", "project": {"state": "preheating"}})
+        if msg_type == "info" and type(self).info_on_query is not None:
+            self._on_report("info", type(self).info_on_query)
 
     def publish(self, topic, payload):
         body = json.loads(payload)
@@ -88,7 +91,7 @@ def quick_start(monkeypatch):
     monkeypatch.setattr(coord_mod, "START_REPLY_TIMEOUT", 0.2)
     monkeypatch.setattr(coord_mod, "START_WATCH_TIMEOUT", 0.3)
     monkeypatch.setattr(coord_mod, "START_WATCH_QUERY_EVERY", 0.05)
-    Transport.replies, Transport.job_on_query = [200], False
+    Transport.replies, Transport.job_on_query, Transport.info_on_query = [200], False, None
 
 
 async def _setup(hass, hs=HS, options=None, entry_id=None):
@@ -547,6 +550,46 @@ async def test_a_busy_answer_is_refused_and_never_tried_again(env):
     assert Transport.replies == [200], "a second start was sent"
     assert not env.coord.bed_needs_clearing
     assert env.coord.last_guard_outcome == "printer_busy"
+
+
+# Seen on an S1 Max running Rinkhals (#24): a print cancelled from the slicer stays as the
+# current job of a free printer, which answers the next start with 10101. That refused start
+# clears it, and the next start is taken.
+LEFTOVER = {"state": "free", "project": {"state": "paused", "pause": 1, "task_id": 786340873}}
+
+
+async def test_a_leftover_job_on_a_free_printer_is_cleared_and_the_start_sent_again(env):
+    env.coord._apply("info", LEFTOVER)
+    env.coord.async_mark_bed_clear()
+    Transport.replies = [10101, 200]
+    Transport.info_on_query = {"state": "free", "project": None}
+    await _print_file(env, _stage(env, "a.gcode", PLA_GCODE))
+    first, second = Transport.last.starts()
+    assert first[1]["data"]["taskid"] != second[1]["data"]["taskid"]
+    assert env.coord.last_guard_outcome == "started"
+    assert env.coord.bed_needs_clearing
+
+
+async def test_a_leftover_job_that_does_not_clear_is_busy_and_tried_once(env):
+    env.coord._apply("info", LEFTOVER)
+    env.coord.async_mark_bed_clear()
+    Transport.replies = [10101, 200]
+    Transport.info_on_query = LEFTOVER
+    with pytest.raises(HomeAssistantError) as err:
+        await _print_file(env, _stage(env, "a.gcode", PLA_GCODE))
+    assert err.value.translation_key == "printer_busy"
+    assert len(Transport.last.starts()) == 1
+
+
+async def test_a_second_busy_answer_after_a_leftover_is_not_tried_a_third_time(env):
+    env.coord._apply("info", LEFTOVER)
+    env.coord.async_mark_bed_clear()
+    Transport.replies = [10101, 10101, 200]
+    Transport.info_on_query = {"state": "free", "project": None}
+    with pytest.raises(HomeAssistantError) as err:
+        await _print_file(env, _stage(env, "a.gcode", PLA_GCODE))
+    assert err.value.translation_key == "printer_busy"
+    assert len(Transport.last.starts()) == 2
 
 
 async def test_print_again_on_a_busy_answer_is_not_tried_again_either(env):

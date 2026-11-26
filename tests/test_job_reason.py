@@ -147,6 +147,23 @@ async def test_a_clog_fires_one_error_then_paused_with_the_reason(hass):
         assert attrs["filename"] == "part.gcode"
 
 
+async def test_a_fault_pause_is_not_relabelled_by_the_user_pause_that_follows(hass):
+    """Seen on an S1 Max (#24): an ACE feed timeout paused the job with 11511, and the
+    printer followed it with a 10401 "user" pause for the same stop. The fault stays."""
+    coord, _ = await _coordinator(hass)
+    coord._apply("info", _info("printing"))
+    feed = _print("pause", "pausing", 11511, "filament hub feed filament timeout")
+    coord._apply_reason(parse_reason(feed))
+    coord._apply_reason(parse_reason({**feed, "state": "paused"}))
+    coord._apply_reason(parse_reason(USER_PAUSED))
+    coord._apply("info", _info("paused"))
+    await hass.async_block_till_done()
+    assert coord.data.reason.code == 11511
+    # A stop the user then asks for is theirs.
+    coord._apply_reason(parse_reason(USER_STOPPING))
+    assert coord.data.reason.code == 10601
+
+
 async def test_a_pause_from_the_slicer_is_no_error(hass):
     coord, events = await _coordinator(hass)
     coord._apply("info", _info("printing"))

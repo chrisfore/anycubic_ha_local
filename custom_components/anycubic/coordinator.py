@@ -421,6 +421,13 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
 
     @callback
     def _apply_reason(self, reason: JobReason) -> None:
+        held = self.data.reason
+        if held is not None and not held.by_user and held.paused and reason.paused \
+                and reason.by_user:
+            # The printer follows a fault pause with a "user" pause for the same stop (an
+            # ACE feed timeout, #24). The fault is why it paused; a stop asked for later
+            # is still the user's.
+            return
         self.data.reason = reason
         # One error per fault the user did not cause. Fired here, on the `print` report,
         # rather than on the next info: that can be half a minute away, and this is the
@@ -1006,16 +1013,32 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
         if self._transport is None:
             raise HomeAssistantError(translation_domain=DOMAIN,
                                      translation_key="printer_not_connected")
-        taskid = str(100_000_000 + secrets.randbelow(900_000_000))
-        topic, payload = build_print_start(
-            self.hs.model_id, self.hs.device_id, taskid=taskid, filename=name,
-            filesize=size, md5=md5, filetype=filetype, ams_settings=ams_settings)
-        if bed_limit is not None:
-            self.clearing.async_arm(name=name, md5=md5, task_id=taskid, bed_limit=bed_limit)
-        else:
-            # An ordinary print: nothing is waited for at its end.
-            self.clearing.async_disarm()
-        answer = await self._async_send_start(topic, payload)
+        # A job the free printer still reports: one cancelled through Rinkhals (#24).
+        leftover = self._info_project is not None
+
+        async def send() -> dict | None:
+            taskid = str(100_000_000 + secrets.randbelow(900_000_000))
+            topic, payload = build_print_start(
+                self.hs.model_id, self.hs.device_id, taskid=taskid, filename=name,
+                filesize=size, md5=md5, filetype=filetype, ams_settings=ams_settings)
+            if bed_limit is not None:
+                self.clearing.async_arm(name=name, md5=md5, task_id=taskid,
+                                        bed_limit=bed_limit)
+            else:
+                # An ordinary print: nothing is waited for at its end.
+                self.clearing.async_disarm()
+            return await self._async_send_start(topic, payload)
+
+        answer = await send()
+        if (answer is not None and answer["code"] == START_BUSY and leftover
+                and await self._async_leftover_gone()):
+            # Seen on an S1 Max running Rinkhals: a print cancelled from the slicer stays
+            # as the current job of a free printer, which turns the next start down with
+            # 10101, and that refusal clears it. No job runs, so there is no record a
+            # second start could damage. Sent once more only, and only after the printer
+            # has said it is free with no job.
+            _LOGGER.debug("a leftover job blocked the start and has cleared; sending it again")
+            answer = await send()
         if answer is not None:
             code = answer["code"]
             if code != START_ACCEPTED and bed_limit is not None:
@@ -1054,6 +1077,22 @@ class AnycubicCoordinator(DataUpdateCoordinator[AnycubicData]):
             return None
         finally:
             self._start_reply = None
+
+    async def _async_leftover_gone(self) -> bool:
+        """Watch, for a short while, for the printer to report free with no job at all."""
+        loop = self.hass.loop
+        deadline = loop.time() + START_WATCH_TIMEOUT
+        ask_at = loop.time()
+        while not (self.idle and self._info_project is None):
+            now = loop.time()
+            if now >= deadline:
+                return False
+            transport = self._transport
+            if now >= ask_at and transport is not None:
+                await self.hass.async_add_executor_job(transport.query, "info")
+                ask_at = now + START_WATCH_QUERY_EVERY
+            await asyncio.sleep(min(0.5, deadline - now))
+        return True
 
     async def _async_job_appears(self) -> bool:
         """Watch for a job for a short while, asking for `info` now and then."""
