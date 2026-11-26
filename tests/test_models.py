@@ -307,3 +307,13 @@ def test_stopped_job_status_is_spelled_correctly():
     """The firmware reports a stopped job as "stoped"; the Status sensor says "stopped"."""
     p = models.parse_info({"state": "busy", "project": {"state": "stoped"}})
     assert p.status == "stopped"
+
+
+def test_a_free_printer_is_not_paused_by_its_last_job():
+    """A job that ended paused stays in last_project with pause 1; once free, nothing is paused."""
+    p = models.parse_info({"state": "free",
+                           "last_project": {"state": "stoped", "pause": 1}})
+    assert p.status == "idle"
+    assert not p.paused and not p.printing
+    busy = models.parse_info({"state": "busy", "project": {"state": "paused", "pause": 1}})
+    assert busy.paused
